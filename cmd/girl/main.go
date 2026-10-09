@@ -10,7 +10,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -26,10 +25,12 @@ import (
 	"github.com/NaomiAmethyst/girlpages/internal/bulk"
 	"github.com/NaomiAmethyst/girlpages/internal/cache"
 	"github.com/NaomiAmethyst/girlpages/internal/config"
+	"github.com/NaomiAmethyst/girlpages/internal/core"
 	"github.com/NaomiAmethyst/girlpages/internal/llm"
 	"github.com/NaomiAmethyst/girlpages/internal/manpage"
 	"github.com/NaomiAmethyst/girlpages/internal/pager"
 	"github.com/NaomiAmethyst/girlpages/internal/render"
+	"github.com/NaomiAmethyst/girlpages/internal/web"
 )
 
 // version is set by the Makefile.
@@ -46,13 +47,13 @@ const (
 func main() { os.Exit(run(os.Args[1:])) }
 
 type flags struct {
-	all, apropos, whatis, where, local           bool
-	sections, manPath, locale, pager, configFile string
-	help, version                                bool
-	bulk, update, force, dryRun, prune, quiet    bool
-	jobs, limit                                  int
-	refresh, cachedOnly, raw, doctor             bool
-	color, backend, model                        string
+	all, apropos, whatis, where, local            bool
+	sections, manPath, locale, pager, configFile  string
+	help, version                                 bool
+	bulk, update, force, dryRun, prune, quiet     bool
+	jobs, limit                                   int
+	refresh, cachedOnly, raw, doctor, html, serve bool
+	color, backend, model, listen                 string
 }
 
 func newFlagSet(f *flags) *pflag.FlagSet {
@@ -87,6 +88,9 @@ func newFlagSet(f *flags) *pflag.FlagSet {
 	fs.BoolVar(&f.cachedOnly, "cached-only", false, "")
 	fs.BoolVar(&f.raw, "raw", false, "")
 	fs.BoolVar(&f.doctor, "doctor", false, "")
+	fs.BoolVar(&f.html, "html", false, "")
+	fs.BoolVar(&f.serve, "serve", false, "")
+	fs.StringVar(&f.listen, "listen", "localhost:1989", "")
 	fs.StringVar(&f.color, "color", "auto", "")
 	fs.StringVar(&f.backend, "backend", "", "")
 	fs.StringVar(&f.model, "model", "", "")
@@ -132,10 +136,16 @@ girl options:
       --refresh           re-girlify the page even if it's cached
       --cached-only       never call the LLM; only show cached pages
       --raw               print the stored markup instead of rendering it
+      --html              write the page as a standalone HTML document
       --color=WHEN        auto, always or never (default auto; NO_COLOR works)
       --backend=NAME      auto, openai or claude
       --model=MODEL       model to ask
       --doctor            show config, backend and cache status
+
+web options:
+      --serve             browse, search and read pages in a web browser,
+                          girlifying any that aren't cached when opened
+      --listen=ADDR       where --serve listens (default localhost:1989)
 
 bulk options:
       --bulk              convert every man page (incrementally)
@@ -189,17 +199,20 @@ func run(args []string) int {
 	if f.pager != "" {
 		cfg.Pager = f.pager
 	}
-	caches := cacheSet(&cfg)
 	mo := manpage.Options{ManPath: f.manPath, Locale: f.locale, Sections: f.sections, All: f.all}
+	g := &core.Girl{Cfg: &cfg, Caches: core.CacheSet(&cfg), Man: mo}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	if f.doctor {
-		return doctor(&cfg, caches)
+		return doctor(&cfg, g.Caches)
 	}
 	if f.bulk || f.update {
-		return runBulk(ctx, f, &cfg, caches, mo, rest)
+		return runBulk(ctx, f, &cfg, g.Caches, mo, rest)
+	}
+	if f.serve {
+		return runServe(ctx, f, g)
 	}
 	if len(rest) == 0 {
 		fmt.Fprintln(os.Stderr, "What manual page do you want, bestie? 💅\nFor example, try 'girl girl'.")
@@ -236,23 +249,23 @@ func run(args []string) int {
 		return exitNotFound
 	}
 
-	var backend llm.Backend
-	backendFor := func() (llm.Backend, error) {
-		if backend == nil {
-			b, err := newBackend(&cfg)
-			if err != nil {
-				return nil, err
-			}
-			backend = b
-		}
-		return backend, nil
-	}
-
 	ui := newUI(f)
 	var out strings.Builder
+	var docs []web.DocPage
 	shown := 0
 	for _, p := range pages {
-		markup, title, stale, err := getPage(ctx, p, f, &cfg, caches, mo, backendFor, ui)
+		r, err := g.Get(ctx, p, core.GetOptions{
+			Refresh:    f.refresh,
+			CachedOnly: f.cachedOnly,
+			Started: func(b llm.Backend) func() {
+				return ui.spin(core.DisplayTitle(p, ""), b)
+			},
+			Progress: func(done, total int) {
+				if ui.progress != nil {
+					ui.progress(done, total)
+				}
+			},
+		})
 		if err != nil {
 			if ctx.Err() != nil {
 				return exitFailed
@@ -262,26 +275,34 @@ func run(args []string) int {
 			status = max(status, exitFailed)
 			continue
 		}
-		if f.raw {
-			out.WriteString(markup)
-		} else {
+		title := core.DisplayTitle(p, r.Title)
+		switch {
+		case f.raw:
+			out.WriteString(r.Markup)
+		case f.html:
+			docs = append(docs, web.DocPage{Page: p, Title: title, Markup: r.Markup, Entry: r.Entry, Stale: r.Stale})
+		default:
 			if shown > 0 {
 				out.WriteString("\n")
 			}
-			if title == "" {
-				title = strings.ToUpper(p.Name) + "(" + p.Section + ")"
-			}
-			out.WriteString(render.Render(markup, render.Options{
+			out.WriteString(render.Render(r.Markup, render.Options{
 				Width:  ui.width,
 				Color:  ui.color,
 				Title:  title,
 				Footer: "girlpages " + getVersion(),
-				Stale:  stale,
+				Stale:  r.Stale,
 			}))
 		}
 		shown++
 	}
 	if shown == 0 {
+		return status
+	}
+	if f.html {
+		if err := web.WriteDocument(os.Stdout, docs, getVersion()); err != nil {
+			fmt.Fprintf(os.Stderr, "girl: %v\n", err)
+			return exitFailed
+		}
 		return status
 	}
 	if ui.tty && !f.raw {
@@ -296,64 +317,14 @@ func run(args []string) int {
 	return status
 }
 
-// getPage returns the markup and title for a page, from the cache if
-// possible, and whether the cached copy is out of date.
-func getPage(ctx context.Context, p manpage.Page, f flags, cfg *config.Config, caches cache.Set,
-	mo manpage.Options, backendFor func() (llm.Backend, error), ui *ui) (string, string, bool, error) {
-	if !f.refresh {
-		if markup, e, fresh := caches.Lookup(p.Path); markup != "" {
-			return markup, e.Title, !fresh, nil
-		}
+func runServe(ctx context.Context, f flags, g *core.Girl) int {
+	g.Limit = max(g.Cfg.Jobs, 1)
+	srv := &web.Server{Girl: g, CachedOnly: f.cachedOnly, Version: getVersion()}
+	if err := srv.ListenAndServe(ctx, f.listen, os.Stderr); err != nil {
+		fmt.Fprintf(os.Stderr, "girl: %v\n", err)
+		return exitFailed
 	}
-	text, err := manpage.Text(ctx, p.Path, mo)
-	if err != nil {
-		return "", "", false, err
-	}
-	hash := cache.Hash(text)
-	title := manpage.HeaderTitle(text)
-	dir := caches.Writable()
-	entry := &cache.Entry{Source: p.Path, Name: p.Name, Section: p.Section, Title: title, Hash: hash,
-		PromptVersion: llm.PromptVersion, Generated: time.Now().UTC().Truncate(time.Second)}
-	if !f.refresh {
-		if markup, ok := caches.Object(hash); ok {
-			// Same text as a page we've already done (an alias, usually).
-			if entry.Stamp() == nil {
-				_ = dir.PutEntry(entry)
-			}
-			return markup, title, false, nil
-		}
-	}
-	if f.cachedOnly {
-		return "", "", false, errors.New("it isn't cached yet and --cached-only is on")
-	}
-	b, err := backendFor()
-	if err != nil {
-		return "", "", false, err
-	}
-	name := title
-	if name == "" {
-		name = p.Title()
-	}
-	stopSpin := ui.spin(name, b)
-	markup, err := llm.Convert(ctx, b, name, text, llm.Options{
-		ChunkSize:         cfg.ChunkSize,
-		Parallel:          cfg.Jobs,
-		ExtraInstructions: cfg.ExtraInstructions,
-		Progress:          ui.progress,
-	})
-	stopSpin()
-	if err != nil {
-		return "", "", false, err
-	}
-	entry.Backend, entry.Model = b.Name(), b.Model()
-	if err := dir.PutObject(hash, markup); err != nil {
-		fmt.Fprintf(os.Stderr, "girl: couldn't save to cache: %v\n", err)
-	} else if err := entry.Stamp(); err == nil {
-		if err := dir.PutEntry(entry); err != nil {
-			fmt.Fprintf(os.Stderr, "girl: couldn't save to cache: %v\n", err)
-		}
-	}
-	return markup, title, false, nil
+	return exitOK
 }
 
 func runBulk(ctx context.Context, f flags, cfg *config.Config, caches cache.Set, mo manpage.Options, rest []string) int {
@@ -369,7 +340,7 @@ func runBulk(ctx context.Context, f flags, cfg *config.Config, caches cache.Set,
 	var b llm.Backend
 	if !f.dryRun {
 		var err error
-		if b, err = newBackend(cfg); err != nil {
+		if b, err = core.NewBackend(cfg); err != nil {
 			fmt.Fprintf(os.Stderr, "girl: %v\n", err)
 			return exitFailed
 		}
@@ -398,41 +369,6 @@ func runBulk(ctx context.Context, f flags, cfg *config.Config, caches cache.Set,
 		return exitFailed
 	}
 	return exitOK
-}
-
-func newBackend(cfg *config.Config) (llm.Backend, error) {
-	name, err := cfg.ResolveBackend()
-	if err != nil {
-		return nil, err
-	}
-	switch name {
-	case config.BackendClaude:
-		return &llm.Claude{Command: cfg.Claude.Command, ModelName: cfg.Claude.Model, Args: cfg.Claude.Args,
-			Timeout: cfg.Claude.Timeout.Duration}, nil
-	default:
-		key, err := cfg.OpenAIKey()
-		if err != nil {
-			return nil, err
-		}
-		return &llm.OpenAI{
-			BaseURL:     cfg.OpenAI.BaseURL,
-			APIKey:      key,
-			ModelName:   cfg.OpenAI.Model,
-			Temperature: cfg.OpenAI.Temperature,
-			MaxTokens:   cfg.OpenAI.MaxTokens,
-			Headers:     cfg.OpenAI.Headers,
-			Client:      &http.Client{Timeout: cfg.OpenAI.Timeout.Duration},
-			Retries:     3,
-		}, nil
-	}
-}
-
-func cacheSet(cfg *config.Config) cache.Set {
-	var s cache.Set
-	for _, d := range cfg.ReadCacheDirs() {
-		s = append(s, cache.Dir(d))
-	}
-	return s
 }
 
 // execMan hands searches (-k, -f, -w) straight to man.
@@ -493,7 +429,7 @@ func doctor(cfg *config.Config, caches cache.Set) int {
 		}
 	}
 	fmt.Println()
-	if b, err := newBackend(cfg); err != nil {
+	if b, err := core.NewBackend(cfg); err != nil {
 		fmt.Printf("backend: 💔 %v\n", err)
 	} else {
 		model := b.Model()

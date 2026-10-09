@@ -1,0 +1,7 @@
+{{define "content"}}
+<div class="card original">
+<div class="crumbs"><a href="/">home</a> › <a href="/section/{{(index .Docs 0).SectionKey}}">section {{(index .Docs 0).SectionKey}}</a> › <a href="{{(index .Docs 0).URL}}">{{(index .Docs 0).Title}}</a> › original</div>
+<div class="meta"><span>the original, un-girlified. so serious. 😐</span> <a class="pill" href="{{(index .Docs 0).URL}}">💅 girly version</a></div>
+<pre>{{.Original}}</pre>
+</div>
+{{end}}

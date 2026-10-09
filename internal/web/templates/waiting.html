@@ -1,0 +1,10 @@
+{{define "content"}}
+<div class="card waiting" role="status" aria-live="polite">
+<div class="spinner">{{.Wait.Emoji}}</div>
+<h1>girlifying {{.Wait.Title}}…</h1>
+<p class="status">{{.Wait.Mood}} · {{.Wait.Elapsed}}{{if .Wait.Parts}} · part {{.Wait.Part}} of {{.Wait.Parts}}{{end}}</p>
+<div class="bar{{if not .Wait.Parts}} unknown{{end}}"><span{{if .Wait.Parts}} style="width: {{.Wait.Percent}}%"{{end}}></span></div>
+<p class="status">this page refreshes itself, so you can just wait here 🫶<br>
+(or read the <a href="{{.Wait.URL}}/original">boring original</a> meanwhile)</p>
+</div>
+{{end}}

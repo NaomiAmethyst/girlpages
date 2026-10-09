@@ -1,0 +1,18 @@
+{{define "content"}}
+<section class="hero">
+<h1>✨ girlpages ✨</h1>
+<p>the manual, but make it girly 💅</p>
+<form class="hero-search" action="/search" role="search">
+<input type="search" name="q" placeholder="what are we reading today? 🔎" aria-label="Search manual pages" autofocus>
+</form>
+<div class="stats">{{pages .Total}} · {{.Girlified}} already girlified ✨ · <a href="/random">🎲 surprise me</a></div>
+</section>
+<div class="sections">
+{{range .Sections}}<a class="section-card" href="/section/{{.Key}}">
+<span class="emoji">{{.Emoji}}</span>
+<div class="num">{{.Key}}</div>
+<div class="name">{{.Name}}</div>
+<div class="count">{{pages .Count}}{{if .Girlified}} · {{.Girlified}} girlified ✨{{end}}</div>
+</a>
+{{end}}</div>
+{{end}}

@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -70,6 +71,9 @@ type Options struct {
 	Sections string   // -S, colon or comma separated
 	All      bool     // -a
 	Extra    []string // anything else to hand to man -w
+	// Stderr receives man's own complaints from Locate ("No manual entry
+	// for …"); nil means os.Stderr.
+	Stderr io.Writer
 }
 
 func (o Options) env() []string {
@@ -104,10 +108,14 @@ func Locate(ctx context.Context, args []string, o Options) ([]Page, bool, error)
 		cmdArgs = append(cmdArgs, "-S", o.Sections)
 	}
 	cmdArgs = append(cmdArgs, o.Extra...)
+	cmdArgs = append(cmdArgs, "--")
 	cmdArgs = append(cmdArgs, args...)
 	cmd := exec.CommandContext(ctx, "man", cmdArgs...)
 	cmd.Env = o.env()
-	cmd.Stderr = os.Stderr
+	cmd.Stderr = o.Stderr
+	if cmd.Stderr == nil {
+		cmd.Stderr = os.Stderr
+	}
 	out, err := cmd.Output()
 	missing := false
 	if err != nil {
@@ -317,3 +325,27 @@ func Enumerate(dirs []string, sections []string) ([]Page, error) {
 	})
 	return pages, nil
 }
+
+var whatisRE = regexp.MustCompile(`^(\S+) \(([^)]+)\)\s+- (.*)$`)
+
+// Descriptions returns the one-line description of every page in the
+// whatis database (via man -k), keyed by DescKey.
+func Descriptions(ctx context.Context, o Options) (map[string]string, error) {
+	cmd := exec.CommandContext(ctx, "man", "-k", ".")
+	cmd.Env = o.env()
+	out, err := cmd.Output()
+	if err != nil && len(out) == 0 {
+		return nil, fmt.Errorf("running man -k: %w", err)
+	}
+	descs := map[string]string{}
+	sc := bufio.NewScanner(bytes.NewReader(out))
+	for sc.Scan() {
+		if m := whatisRE.FindStringSubmatch(sc.Text()); m != nil {
+			descs[DescKey(m[1], m[2])] = strings.TrimSpace(m[3])
+		}
+	}
+	return descs, nil
+}
+
+// DescKey is the map key Descriptions uses for a page.
+func DescKey(name, section string) string { return name + "\x00" + section }

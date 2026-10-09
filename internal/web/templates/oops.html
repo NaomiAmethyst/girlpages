@@ -1,0 +1,9 @@
+{{define "content"}}
+<div class="card oops">
+<div class="big">{{.Oops.Emoji}}</div>
+<h1>{{.Oops.Heading}}</h1>
+<p>{{.Oops.Message}}</p>
+{{if .Oops.Detail}}<pre>{{.Oops.Detail}}</pre>{{end}}
+<div class="actions">{{if .Oops.Retry}}<form method="post" action="{{.Oops.Retry}}"><button class="pill primary" type="submit">💅 try again</button></form> {{end}}{{if .Oops.Original}}<a class="pill" href="{{.Oops.Original}}">📜 read the original</a> {{end}}<a class="pill" href="/">🏡 home</a></div>
+</div>
+{{end}}

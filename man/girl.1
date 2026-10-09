@@ -21,6 +21,10 @@ girl \- an interface to the system reference manuals, but make it girly
 .B \-\-bulk
 .RI [ options ]
 .RI [ section \ ...]
+.br
+.B girl
+.B \-\-serve
+.RB [ \-\-listen =\fIaddress\fR]
 .SH DESCRIPTION
 .B girl
 works like
@@ -110,6 +114,11 @@ Never contact the model; fail for pages that are not cached.
 .B \-\-raw
 Print the stored markup instead of rendering it.
 .TP
+.B \-\-html
+Write the page as a self-contained HTML document on standard output, with
+the stylesheet inlined, instead of showing it in the pager.
+Several pages go into one document.
+.TP
 .BR \-\-color =\fIwhen\fR
 Use colour
 .BR always ,
@@ -134,6 +143,21 @@ Ask this model, overriding the configuration.
 .B \-\-doctor
 Show which configuration files were read, which backend and model will be
 used, and what each cache holds.
+.SS "Web options"
+.TP
+.B \-\-serve
+Run a web server for browsing pages by section, searching their names and
+descriptions, and reading them.
+Pages that are not cached are converted when someone opens them; see
+.BR "WEB SERVER" .
+.TP
+.BR \-\-listen =\fIaddress\fR
+Where
+.B \-\-serve
+listens, as
+.IR host : port .
+The default is
+.BR localhost:1989 .
 .SS "Bulk options"
 .TP
 .B \-\-bulk
@@ -214,6 +238,41 @@ if the command is on
 otherwise
 .B openai
 if an API key is configured.
+.SH "WEB SERVER"
+.B girl \-\-serve
+lists every page in the manual path by section, with descriptions from the
+.BR whatis
+database and a ✨ marker on pages already converted.
+The search box matches page names and descriptions;
+searching for a reference such as
+.B printf(3)
+goes straight to that page.
+References to other pages and URLs inside a page become links, and each page
+has a table of contents and a link to the unconverted original.
+.PP
+Opening a page that is not cached starts converting it and shows a waiting
+page that refreshes itself until it is done.
+Visitors asking for the same page share one conversion, and no more than
+.B jobs
+requests are sent to the model at once across all of them.
+A page can also be converted again from its
+.B re-girlify
+button.
+With
+.BR \-\-cached\-only ,
+or when no backend is configured, only cached pages are shown.
+.PP
+The pages follow the browser's light or dark preference
+(pink and white in the light, purple and black in the dark), and a button
+switches between them.
+.PP
+There is no authentication.
+Anyone who can reach the server can make it send pages to the model,
+so keep it on
+.B localhost
+or use
+.B \-\-cached\-only
+when listening anywhere else.
 .SH CONFIGURATION
 Settings are read from the system configuration file, then the user
 configuration file (or the file given with
@@ -405,6 +464,15 @@ Convert every page in sections 1 and 8 into the system cache, eight at a time.
 .TP
 .B girl \-\-bulk \-\-dry\-run
 See how many pages a full run would convert.
+.TP
+.B girl \-\-html ls > ls.html
+Save
+.BR ls (1)
+as a web page.
+.TP
+.B girl \-\-serve
+Browse the manual at
+.BR http://localhost:1989/ .
 .SH BUGS
 The model can still get things wrong.
 When something matters, check the original with

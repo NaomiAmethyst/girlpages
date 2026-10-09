@@ -95,6 +95,27 @@ it's incremental you can interrupt it and pick up where you left off.
 left alone). Packagers: see the top of the `Makefile` for `DESTDIR` and
 friends.
 
+## In your browser
+
+```sh
+girl --serve                  # http://localhost:1989/
+girl --html ls > ls.html      # one page, as a self-contained web page
+```
+
+`--serve` lets you browse pages by section, search names and descriptions,
+and read them with a table of contents, clickable references to other pages,
+and a link to the boring original. It's pink and white in light mode and
+purple and black in dark mode, following your browser (or the 🌗 button).
+
+Open a page that isn't girlified yet and it's converted on the spot, with a
+waiting page that refreshes itself until she's ready. Everyone asking for the
+same page shares one conversion, and no more than `jobs` requests hit the
+model at once.
+
+There's no login, so anyone who can reach it can spend your LLM budget: keep
+it on localhost (the default), or use `--cached-only` to only serve what's
+already converted (`sudo girl --bulk` first, say).
+
 ## Configure
 
 ```toml
@@ -133,6 +154,8 @@ girl --model opus tar   # with a different model
 girl --cached-only ls   # never call the LLM
 girl --raw ls           # the stored markup
 girl --doctor           # config, backend and cache status
+girl --html ls          # a standalone HTML page
+girl --serve            # the web app
 girl --bulk [sections]  # convert everything
 ```
 
@@ -143,8 +166,9 @@ make check   # tests, vet, gofmt
 ```
 
 Pages are stored as a small Markdown dialect with colour tags (`<pink>…</pink>`
-and friends, plus `<rainbow>`); `internal/render` turns that into ANSI. The
-prompt lives in `internal/llm/prompt.go`.
+and friends, plus `<rainbow>`); `internal/render` turns that into ANSI or
+HTML, and `internal/web` is the server, templates and stylesheet. The prompt
+lives in `internal/llm/prompt.go`.
 
 ## License
 

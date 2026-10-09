@@ -272,3 +272,24 @@ func splitLines(text string, size int) []string {
 	}
 	return out
 }
+
+// Limit wraps a backend so that at most n requests are in flight at once,
+// however many conversions are using it.
+func Limit(b Backend, n int) Backend {
+	return &limited{Backend: b, sem: make(chan struct{}, max(n, 1))}
+}
+
+type limited struct {
+	Backend
+	sem chan struct{}
+}
+
+func (l *limited) Complete(ctx context.Context, system, user string) (string, error) {
+	select {
+	case l.sem <- struct{}{}:
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+	defer func() { <-l.sem }()
+	return l.Backend.Complete(ctx, system, user)
+}

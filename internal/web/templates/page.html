@@ -1,0 +1,22 @@
+{{define "content"}}
+{{range .Docs}}
+<div class="layout">
+<article class="card manpage">
+{{if .Crumbs}}<div class="crumbs"><a href="/">home</a> › <a href="/section/{{.SectionKey}}">section {{.SectionKey}}</a> › {{.Title}}</div>{{end}}
+<h1>{{.Title}}</h1>
+<div class="meta">
+{{if .Model}}<span>girlified by {{.Model}}{{if .Generated}} on {{.Generated}}{{end}} 💖</span>{{end}}
+{{if .Actions}}<a class="pill" href="{{.URL}}/original">📜 original</a>
+{{if .CanConvert}}<form method="post" action="{{.URL}}/convert"><input type="hidden" name="refresh" value="1"><button class="pill" type="submit" title="ask the model to rewrite this page again">🔄 re-girlify</button></form>{{end}}{{end}}
+</div>
+{{if .Stale}}<div class="notice">🔄 this page changed since it was girlified{{if and .Actions .CanConvert}}, hit re-girlify for the new version{{end}}.</div>{{end}}
+<div class="content">
+{{.Body}}
+</div>
+</article>
+{{if .TOC}}<nav class="toc card" aria-label="Contents"><h2>✨ contents</h2><ul>
+{{range .TOC}}<li{{if eq .Level 2}} class="sub"{{end}}><a href="#{{.ID}}">{{.Text}}</a></li>
+{{end}}</ul></nav>{{end}}
+</div>
+{{end}}
+{{end}}
