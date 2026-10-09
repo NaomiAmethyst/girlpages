@@ -1,0 +1,12 @@
+[Trigger]
+Type = Path
+Operation = Install
+Operation = Upgrade
+Operation = Remove
+Target = usr/share/man/*
+Target = usr/local/share/man/*
+
+[Action]
+Description = Refreshing girlpages 💅
+When = PostTransaction
+Exec = @LIBEXECDIR@/girlpages-hook

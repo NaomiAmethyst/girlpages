@@ -1,0 +1,3 @@
+// Refresh girlpages after dpkg runs. The hook only starts a background job,
+// and girl --update is incremental, so this is cheap when nothing changed.
+DPkg::Post-Invoke { "if [ -x '@LIBEXECDIR@/girlpages-hook' ]; then '@LIBEXECDIR@/girlpages-hook' || true; fi"; };

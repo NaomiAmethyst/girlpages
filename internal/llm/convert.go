@@ -1,0 +1,274 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Naomi Persephone Amethyst <naomi@amethyst.name>
+
+// Package llm turns plain-text man pages into girlpages markup using an
+// OpenAI-compatible API or the claude CLI.
+package llm
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"regexp"
+	"strings"
+	"sync"
+)
+
+// Backend is something that can answer a single prompt.
+type Backend interface {
+	// Name identifies the backend ("openai", "claude").
+	Name() string
+	// Model is the configured model, which may be empty for the default.
+	Model() string
+	// Complete sends one system + user prompt and returns the reply text.
+	Complete(ctx context.Context, system, user string) (string, error)
+}
+
+// Options tunes a conversion.
+type Options struct {
+	ChunkSize         int
+	Parallel          int // chunks converted at once
+	ExtraInstructions string
+	// Progress, if set, is called as chunks finish.
+	Progress func(done, total int)
+}
+
+// Convert rewrites a whole page, splitting it into chunks if it is long.
+func Convert(ctx context.Context, b Backend, title, text string, o Options) (string, error) {
+	chunks := Split(text, o.ChunkSize)
+	system := SystemPrompt(o.ExtraInstructions)
+	results := make([]string, len(chunks))
+	errs := make([]error, len(chunks))
+	par := o.Parallel
+	if par < 1 {
+		par = 1
+	}
+	sem := make(chan struct{}, par)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	done := 0
+	if o.Progress != nil {
+		o.Progress(0, len(chunks))
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	for i := range chunks {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				errs[i] = ctx.Err()
+				return
+			}
+			defer func() { <-sem }()
+			var prev []string
+			for _, c := range chunks[:i] {
+				prev = append(prev, Headings(c)...)
+			}
+			out, err := convertChunk(ctx, b, system, UserPrompt(title, i+1, len(chunks), prev, chunks[i]), chunks[i])
+			if err != nil {
+				errs[i] = err
+				cancel()
+				return
+			}
+			results[i] = out
+			if o.Progress != nil {
+				mu.Lock()
+				done++
+				o.Progress(done, len(chunks))
+				mu.Unlock()
+			}
+		}(i)
+	}
+	wg.Wait()
+	// Report the error that caused the cancellation, not the knock-on
+	// cancellations of the other chunks.
+	failed := -1
+	for i, err := range errs {
+		if err != nil && (failed < 0 || errors.Is(errs[failed], context.Canceled) && !errors.Is(err, context.Canceled)) {
+			failed = i
+		}
+	}
+	if failed >= 0 {
+		if len(chunks) > 1 {
+			return "", fmt.Errorf("part %d/%d: %w", failed+1, len(chunks), errs[failed])
+		}
+		return "", errs[failed]
+	}
+	return strings.Join(results, "\n\n") + "\n", nil
+}
+
+func convertChunk(ctx context.Context, b Backend, system, user, source string) (string, error) {
+	out, err := b.Complete(ctx, system, user)
+	if err != nil {
+		return "", err
+	}
+	out = Clean(out)
+	if out == "" {
+		return "", fmt.Errorf("%s returned an empty reply", b.Name())
+	}
+	missing := MissingOptions(source, out)
+	if len(missing) == 0 {
+		return out, nil
+	}
+	// One retry, pointing at exactly what went missing; keep whichever
+	// attempt dropped less.
+	retry, err := b.Complete(ctx, system, RetryPrompt(user, missing))
+	if err != nil {
+		return out, nil
+	}
+	retry = Clean(retry)
+	if retry != "" && len(MissingOptions(source, retry)) < len(missing) {
+		return retry, nil
+	}
+	return out, nil
+}
+
+var (
+	thinkRE = regexp.MustCompile(`(?s)^\s*<think>.*?</think>\s*`)
+	fenceRE = regexp.MustCompile("(?s)^```[a-zA-Z]*\\n(.*)\\n```\\s*$")
+)
+
+// Clean strips wrapping the model sometimes adds despite instructions:
+// reasoning blocks, a whole-reply code fence, or the input delimiters.
+func Clean(s string) string {
+	s = thinkRE.ReplaceAllString(s, "")
+	s = strings.TrimSpace(s)
+	if m := fenceRE.FindStringSubmatch(s); m != nil && !strings.Contains(m[1], "\n```") {
+		s = m[1]
+	}
+	s = strings.TrimPrefix(s, "<<<MANPAGE")
+	s = strings.TrimSuffix(s, "MANPAGE>>>")
+	return strings.TrimSpace(s)
+}
+
+var optionRE = regexp.MustCompile(`(?:^|[\s\[(|,])(--?[A-Za-z][A-Za-z0-9_-]*)`)
+
+// MissingOptions lists command-line options mentioned in the source that
+// don't appear anywhere in the conversion. It's a cheap guard against the
+// model "summarising" an option list.
+func MissingOptions(source, out string) []string {
+	seen := map[string]bool{}
+	var missing []string
+	for _, m := range optionRE.FindAllStringSubmatch(source, -1) {
+		opt := strings.TrimRight(m[1], "-_")
+		if len(opt) < 2 || opt == "--" || seen[opt] {
+			continue
+		}
+		seen[opt] = true
+		if !strings.Contains(out, opt) {
+			missing = append(missing, opt)
+		}
+	}
+	return missing
+}
+
+// Headings returns the section headings in a chunk of plain man text: the
+// unindented lines, other than the page header and footer.
+func Headings(text string) []string {
+	var hs []string
+	for _, l := range strings.Split(text, "\n") {
+		if isHeading(l) {
+			hs = append(hs, strings.TrimSpace(l))
+		}
+	}
+	return hs
+}
+
+func isHeading(l string) bool {
+	if l == "" || l[0] == ' ' || l[0] == '\t' {
+		return false
+	}
+	// Header/footer lines are spread across the width with runs of spaces.
+	return !strings.Contains(strings.TrimSpace(l), "   ")
+}
+
+// Split breaks plain man text into chunks of at most size bytes (when
+// possible), preferring section boundaries, then paragraph boundaries, then
+// line boundaries.
+func Split(text string, size int) []string {
+	if size <= 0 || len(text) <= size {
+		return []string{text}
+	}
+	var units []string
+	for _, sec := range splitBefore(text, isHeading) {
+		if len(sec) <= size {
+			units = append(units, sec)
+			continue
+		}
+		for _, para := range splitParagraphs(sec) {
+			if len(para) <= size {
+				units = append(units, para)
+				continue
+			}
+			units = append(units, splitLines(para, size)...)
+		}
+	}
+	var chunks []string
+	var cur strings.Builder
+	for _, u := range units {
+		if cur.Len() > 0 && cur.Len()+len(u) > size {
+			chunks = append(chunks, cur.String())
+			cur.Reset()
+		}
+		cur.WriteString(u)
+	}
+	if cur.Len() > 0 {
+		chunks = append(chunks, cur.String())
+	}
+	return chunks
+}
+
+// splitBefore cuts text into pieces that each start at a line matching
+// pred (except possibly the first). Pieces keep their trailing newlines.
+func splitBefore(text string, pred func(string) bool) []string {
+	lines := strings.SplitAfter(text, "\n")
+	var out []string
+	var cur strings.Builder
+	for _, l := range lines {
+		if cur.Len() > 0 && pred(strings.TrimRight(l, "\n")) {
+			out = append(out, cur.String())
+			cur.Reset()
+		}
+		cur.WriteString(l)
+	}
+	if cur.Len() > 0 {
+		out = append(out, cur.String())
+	}
+	return out
+}
+
+func splitParagraphs(text string) []string {
+	lines := strings.SplitAfter(text, "\n")
+	var out []string
+	var cur strings.Builder
+	for _, l := range lines {
+		cur.WriteString(l)
+		if strings.TrimSpace(l) == "" && cur.Len() > 0 {
+			out = append(out, cur.String())
+			cur.Reset()
+		}
+	}
+	if cur.Len() > 0 {
+		out = append(out, cur.String())
+	}
+	return out
+}
+
+func splitLines(text string, size int) []string {
+	var out []string
+	var cur strings.Builder
+	for _, l := range strings.SplitAfter(text, "\n") {
+		if cur.Len() > 0 && cur.Len()+len(l) > size {
+			out = append(out, cur.String())
+			cur.Reset()
+		}
+		cur.WriteString(l)
+	}
+	if cur.Len() > 0 {
+		out = append(out, cur.String())
+	}
+	return out
+}

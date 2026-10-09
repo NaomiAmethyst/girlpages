@@ -1,0 +1,20 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Naomi Persephone Amethyst <naomi@amethyst.name>
+#
+# Run by the apt/dpkg, pacman and dnf hooks after man pages change. It only
+# kicks off a background refresh (girl --bulk --update) and never fails, so
+# a package transaction is never held up or broken by girlpages.
+
+if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+	if systemctl start --no-block girlpages-update.service >/dev/null 2>&1; then
+		exit 0
+	fi
+fi
+
+# No systemd: run detached. girl takes a lock, so overlapping runs are fine.
+if [ -x '@BINDIR@/girl' ]; then
+	nohup '@BINDIR@/girl' --bulk --update --prune --quiet \
+		>>/var/log/girlpages.log 2>&1 </dev/null &
+fi
+exit 0

@@ -1,0 +1,428 @@
+.\" SPDX-License-Identifier: GPL-3.0-or-later
+.\" Copyright (C) 2026 Naomi Persephone Amethyst <naomi@amethyst.name>
+.TH GIRL 1 2026-10-09 girlpages "girlpages Manual"
+.SH NAME
+girl \- an interface to the system reference manuals, but make it girly
+.SH SYNOPSIS
+.B girl
+.RI [ options ]
+.RI [ section ]
+.IR page \ ...
+.br
+.B girl
+.B \-k
+.IR regexp \ ...
+.br
+.B girl
+.B \-f
+.IR page \ ...
+.br
+.B girl
+.B \-\-bulk
+.RI [ options ]
+.RI [ section \ ...]
+.SH DESCRIPTION
+.B girl
+works like
+.BR man (1):
+it finds the manual page you ask for and shows it in a pager.
+The difference is that the page is first rewritten by a large language model
+in the voice of a Gen Z teenage girl, with colour and emoji, while keeping
+every option, argument, default, file, example and caveat of the original.
+.PP
+Pages are found with
+.BR "man \-w" ,
+so names, sections and search order behave exactly as they do for
+.BR man .
+The page is rendered to plain text with
+.BR man ,
+sent to the model, and the result is stored in a cache.
+If a page is already cached it is shown straight away without contacting the
+model; this includes pages whose source has since changed, which are shown
+with a note until they are refreshed.
+.PP
+Identical pages (such as aliases made with symbolic links or
+.B .so
+requests) share one conversion.
+Long pages are split at section boundaries and converted in parts.
+If the model leaves out any command-line options that appear in the original,
+the part is retried once with a list of what went missing.
+.SH OPTIONS
+.SS "Options shared with man"
+.TP
+.BR \-a ", " \-\-all
+Show every matching page, not just the first.
+.TP
+.BR \-s ", " \-S ", " \-\-sections =\fIlist\fR
+Only search the given sections, separated by colons or commas.
+A section can also be given as the first argument, as in
+.BR "girl 3 printf" .
+.TP
+.BR \-k ", " \-\-apropos
+Search page names and descriptions.
+This runs
+.B man \-k
+directly.
+.TP
+.BR \-f ", " \-\-whatis
+Show one-line descriptions.
+This runs
+.B man \-f
+directly.
+.TP
+.BR \-w ", " \-\-where ", " \-\-path ", " \-\-location
+Print the location of the source pages instead of showing them.
+.TP
+.BR \-l ", " \-\-local\-file
+Treat each argument as a man page file rather than a page name.
+.TP
+.BR \-M ", " \-\-manpath =\fIpath\fR
+Search
+.I path
+instead of the default manual path.
+.TP
+.BR \-L ", " \-\-locale =\fIlocale\fR
+Look for pages in this locale.
+.TP
+.BR \-P ", " \-\-pager =\fIpager\fR
+Use
+.I pager
+to display output.
+.TP
+.BR \-C ", " \-\-config\-file =\fIfile\fR
+Read
+.I file
+instead of the user configuration file.
+.TP
+.BR \-h ", " \-\-help
+Show a summary of options.
+.TP
+.BR \-V ", " \-\-version
+Show the version.
+.SS "Display options"
+.TP
+.B \-\-refresh
+Convert the page again even if it is cached, replacing the cached copy.
+.TP
+.B \-\-cached\-only
+Never contact the model; fail for pages that are not cached.
+.TP
+.B \-\-raw
+Print the stored markup instead of rendering it.
+.TP
+.BR \-\-color =\fIwhen\fR
+Use colour
+.BR always ,
+.BR never ,
+or
+.B auto
+(the default), which uses colour when standard output is a terminal and
+.B NO_COLOR
+is not set.
+.TP
+.BR \-\-backend =\fIname\fR
+Use the
+.BR auto ,
+.BR openai ,
+or
+.B claude
+backend, overriding the configuration.
+.TP
+.BR \-\-model =\fImodel\fR
+Ask this model, overriding the configuration.
+.TP
+.B \-\-doctor
+Show which configuration files were read, which backend and model will be
+used, and what each cache holds.
+.SS "Bulk options"
+.TP
+.B \-\-bulk
+Convert every page in the manual path (the top-level
+.BI man N
+directories; translations are skipped), most useful sections first.
+Pages that are already cached and unchanged are skipped, so running it again
+only does new work.
+Sections may be given as arguments, as in
+.BR "girl \-\-bulk 1 8" .
+After a complete run without section or limit filters,
+.B \-\-update
+runs also convert new pages.
+.TP
+.B \-\-update
+Refresh pages whose source has changed since they were converted.
+If a complete
+.B \-\-bulk
+run has been done in this cache before, new pages are converted too;
+otherwise only pages that are already cached are looked at.
+This is what the package-manager hooks and timers run.
+.TP
+.B \-\-force
+Convert pages even if they are up to date.
+.TP
+.B \-\-prune
+After a complete run, remove cache entries for pages that no longer exist and
+conversions that nothing refers to.
+.TP
+.BR \-n ", " \-\-dry\-run
+List the pages that would be converted, and convert nothing.
+No backend is needed.
+.TP
+.BR \-j ", " \-\-jobs =\fIn\fR
+Send up to
+.I n
+requests to the model at once.
+.TP
+.BR \-\-limit =\fIn\fR
+Only look at the first
+.I n
+pages.
+.TP
+.BR \-q ", " \-\-quiet
+Only report errors.
+.SH BACKENDS
+.SS claude
+Runs the
+.BR claude (1)
+command-line tool in print mode:
+.PP
+.RS
+.nf
+claude \-p \-\-output\-format text \-\-no\-session\-persistence \e
+    \-\-system\-prompt \fIprompt\fR \-\-tools "" \-\-strict\-mcp\-config \e
+    \-\-disable\-slash\-commands \-\-setting\-sources "" [\-\-model \fImodel\fR]
+.fi
+.RE
+.PP
+with the page on standard input, from the temporary directory, so that the
+user's own MCP servers, skills, hooks and project files stay out of it.
+.SS openai
+Posts to the
+.B /chat/completions
+endpoint of any OpenAI-compatible API, such as OpenAI, OpenRouter, Ollama,
+llama.cpp, vLLM or LM Studio.
+Rate-limited and failed requests are retried.
+.SS auto
+The default.
+Uses
+.B openai
+if
+.B openai.base_url
+is set to something other than OpenAI's own endpoint, otherwise
+.B claude
+if the command is on
+.BR PATH ,
+otherwise
+.B openai
+if an API key is configured.
+.SH CONFIGURATION
+Settings are read from the system configuration file, then the user
+configuration file (or the file given with
+.BR \-C ),
+then the environment, with later sources winning.
+The files are in TOML:
+.PP
+.RS
+.nf
+backend = "auto"         # auto, openai or claude
+jobs = 4                 # requests at once
+chunk_size = 12000       # bytes of text per request
+cache_dir = ""           # where to write conversions
+pager = ""
+extra_instructions = ""  # appended to the prompt
+
+[claude]
+command = "claude"
+model = "sonnet"
+args = []
+timeout = "15m"
+
+[openai]
+base_url = "https://api.openai.com/v1"
+model = ""
+api_key = ""
+api_key_file = ""
+temperature = 0.9
+max_tokens = 16000
+timeout = "10m"
+
+[openai.headers]
+"X\-Example" = "value"
+.fi
+.RE
+.PP
+A system configuration file that holds an API key should not be world-readable;
+use
+.B api_key_file
+pointing at a file only root can read, and users will still see every page the
+system cache already has.
+.SH CACHE
+Conversions are stored as
+.BI objects/ xx / sha256 .girl
+files named by the hash of the plain-text page, with an index under
+.B index/
+that maps each source file to its conversion and records the source's size and
+modification time.
+.PP
+.B girl
+reads the cache it writes to and the system cache.
+It writes to
+.B cache_dir
+if that is set, to the system cache when run as root, and to the user's cache
+otherwise.
+When the same page is in both, an up-to-date copy is preferred.
+.SH "PACKAGE MANAGER HOOKS"
+A system-wide install adds a hook for each package manager it finds:
+an apt
+.B DPkg::Post\-Invoke
+hook, a pacman hook on
+.BR usr/share/man/* ,
+and a dnf post-transaction action.
+Each runs
+.BR girlpages\-hook ,
+which starts
+.B girlpages\-update.service
+(or, without systemd, a background
+.BR "girl \-\-bulk \-\-update \-\-prune" )
+and never fails the transaction.
+A daily
+.B girlpages\-update.timer
+catches pages installed any other way.
+A per-user install gets the same timer as a user unit.
+.PP
+Since
+.B \-\-update
+only converts new pages after a complete
+.B \-\-bulk
+run, the hooks cost nothing until an administrator opts in with
+.BR "sudo girl \-\-bulk" .
+.PP
+The service runs as root.
+When using the
+.B claude
+backend, root's
+.B claude
+must be logged in, or point
+.B claude.command
+at a wrapper.
+.SH ENVIRONMENT
+.TP
+.B GIRLPAGER
+Pager to use; checked before
+.BR PAGER .
+.B MANPAGER
+is not used, as it often removes formatting.
+.TP
+.B PAGER
+Pager to use if
+.B GIRLPAGER
+is not set.
+The default is
+.BR less ,
+which is given
+.B \-R
+so colours come through.
+.TP
+.B MANWIDTH
+Width to lay pages out at.
+Otherwise the terminal width is used, up to 100 columns.
+.TP
+.B MANPATH
+As for
+.BR man .
+.TP
+.B NO_COLOR
+Turns colour off.
+.TP
+.B GIRLPAGES_CONFIG
+User configuration file to read.
+.TP
+.BR GIRLPAGES_BACKEND ", " GIRLPAGES_MODEL ", " GIRLPAGES_JOBS ", " GIRLPAGES_CACHE_DIR
+Override
+.BR backend ,
+the model,
+.B jobs
+and
+.BR cache_dir .
+.TP
+.BR GIRLPAGES_OPENAI_BASE_URL ", " OPENAI_BASE_URL
+Override
+.BR openai.base_url .
+.TP
+.BR GIRLPAGES_OPENAI_API_KEY ", " OPENAI_API_KEY
+Override
+.BR openai.api_key .
+.TP
+.BR GIRLPAGES_OPENAI_MODEL ", " GIRLPAGES_CLAUDE_MODEL ", " GIRLPAGES_CLAUDE_COMMAND
+Override the per-backend settings.
+.TP
+.BR XDG_CONFIG_HOME ", " XDG_CACHE_HOME
+Locate the user configuration file and cache.
+.SH FILES
+.TP
+.I /etc/girlpages/config.toml
+System configuration.
+.TP
+.I ~/.config/girlpages/config.toml
+User configuration.
+.TP
+.I /var/cache/girlpages
+System cache.
+.TP
+.I ~/.cache/girlpages
+User cache.
+.SH "EXIT STATUS"
+.TP
+.B 0
+Success.
+.TP
+.B 1
+Usage or configuration error.
+.TP
+.B 2
+A page could not be converted, or a bulk run had failures.
+.TP
+.B 16
+A page was not found.
+.SH EXAMPLES
+.TP
+.B girl ls
+Show
+.BR ls (1).
+.TP
+.B girl 3 printf
+Show
+.BR printf (3)
+rather than
+.BR printf (1).
+.TP
+.B girl \-\-refresh \-\-model opus tar
+Convert
+.BR tar (1)
+again with a different model.
+.TP
+.B sudo girl \-\-bulk \-j 8 1 8
+Convert every page in sections 1 and 8 into the system cache, eight at a time.
+.TP
+.B girl \-\-bulk \-\-dry\-run
+See how many pages a full run would convert.
+.SH BUGS
+The model can still get things wrong.
+When something matters, check the original with
+.BR man .
+.PP
+Report bugs at
+.UR https://github.com/NaomiAmethyst/girlpages/issues
+.UE .
+.SH AUTHOR
+Naomi Persephone Amethyst <naomi@amethyst.name>
+.SH COPYRIGHT
+Copyright \(co 2026 Naomi Persephone Amethyst.
+License GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>.
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.
+.SH "SEE ALSO"
+.BR man (1),
+.BR apropos (1),
+.BR whatis (1),
+.BR mandb (8),
+.BR claude (1)

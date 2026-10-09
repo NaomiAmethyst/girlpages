@@ -1,0 +1,50 @@
+# girlpages config ✨
+#
+# Read from /etc/girlpages/config.toml, then ~/.config/girlpages/config.toml
+# (later files win), then GIRLPAGES_* environment variables. See girl(1).
+
+# "auto" uses openai.base_url if you've set one, else the claude CLI if it's
+# on $PATH, else OpenAI proper if there's an API key.
+#backend = "auto"
+
+# LLM requests at once. For a single page, the parts of a long page are
+# converted in parallel; for --bulk, whole pages are.
+#jobs = 4
+
+# Long pages are sent in parts of at most this many bytes of rendered text,
+# split at section boundaries. Lower it if replies get cut off.
+#chunk_size = 12000
+
+# Where new conversions are written. Default: /var/cache/girlpages when run
+# as root, ~/.cache/girlpages otherwise. Both are always read.
+#cache_dir = ""
+
+# Pager. Default: $GIRLPAGER, then $PAGER, then less.
+#pager = "less"
+
+# Tune the vibe. Appended to the system prompt.
+#extra_instructions = "She's really into horses. Work in horse metaphors."
+
+[claude]
+# Runs: claude -p --model MODEL --system-prompt … --tools "" (page on stdin)
+#command = "claude"
+#model = "sonnet"
+# Extra arguments, e.g. ["--effort", "low"].
+#args = []
+#timeout = "15m"
+
+[openai]
+# Any OpenAI-compatible endpoint works: OpenAI, OpenRouter, Ollama
+# (http://localhost:11434/v1), llama.cpp, vLLM, LM Studio, …
+#base_url = "https://api.openai.com/v1"
+#model = ""
+# Or set OPENAI_API_KEY / GIRLPAGES_OPENAI_API_KEY. If this file is
+# world-readable, prefer api_key_file pointing at a root-only file.
+#api_key = ""
+#api_key_file = ""
+#temperature = 0.9
+#max_tokens = 16000
+#timeout = "10m"
+
+#[openai.headers]
+#"HTTP-Referer" = "https://github.com/NaomiAmethyst/girlpages"

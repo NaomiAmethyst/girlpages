@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh girlpages (man pages, but make them girly)
+Documentation=man:girl(1)
+
+[Service]
+Type=oneshot
+ExecStart=@BINDIR@/girl --bulk --update --prune --quiet
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Nice=19
+IOSchedulingClass=idle
+TimeoutStartSec=infinity
