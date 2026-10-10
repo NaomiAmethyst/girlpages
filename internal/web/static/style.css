@@ -226,7 +226,13 @@ ul.pages .done { flex: none; }
 .toc li a { display: block; padding: 0.15rem 0.5rem; border-radius: 0.4rem; text-decoration: none; color: var(--text); }
 .toc li a:hover { background: var(--accent-soft); }
 .toc li.sub a { padding-left: 1.4rem; color: var(--muted); }
-@media (max-width: 60rem) { .layout { grid-template-columns: 1fr; } .toc { display: none; } }
+/* minmax(0, …) rather than 1fr, so a wide code block scrolls inside itself
+   instead of stretching the whole page sideways. */
+@media (max-width: 60rem) { .layout { grid-template-columns: minmax(0, 1fr); } .toc { display: none; } }
+.manpage, .content, .original { min-width: 0; }
+/* Long flags, paths and URLs in running text wrap rather than overflow. */
+.content p, .content li, .content blockquote, .content td, .meta { overflow-wrap: anywhere; }
+.content pre, .original pre { max-width: 100%; -webkit-overflow-scrolling: touch; }
 
 .manpage { max-width: 50rem; }
 .manpage > h1 {
@@ -293,6 +299,19 @@ ul.pages .done { flex: none; }
 .oops { text-align: center; padding: 2.5rem 1rem; }
 .oops .big { font-size: 4rem; }
 .oops pre { text-align: left; white-space: pre-wrap; background: var(--pre-bg); border-radius: 0.8rem; padding: 0.8rem 1rem; max-width: 46rem; margin: 1rem auto; color: var(--muted); }
+
+@media (max-width: 40rem) {
+  main { padding: 1rem 0.6rem 2rem; }
+  .card { padding: 1.1rem 1rem; border-radius: 1rem; }
+  .top { gap: 0.5rem; padding: 0.5rem 0.75rem; }
+  .logo { font-size: 1.15rem; }
+  .content pre { padding: 0.7rem 0.8rem; }
+  .content pre code, .original pre { font-size: 0.75rem; }
+  .content code { font-size: 0.85em; }
+  .content ul, .content ol { padding-left: 1.2rem; }
+  ul.pages li { flex-wrap: wrap; gap: 0 0.5rem; }
+  ul.pages .desc { flex-basis: 100%; white-space: normal; font-size: 0.9rem; }
+}
 
 @media print {
   .top, footer, .toc, .meta form, .theme { display: none; }
