@@ -101,6 +101,9 @@ func Defaults() Config {
 		},
 		Claude: ClaudeConfig{
 			Command: "claude",
+			// Haiku is quick and cheap enough for thousands of pages and
+			// keeps the details well; set model = "" for the CLI's default.
+			Model:   "haiku",
 			Timeout: Duration{15 * time.Minute},
 		},
 	}

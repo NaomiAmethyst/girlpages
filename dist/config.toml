@@ -28,7 +28,9 @@
 [claude]
 # Runs: claude -p --model MODEL --system-prompt … --tools "" (page on stdin)
 #command = "claude"
-#model = "sonnet"
+# Defaults to haiku: fast, cheap, and good at keeping details. Set it to ""
+# to use the claude CLI's own default model.
+#model = "haiku"
 # Extra arguments, e.g. ["--effort", "low"].
 #args = []
 #timeout = "15m"

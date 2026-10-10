@@ -75,3 +75,9 @@ func TestResolveBackend(t *testing.T) {
 		t.Error("unknown backend accepted")
 	}
 }
+
+func TestDefaultClaudeModel(t *testing.T) {
+	if m := Defaults().Claude.Model; m != "haiku" {
+		t.Errorf("default claude model = %q", m)
+	}
+}

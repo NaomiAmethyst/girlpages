@@ -123,7 +123,7 @@ already converted (`sudo girl --bulk` first, say).
 backend = "auto"   # auto, claude or openai
 
 [claude]
-model = "sonnet"
+model = "haiku"   # the default
 
 [openai]
 base_url = "http://localhost:11434/v1"   # Ollama, for example
