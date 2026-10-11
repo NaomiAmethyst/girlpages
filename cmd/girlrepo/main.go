@@ -15,7 +15,9 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -24,6 +26,7 @@ import (
 
 	"github.com/NaomiAmethyst/girlpages/internal/config"
 	"github.com/NaomiAmethyst/girlpages/internal/core"
+	"github.com/NaomiAmethyst/girlpages/internal/crawl"
 	"github.com/NaomiAmethyst/girlpages/internal/ingest"
 	"github.com/NaomiAmethyst/girlpages/internal/llm"
 	"github.com/NaomiAmethyst/girlpages/internal/repo"
@@ -38,9 +41,12 @@ const usage = `girlrepo builds a girlpages repository and the website on top of 
 usage: girlrepo [-d DIR] COMMAND [options]
 
 commands:
-  ingest PATH...     add man pages from directories or package files
-                     (.deb, .pkg.tar.*, .rpm)
+  ingest PATH...     add man pages from directories, package files
+                     (.deb, .pkg.tar.*, .rpm, or URLs of them) or git
+                     repositories (git+https://…[#ref], or URLs ending .git)
   ingest --system    add this system's man pages, noting their packages
+  crawl KIND URL     add every package with man pages from a repository:
+                     apt URL SUITE, rpm URL, or pacman URL
   girlify [NAME...]  girlify pages that aren't yet
   publish            write the section lists, search index, manifest and
                      website
@@ -89,6 +95,7 @@ func run(args []string) int {
 	a := &app{dir: *dir, cfg: &cfg}
 	cmds := map[string]func(context.Context, []string) error{
 		"ingest":  a.ingest,
+		"crawl":   a.crawl,
 		"girlify": a.girlify,
 		"publish": a.publish,
 		"gc":      a.gc,
@@ -101,7 +108,11 @@ func run(args []string) int {
 		fmt.Fprintf(os.Stderr, "girlrepo: no command %q\n\n%s", rest[0], usage)
 		return 1
 	}
-	if err := fn(ctx, rest[1:]); err != nil {
+	err = fn(ctx, rest[1:])
+	for _, c := range a.cleanups {
+		c()
+	}
+	if err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
 			return 0
 		}
@@ -121,8 +132,9 @@ func run(args []string) int {
 var errUsage = errors.New("usage")
 
 type app struct {
-	dir string
-	cfg *config.Config
+	dir      string
+	cfg      *config.Config
+	cleanups []func()
 }
 
 func (a *app) store() (*repo.Store, error) { return repo.Open(filepath.Join(a.dir, "repo")) }
@@ -189,7 +201,11 @@ func (a *app) ingest(ctx context.Context, args []string) error {
 	if *system {
 		st, err = ingest.System(ctx, s, o)
 	} else {
-		st, err = ingest.Paths(ctx, s, fs.Args(), o)
+		var srcs []ingest.Source
+		srcs, err = a.sources(ctx, fs.Args(), pkg)
+		if err == nil {
+			st, err = ingest.Sources(ctx, s, srcs, o)
+		}
 	}
 	verb := "added"
 	if *dry {
@@ -203,6 +219,135 @@ func (a *app) ingest(ctx context.Context, args []string) error {
 	return err
 }
 
+// sources turns ingest arguments into sources: git repositories are
+// cloned, and package URLs downloaded, into temporary directories that go
+// when girlrepo exits.
+func (a *app) sources(ctx context.Context, args []string, pkg repo.Package) ([]ingest.Source, error) {
+	var srcs []ingest.Source
+	for _, arg := range args {
+		switch {
+		case ingest.IsGit(arg):
+			fmt.Fprintf(os.Stderr, "🐙 cloning %s\n", arg)
+			src, cleanup, err := ingest.CloneGit(ctx, arg)
+			if err != nil {
+				return nil, err
+			}
+			a.cleanups = append(a.cleanups, cleanup)
+			src.Package.Distro, src.Package.Release = pkg.Distro, pkg.Release
+			if pkg.Name != "" && len(args) == 1 {
+				src.Package.Name = pkg.Name
+			}
+			srcs = append(srcs, src)
+		case strings.HasPrefix(arg, "https://") || strings.HasPrefix(arg, "http://"):
+			dir, err := os.MkdirTemp("", "girlrepo-dl-")
+			if err != nil {
+				return nil, err
+			}
+			a.cleanups = append(a.cleanups, func() { os.RemoveAll(dir) })
+			u := strings.SplitN(arg, "?", 2)[0]
+			file := filepath.Join(dir, filepath.Base(u))
+			if ingest.PackageKind(file) == "" {
+				return nil, fmt.Errorf("%s: only package files (.deb, .pkg.tar.*, .rpm) and git repositories can be fetched", arg)
+			}
+			fmt.Fprintf(os.Stderr, "⬇️  downloading %s\n", arg)
+			if _, err := a.fetcher().Download(ctx, arg, "", file); err != nil {
+				return nil, err
+			}
+			srcs = append(srcs, ingest.LocalSource(file, pkg, len(args) > 1))
+		default:
+			srcs = append(srcs, ingest.LocalSource(arg, pkg, len(args) > 1))
+		}
+	}
+	return srcs, nil
+}
+
+func (a *app) fetcher() *crawl.Fetcher {
+	return &crawl.Fetcher{Client: &http.Client{Timeout: 30 * time.Minute}, Retries: 3, UserAgent: "girlrepo/" + getVersion()}
+}
+
+func (a *app) crawl(ctx context.Context, args []string) error {
+	fs := flags("crawl", "apt URL SUITE | rpm URL | pacman URL [options]")
+	components := fs.String("components", "", "apt: components to crawl (default: all the suite has)")
+	arch := fs.String("arch", "", "apt: architecture (default amd64)")
+	dbName := fs.String("repo", "", "pacman: database name (default: from the URL, e.g. core)")
+	distro := fs.String("distro", "", "distribution to record (default: what the repository says)")
+	release := fs.String("release", "", "release to record (default: what the repository says)")
+	match := fs.StringP("match", "m", "", "only packages whose names match this regular expression")
+	limit := fs.Int("limit", 0, "stop after this many packages")
+	jobs := fs.IntP("jobs", "j", 4, "packages to download at once")
+	group := fs.Int("group", 16, "packages to ingest together (pages can include pages from the same group)")
+	again := fs.Bool("again", false, "ingest packages even if an earlier crawl did")
+	allVersions := fs.Bool("all-versions", false, "crawl every version the repository has, not just the newest of each package")
+	all := fs.Bool("all", false, "download every package if the repository can't say which have man pages")
+	keep := fs.Bool("keep-current", false, "don't make these the current versions (for older releases)")
+	sections := fs.StringP("sections", "s", "", "only pages in these sections (comma separated)")
+	dry := fs.BoolP("dry-run", "n", false, "list the packages that would be fetched")
+	noCache := fs.Bool("no-cache", false, "don't take conversions from girl's cache")
+	quiet := fs.BoolP("quiet", "q", false, "only report problems")
+	if err := parse(fs, args); err != nil {
+		return err
+	}
+	rest := fs.Args()
+	if len(rest) < 2 {
+		fs.Usage()
+		return errUsage
+	}
+	var r crawl.Repository
+	switch rest[0] {
+	case "apt", "deb", "debian":
+		if len(rest) != 3 {
+			return fmt.Errorf("crawl apt wants a URL and a suite, like: crawl apt https://deb.debian.org/debian trixie")
+		}
+		r = &crawl.Apt{URL: rest[1], Suite: rest[2], Arch: *arch, All: *all, Components: splitSections(*components)}
+	case "rpm", "yum", "dnf":
+		r = &crawl.RPM{URL: rest[1], All: *all}
+	case "pacman", "arch":
+		r = &crawl.Pacman{URL: rest[1], Repo: *dbName}
+	default:
+		return fmt.Errorf("can't crawl %q repositories; try apt, rpm or pacman", rest[0])
+	}
+	if len(rest) > 2 && rest[0] != "apt" && rest[0] != "deb" && rest[0] != "debian" {
+		fs.Usage()
+		return errUsage
+	}
+	s, err := a.store()
+	if err != nil {
+		return err
+	}
+	o := crawl.Options{Distro: *distro, Release: *release, Limit: *limit, Jobs: *jobs, Group: *group,
+		Again: *again, AllVersions: *allVersions, DryRun: *dry, Fetcher: a.fetcher(), Log: os.Stderr, Quiet: *quiet,
+		State:  filepath.Join(config.UserCacheDir(), "girlrepo-crawl", repo.Hash([]byte(absPath(s.Dir)))[:16]+".json"),
+		Ingest: ingest.Options{KeepCurrent: *keep, Sections: splitSections(*sections), Log: os.Stderr}}
+	if *match != "" {
+		re, err := regexp.Compile(*match)
+		if err != nil {
+			return fmt.Errorf("--match: %w", err)
+		}
+		o.Match = re
+	}
+	if !*noCache {
+		o.Ingest.Cache = core.CacheSet(a.cfg)
+	}
+	start := time.Now()
+	st, err := crawl.Run(ctx, s, r, o)
+	if !*dry {
+		fmt.Fprintf(os.Stderr, "🕷️  %d of %d packages fetched (%s), %d failed: %d pages, %d new versions, %d already known (%s)\n",
+			st.Fetched, st.WithMan-st.Done, humanBytes(st.Bytes), st.Failed, st.Pages.Pages, st.Pages.New, st.Pages.Known,
+			time.Since(start).Round(time.Second))
+		if err == nil && st.Pages.New > 0 {
+			fmt.Fprintln(os.Stderr, "   next: girlrepo girlify, then girlrepo publish ✨")
+		}
+	}
+	return err
+}
+
+func absPath(p string) string {
+	if a, err := filepath.Abs(p); err == nil {
+		return a
+	}
+	return p
+}
+
 func (a *app) girlify(ctx context.Context, args []string) error {
 	fs := flags("girlify", "[options] [NAME...]")
 	backend := fs.String("backend", "", "openai or claude (default from the girlpages config)")
@@ -212,7 +357,9 @@ func (a *app) girlify(ctx context.Context, args []string) error {
 	sections := fs.StringP("sections", "s", "", "only these sections (comma separated)")
 	all := fs.Bool("all-versions", false, "girlify old versions too, not just current ones")
 	force := fs.Bool("force", false, "girlify again even if already done")
-	dry := fs.BoolP("dry-run", "n", false, "say what would be girlified")
+	dry := fs.BoolP("dry-run", "n", false, "say what would be girlified, and estimate the tokens it'd take")
+	price := fs.String("price", "", "with --dry-run, estimate the cost at IN/OUT US dollars per million tokens, e.g. 0.10/0.50")
+	ratio := fs.Float64("output-ratio", ingest.OutputRatio, "with --dry-run, how long output is reckoned to be next to the original")
 	noCache := fs.Bool("no-cache", false, "don't take conversions from girl's cache")
 	batch := fs.String("batch", "", "send pages in batches: openrouter, anthropic or none (default from the config)")
 	noBatch := fs.Bool("no-batch", false, "the same as --batch=none")
@@ -248,7 +395,21 @@ func (a *app) girlify(ctx context.Context, args []string) error {
 	if !*dry {
 		o.Backend, backendErr = core.NewBackend(a.cfg)
 	}
-	if o.Batch, err = core.NewBatcher(a.cfg, batchDir(s.Dir), o.Backend); err != nil {
+	var inPrice, outPrice float64
+	if *price != "" {
+		if !*dry {
+			return fmt.Errorf("--price goes with --dry-run")
+		}
+		in, out, ok := strings.Cut(strings.ReplaceAll(*price, "$", ""), "/")
+		var e1, e2 error
+		inPrice, e1 = strconv.ParseFloat(strings.TrimSpace(in), 64)
+		outPrice, e2 = strconv.ParseFloat(strings.TrimSpace(out), 64)
+		if !ok || e1 != nil || e2 != nil || inPrice < 0 || outPrice < 0 {
+			return fmt.Errorf("--price wants IN/OUT dollars per million tokens, like 0.10/0.50")
+		}
+	}
+	o.OutputRatio = *ratio
+	if o.Batch, err = core.NewBatcher(a.cfg, batchDir(s.Dir), o.Backend); err != nil && !*dry {
 		return err
 	}
 	if backendErr != nil {
@@ -266,7 +427,21 @@ func (a *app) girlify(ctx context.Context, args []string) error {
 	start := time.Now()
 	st, err := ingest.Girlify(ctx, s, o)
 	if *dry {
-		fmt.Fprintf(os.Stderr, "✨ %d pages to girlify\n", st.Remaining)
+		e := st.Estimate
+		fmt.Fprintf(os.Stderr, "✨ %d pages to girlify", e.Pages)
+		if e.Cached > 0 {
+			fmt.Fprintf(os.Stderr, " (and %d already in girl's cache, for free)", e.Cached)
+		}
+		if st.Pending > 0 {
+			fmt.Fprintf(os.Stderr, " (and %d in batches already sent)", st.Pending)
+		}
+		fmt.Fprintf(os.Stderr, ": %d requests\n   ~%s tokens in, ~%s out (rough guesses; thinking isn't counted)\n",
+			e.Requests, humanCount(e.InputTokens), humanCount(e.OutputTokens))
+		if *price != "" {
+			cost := (float64(e.InputTokens)*inPrice + float64(e.OutputTokens)*outPrice) / 1e6
+			fmt.Fprintf(os.Stderr, "   at $%g in / $%g out per million tokens: ~$%.2f, or ~$%.2f in batches at half price\n",
+				inPrice, outPrice, cost, cost/2)
+		}
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "💅 girlified %d pages, %d from the local cache, %d failed", st.Converted, st.FromCache, st.Failed)
@@ -488,6 +663,18 @@ func batchDir(repoDir string) string {
 		abs = repoDir
 	}
 	return filepath.Join(config.UserCacheDir(), "girlrepo-batches", repo.Hash([]byte(abs))[:16])
+}
+
+func humanCount(n int64) string {
+	switch {
+	case n >= 1e9:
+		return fmt.Sprintf("%.1fB", float64(n)/1e9)
+	case n >= 1e6:
+		return fmt.Sprintf("%.1fM", float64(n)/1e6)
+	case n >= 1e3:
+		return fmt.Sprintf("%.1fk", float64(n)/1e3)
+	}
+	return fmt.Sprint(n)
 }
 
 func humanBytes(n int64) string {

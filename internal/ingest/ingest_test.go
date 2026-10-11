@@ -388,3 +388,72 @@ func TestIngestCurrentIsLastPath(t *testing.T) {
 		}
 	}
 }
+
+func TestGit(t *testing.T) {
+	needTools(t, "git")
+	src := t.TempDir()
+	write(t, filepath.Join(src, "doc", "tool.1"), []byte(roff("tool", "1", "does tool things")))
+	write(t, filepath.Join(src, "doc", "tool.conf.5.gz"), gzipped(roff("tool.conf", "5", "configures tool")))
+	write(t, filepath.Join(src, "man", "de", "tool.1"), []byte(roff("tool", "1", "macht Dinge")))
+	write(t, filepath.Join(src, "src", "notes.1"), []byte("just some notes, not roff\n"))
+	write(t, filepath.Join(src, "README.md"), []byte("# tool\n"))
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false",
+			"-c", "tag.gpgsign=false", "-c", "init.defaultBranch=main"}, args...)...)
+		cmd.Dir = src
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q")
+	git("add", ".")
+	git("commit", "-qm", "one")
+	git("tag", "v1.0")
+	write(t, filepath.Join(src, "doc", "tool.1"), []byte(roff("tool", "1", "does newer tool things")))
+	git("commit", "-qam", "two")
+
+	ctx := context.Background()
+	if !IsGit("git+file://"+src) || !IsGit("https://example.org/x.git#v1") || IsGit("/tmp/x.deb") {
+		t.Error("IsGit")
+	}
+	source, cleanup, err := CloneGit(ctx, "git+file://"+src+"#v1.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if p := source.Package; p.Name != filepath.Base(src) || !strings.HasPrefix(p.Version, "v1.0 (") || p.URL != "file://"+src || !source.Loose {
+		t.Errorf("source: %+v", source)
+	}
+	s, _ := repo.Open(t.TempDir())
+	st, err := Sources(ctx, s, []Source{source}, Options{Quiet: true, Log: io.Discard})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Pages != 2 || st.New != 2 {
+		t.Fatalf("ingest: %+v", st)
+	}
+	l, _, _ := s.Listing("tool", "1")
+	if l == nil || l.CurrentVersion().Description != "does tool things" {
+		t.Fatalf("tool at v1.0: %+v", l)
+	}
+	if l, _, _ := s.Listing("tool.conf", "5"); l == nil {
+		t.Error("compressed page missed")
+	}
+	// The default branch has the newer page.
+	head, cleanup2, err := CloneGit(ctx, "git+file://"+src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup2()
+	if _, err := Sources(ctx, s, []Source{head}, Options{Quiet: true, Log: io.Discard}); err != nil {
+		t.Fatal(err)
+	}
+	l, _, _ = s.Listing("tool", "1")
+	if len(l.Versions) != 2 || l.CurrentVersion().Description != "does newer tool things" {
+		t.Errorf("tool at HEAD: %+v", l)
+	}
+	if _, _, err := CloneGit(ctx, "git+file://"+src+"#no-such-ref"); err == nil {
+		t.Error("a missing ref should fail")
+	}
+}

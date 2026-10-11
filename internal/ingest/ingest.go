@@ -67,31 +67,64 @@ type candidate struct {
 	jails []string
 }
 
-// Paths ingests directories and package files.
+// Source is something to ingest: a directory or a package file, and
+// where it came from.
+type Source struct {
+	Path    string
+	Package repo.Package
+	// Loose looks for roff pages anywhere under Path, not just in manual
+	// sections: for source trees such as git checkouts.
+	Loose bool
+}
+
+// Paths ingests directories and package files. Package files' names,
+// versions and architectures are read from their file names unless o.Package
+// gives them (for a single file).
 func Paths(ctx context.Context, s *repo.Store, paths []string, o Options) (Stats, error) {
+	var srcs []Source
+	for _, p := range paths {
+		srcs = append(srcs, LocalSource(p, o.Package, len(paths) > 1))
+	}
+	return Sources(ctx, s, srcs, o)
+}
+
+// LocalSource makes a Source for a directory or package file. A package
+// file's name, version and architecture come from its file name, unless
+// pkg names it and it's the only one (one of many can't share a name).
+func LocalSource(path string, pkg repo.Package, many bool) Source {
+	if PackageKind(path) != "" {
+		if fi, err := os.Stat(path); err == nil && !fi.IsDir() {
+			guess := PackageFromFile(path)
+			if pkg.Name == "" || many {
+				pkg.Name, pkg.Version, pkg.Arch = guess.Name, guess.Version, guess.Arch
+			}
+		}
+	}
+	return Source{Path: path, Package: pkg}
+}
+
+// Sources ingests sources, each with its own provenance. Pages may include
+// (.so) pages from any of them.
+func Sources(ctx context.Context, s *repo.Store, srcs []Source, o Options) (Stats, error) {
 	var cands []candidate
 	var roots, jails []string
-	for _, p := range paths {
+	for _, src := range srcs {
+		p, pkg := src.Path, src.Package
 		fi, err := os.Stat(p)
 		if err != nil {
 			return Stats{}, err
 		}
-		pkg := o.Package
 		sysroot, jail := "", ""
 		switch {
-		case fi.IsDir() && isManRoot(p):
+		case fi.IsDir() && !src.Loose && isManRoot(p):
 			// A manual root on this system: links point where they say.
 			sysroot = "/"
 		case fi.IsDir():
-			// An unpacked package or system image.
+			// An unpacked package, system image or source tree.
 			sysroot, jail = p, p
 		default:
 			if PackageKind(p) == "" {
 				return Stats{}, fmt.Errorf("%s: not a directory or a package file", p)
-			}
-			guess := PackageFromFile(p)
-			if pkg.Name == "" || len(paths) > 1 {
-				pkg.Name, pkg.Version, pkg.Arch = guess.Name, guess.Version, guess.Arch
 			}
 			dir, err := os.MkdirTemp("", "girlrepo-pkg-")
 			if err != nil {
@@ -107,7 +140,13 @@ func Paths(ctx context.Context, s *repo.Store, paths []string, o Options) (Stats
 		if sysroot != "/" {
 			top = sysroot
 		}
-		cs, rs, err := scan(top, sysroot, pkg, o.Sections)
+		var cs []candidate
+		var rs []string
+		if src.Loose {
+			cs, rs, err = scanLoose(top, pkg, o.Sections)
+		} else {
+			cs, rs, err = scan(top, sysroot, pkg, o.Sections)
+		}
 		if err != nil {
 			return Stats{}, err
 		}
@@ -517,11 +556,14 @@ type GirlifyOptions struct {
 	// AllVersions converts every version, not just current ones.
 	AllVersions bool
 	// Force converts again even if there's a girl variant already.
-	Force  bool
-	Cache  cache.Set
-	DryRun bool
-	Quiet  bool
-	Log    io.Writer
+	Force bool
+	// OutputRatio, for dry runs, is how long output is reckoned to be next
+	// to the original; zero means the package's OutputRatio.
+	OutputRatio float64
+	Cache       cache.Set
+	DryRun      bool
+	Quiet       bool
+	Log         io.Writer
 	// Batch, if set, sends pages off in batches instead of one at a time,
 	// first collecting any that earlier runs sent.
 	Batch *llm.Batcher
@@ -535,6 +577,41 @@ type GirlifyStats struct {
 	// Batched pages were sent off in batches still running; Pending ones
 	// were already in one sent earlier.
 	Batched, Pending int
+	// Estimate is what a dry run reckons the conversions would take.
+	Estimate Estimate
+}
+
+// Estimate is the work a girlify run would send to the model.
+type Estimate struct {
+	// Pages to convert, and Requests (parts) they take; Cached pages are
+	// in girl's cache already and cost nothing.
+	Pages, Requests, Cached int
+	// InputTokens and OutputTokens are rough: about four bytes a token,
+	// and output as long as the original times OutputRatio.
+	InputTokens, OutputTokens int64
+}
+
+// OutputRatio is how much longer a girlified page is than the original,
+// measured from real conversions (median 1.12, most between 1 and 1.4).
+const OutputRatio = 1.2
+
+// EstimateTokens guesses how many tokens text is: about four bytes each,
+// once runs of whitespace (man's indentation) are counted as one.
+func EstimateTokens(text string) int64 {
+	n, space := 0, false
+	for i := 0; i < len(text); i++ {
+		c := text[i]
+		if c == ' ' || c == '\t' || c == '\n' {
+			if !space {
+				n++
+			}
+			space = true
+			continue
+		}
+		space = false
+		n++
+	}
+	return int64((n + 3) / 4)
 }
 
 // Girlify adds girl variants to versions that don't have one.
@@ -617,8 +694,34 @@ func Girlify(ctx context.Context, s *repo.Store, o GirlifyOptions) (GirlifyStats
 		order = order[:o.Limit]
 	}
 	if o.DryRun {
+		ratio := o.OutputRatio
+		if ratio <= 0 {
+			ratio = OutputRatio
+		}
+		e := &st.Estimate
 		for _, src := range order {
-			logf("✨ would girlify %s\n", bySource[src].title)
+			w := bySource[src]
+			man, err := s.Variant(src, repo.VariantMan)
+			if err != nil {
+				return st, err
+			}
+			text := man.Text()
+			if _, ok := o.Cache.Object(cache.Hash(text)); ok && !o.Force {
+				e.Cached++
+				logf("💾 %s (in the local cache)\n", w.title)
+				continue
+			}
+			parts := llm.Plan(w.title, text, o.LLM)
+			var in, out int64
+			for _, p := range parts {
+				in += EstimateTokens(p.System) + EstimateTokens(p.User)
+				out += int64(float64(EstimateTokens(p.Source)) * ratio)
+			}
+			e.Pages++
+			e.Requests += len(parts)
+			e.InputTokens += in
+			e.OutputTokens += out
+			logf("✨ would girlify %s: %d requests, ~%d tokens in, ~%d out\n", w.title, len(parts), in, out)
 		}
 		st.Remaining += len(order)
 		return st, nil

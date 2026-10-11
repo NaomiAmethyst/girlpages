@@ -139,6 +139,11 @@ at all, caching everything the repo has.
 ```sh
 girlrepo ingest --distro debian --release trixie pool/*.deb   # or .pkg.tar.zst, .rpm, dirs
 girlrepo ingest --system                                      # or this machine, with its packages
+girlrepo ingest git+https://github.com/tmux/tmux#3.5a          # or a git repository
+girlrepo crawl apt https://deb.debian.org/debian trixie        # or a whole package repository
+girlrepo crawl rpm https://dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os
+girlrepo crawl pacman https://geo.mirror.pkgbuild.com/core/os/x86_64
+girlrepo girlify -n --price 0.10/0.50                         # what would it cost?
 girlrepo girlify -j 8                                         # convert what isn't yet
 girlrepo publish --url https://example.org --gc               # index it and build the site
 girlrepo serve                                                # preview at localhost:1990

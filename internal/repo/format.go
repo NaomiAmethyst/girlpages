@@ -119,6 +119,8 @@ type Package struct {
 	Name    string `json:"name,omitempty"`
 	Version string `json:"version,omitempty"`
 	Arch    string `json:"arch,omitempty"`
+	// URL is where it came from, for sources such as git repositories.
+	URL string `json:"url,omitempty"`
 }
 
 func (p Package) String() string {
@@ -137,7 +139,11 @@ func (p Package) String() string {
 		}
 		parts = append(parts, n)
 	}
-	return strings.Join(parts, ": ")
+	out := strings.Join(parts, ": ")
+	if p.URL != "" {
+		out += " from " + p.URL
+	}
+	return out
 }
 
 // Find returns the version with the given source hash, or nil.

@@ -22,6 +22,15 @@ girlrepo \- build and publish girlpages repositories and their website
 .B girlrepo
 .RB [ \-d
 .IR dir ]
+.B crawl
+.BR apt | rpm | pacman
+.I url
+.RI [ suite ]
+.RI [ options ]
+.br
+.B girlrepo
+.RB [ \-d
+.IR dir ]
 .B girlify
 .RI [ options ]
 .RI [ name ...]
@@ -80,7 +89,22 @@ image) or a package file:
 .BR .pkg.tar.* ,
 or
 .B .rpm
-(source packages are skipped).
+(source packages are skipped), the URL of one, or a git repository:
+.BI git+ url\fR,
+or any URL ending in
+.BR .git ,
+optionally followed by
+.BI # ref
+for a branch, tag or commit.
+Git repositories are cloned shallowly, and every roff page in them
+.RI ( name . section ,
+perhaps compressed, starting with
+.B .TH
+or
+.BR .Dt )
+is ingested wherever it is, apart from translations; pages generated at build
+time from other formats aren't there to be found.
+Their package is the repository, at the tag or commit.
 Packages are unpacked with
 .BR tar (1)
 and
@@ -149,6 +173,78 @@ Don't take conversions from girl's cache.
 .TP
 .BR \-q ", " \-\-quiet
 Only report problems.
+.SS "crawl apt \fIurl suite\fR | rpm \fIurl\fR | pacman \fIurl\fR"
+Ingests every package in a repository that has man pages:
+.TP
+.B apt \fIurl suite\fR
+A Debian-style repository, such as
+.B https://deb.debian.org/debian trixie
+or
+.BR "http://archive.ubuntu.com/ubuntu noble" .
+.TP
+.B rpm \fIurl\fR
+An rpm-md (yum, dnf) repository: the directory holding
+.BR repodata/ .
+.TP
+.B pacman \fIurl\fR
+An Arch-style repository: the directory holding the database, such as
+.BR https://geo.mirror.pkgbuild.com/core/os/x86_64 .
+.PP
+Man pages only exist inside packages, compressed as a whole, so they can't
+be fetched on their own.
+Instead the repository's file lists (apt's
+.BR Contents ,
+rpm's
+.BR filelists ,
+pacman's
+.BR .files )
+say which packages have English man pages, and only those are downloaded
+(checking their SHA-256 against the index), ingested a few at a time with
+their package, version and architecture, and deleted.
+Only the newest version of each package is taken.
+What's been ingested is remembered (in
+.BR ~/.cache/girlpages/girlrepo\-crawl/ ),
+so crawling again only fetches packages that are new or changed.
+Repository signatures aren't checked; use https mirrors.
+.TP
+.BR \-\-components =\fIlist\fR ", " \-\-arch =\fIarch\fR
+For apt: which components (default: all the suite has) and architecture
+(default amd64; architecture-independent packages come too).
+.TP
+.BR \-\-repo =\fIname\fR
+For pacman: the database name, if it isn't the directory two above the URL.
+.TP
+.BR \-\-distro =\fIid\fR ", " \-\-release =\fIrelease\fR
+What to record, if not what the repository says.
+.TP
+.BR \-m ", " \-\-match =\fIregexp\fR
+Only packages whose names match.
+.TP
+.BR \-\-limit =\fIn\fR
+Stop after this many packages.
+.TP
+.BR \-j ", " \-\-jobs =\fIn\fR
+Download this many packages at once (default 4).
+.TP
+.BR \-\-group =\fIn\fR
+Ingest this many packages together (default 16); a page can only include
+pages from packages in its group.
+.TP
+.B \-\-again
+Ingest packages even if an earlier crawl did.
+.TP
+.B \-\-all\-versions
+Take every version the repository has, not just the newest.
+.TP
+.B \-\-all
+Download every package if the repository has no file lists.
+.TP
+.BR \-n ", " \-\-dry\-run
+List the packages that would be fetched, and how much that is.
+.TP
+.BR \-\-keep\-current ", " \-s ", " \-\-no\-cache ", " \-q
+As for
+.BR ingest .
 .SS "girlify [\fIname\fR...]"
 Converts the current version of every page (or just the named ones) that has
 no
@@ -198,7 +294,20 @@ Convert again, even pages that already have a
 .B girl
 variant.
 .TP
-.BR \-n ", " \-\-dry\-run ", " \-\-no\-cache ", " \-q ", " \-\-quiet
+.BR \-n ", " \-\-dry\-run
+List what would be girlified, with a rough count of the requests and tokens
+it would take: about four bytes a token, and output
+.B \-\-output\-ratio
+(default 1.2, measured from real conversions) times as long as the original.
+Thinking tokens, for models that think, aren't counted.
+.TP
+.BR \-\-price =\fIin\fR/\fIout\fR
+With
+.BR \-\-dry\-run ,
+estimate the cost at these US dollars per million input and output tokens,
+both live and in batches at half price.
+.TP
+.BR \-\-no\-cache ", " \-q ", " \-\-quiet
 As for
 .BR ingest .
 .SS publish
@@ -356,6 +465,15 @@ Add every page from Arch's package cache.
 .TP
 .B girlrepo publish \-\-base /girlpages/ \-\-url https://naomiamethyst.github.io/girlpages
 Build for a GitHub Pages project site.
+.TP
+.B girlrepo crawl apt https://deb.debian.org/debian trixie \-\-components main \-n
+See how much of Debian has man pages, and how big those packages are.
+.TP
+.B girlrepo ingest git+https://github.com/tmux/tmux#3.5a
+Add tmux's page as of its 3.5a tag.
+.TP
+.B girlrepo girlify \-n \-q \-s 1 \-\-price 0.10/0.50
+Estimate what girlifying section 1 would cost.
 .TP
 .B girl \-\-repo ./repo ls
 Read
