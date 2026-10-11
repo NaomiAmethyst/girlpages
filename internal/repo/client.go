@@ -149,63 +149,68 @@ func Find(ctx context.Context, src string, timeout time.Duration, userAgent stri
 	return nil, fmt.Errorf("no published girlpages repository at %s (%v)", src, firstErr)
 }
 
-// Girlified says which versions a repository has girl variants of, from
-// its girlified-sources index, fetching each shard once.
-type Girlified struct {
-	c *Client
+// VariantIndex says which versions a repository has one variant of, from
+// that variant's index, fetching each shard once.
+type VariantIndex struct {
+	c       *Client
+	variant string
 
 	mu     sync.Mutex
 	loaded bool
-	ranges []ShardRange // nil if the repository has no index
+	ranges []ShardRange // nil if the repository has no index for it
 	shards map[string]map[string]bool
 }
 
-// Girlified returns a Girlified for the repository.
-func (c *Client) Girlified() *Girlified {
-	return &Girlified{c: c, shards: map[string]map[string]bool{}}
+// VariantIndex returns the index of the versions that have a variant.
+func (c *Client) VariantIndex(variant string) *VariantIndex {
+	return &VariantIndex{c: c, variant: variant, shards: map[string]map[string]bool{}}
 }
 
-// ErrNoIndex means a repository was published without a girlified-sources
-// index (by an older girlrepo).
-var ErrNoIndex = errors.New("the repository has no girlified-sources index")
+// ErrNoIndex means a repository has no index for a variant: it was
+// published by an older girlrepo, or has none of that variant.
+var ErrNoIndex = errors.New("the repository has no index for that variant")
 
-// Has reports whether the repository has a girl variant of the version
-// with this source hash.
-func (g *Girlified) Has(ctx context.Context, source string) (bool, error) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if !g.loaded {
-		m, err := g.c.Manifest(ctx)
+// Has reports whether the repository has the variant of the version with
+// this source hash.
+func (x *VariantIndex) Has(ctx context.Context, source string) (bool, error) {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	kind := VariantIndexKind(x.variant)
+	if !x.loaded {
+		if !ValidVariant(x.variant) {
+			return false, fmt.Errorf("bad variant name %q", x.variant)
+		}
+		m, err := x.c.Manifest(ctx)
 		if err != nil {
 			return false, err
 		}
-		if m.Index.Sources != "" {
+		if sha := m.Index.Variants[x.variant]; sha != "" {
 			var sm ShardManifest
-			if err := g.c.Get(ctx, IndexManifestPath("sources", m.Index.Sources), &sm); err != nil {
+			if err := x.c.Get(ctx, IndexManifestPath(kind, sha), &sm); err != nil {
 				return false, err
 			}
-			g.ranges = sm.Shards
+			x.ranges = sm.Shards
 		}
-		g.loaded = true
+		x.loaded = true
 	}
-	if g.ranges == nil {
+	if x.ranges == nil {
 		return false, ErrNoIndex
 	}
 	if len(source) < SourceKeyLength {
 		return false, nil
 	}
 	key := source[:SourceKeyLength]
-	r := findRange(g.ranges, key)
+	r := findRange(x.ranges, key)
 	if r == nil {
 		return false, nil
 	}
-	set, ok := g.shards[r.SHA256]
+	set, ok := x.shards[r.SHA256]
 	if !ok {
 		if !ValidHash(r.SHA256) {
 			return false, fmt.Errorf("bad shard hash %q", r.SHA256)
 		}
 		var sh SourceShard
-		if err := g.c.Get(ctx, ShardPath("sources", r.SHA256), &sh); err != nil {
+		if err := x.c.Get(ctx, ShardPath(kind, r.SHA256), &sh); err != nil {
 			return false, err
 		}
 		set = make(map[string]bool, len(sh.Sources))
@@ -214,7 +219,7 @@ func (g *Girlified) Has(ctx context.Context, source string) (bool, error) {
 				set[k[:SourceKeyLength]] = true
 			}
 		}
-		g.shards[r.SHA256] = set
+		x.shards[r.SHA256] = set
 	}
 	return set[key], nil
 }

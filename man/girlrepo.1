@@ -472,16 +472,21 @@ The shards of the page table that doc ids index.
 .BI index/docs/shard\- ab / sha .json
 Part of the page table: [name, section, description, sources].
 .TP
-.BI index/sources/manifest\- sha .json
-The range of keys in each girlified-sources shard.
+.BI index/variants/ variant /manifest\- sha .json
+The range of keys in each of a variant's index shards.
 .TP
-.BI index/sources/shard\- ab / sha .json
-The first 16 hex digits of the source hash of every version with a girl
+.BI index/variants/ variant /shard\- ab / sha .json
+The first 16 hex digits of the source hash of every version with that
 variant, sorted, so a client like
 .B girl \-\-bulk
 or
 .B girl \-\-import
 can tell which of its pages a repository has without asking for each.
+.B manifest.json
+names each variant's index under
+.BR index.variants ,
+and lists the variants under
+.BR variants .
 .PP
 .I source
 is the page's source hash (as above) and
@@ -492,7 +497,11 @@ Variants are
 (girlpages markup, split into sections at top-level headings) and
 .B man
 (man's plain text, split at its headings, with the header and footer lines
-apart); joining a variant's sections gives back exactly the original.
+apart), and there may be others: any short lower-case name
+.RB ( [a\-z][a\-z0\-9\-]* ),
+for pages rewritten with other prompts, each saying its
+.B syntax
+so clients know how to show it; joining a variant's sections gives back exactly the original.
 Names and sections are escaped in file names: anything but letters, digits
 and
 .B _+\-.,:@

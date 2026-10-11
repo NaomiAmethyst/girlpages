@@ -99,6 +99,11 @@ func TestImport(t *testing.T) {
 	addVersion(t, b, "cat", "1", "concatenate files", "their cat", arch, 200)        // a different conversion
 	addVersion(t, b, "tar", "1", "an archiving utility", "tar slays", arch, 200)     // a new page
 	addVersion(t, b, "bad", "8", "tampered with", "fine", arch, 200)                 // see below
+	// A variant made with another prompt comes along too.
+	lt := listing(t, b, "tar", "1")
+	pirate, _ := b.PutVariant(&Variant{Format: Format, Variant: "pirate", Source: lt.Current, Syntax: SyntaxMarkup,
+		Sections: []Section{{Heading: "NAME", Body: "arr\n"}}})
+	b.UpdateListing("tar", "1", func(l *Listing) error { l.CurrentVersion().Variants["pirate"] = pirate; return nil })
 	publish(t, b)
 	// Tamper with a file after publishing: its hash no longer matches.
 	lb := listing(t, b, "bad", "8")
@@ -146,8 +151,9 @@ func TestImport(t *testing.T) {
 	if g, _ := a.Variant(srcs["cat"], VariantGirl); !strings.Contains(g.Text(), "our cat") {
 		t.Errorf("cat should keep ours: %q", g.Text())
 	}
-	// tar: new, with their current.
-	if l := listing(t, a, "tar", "1"); l.CurrentVersion().Description != "an archiving utility" {
+	// tar: new, with their current, and every variant.
+	if l := listing(t, a, "tar", "1"); l.CurrentVersion().Description != "an archiving utility" ||
+		l.CurrentVersion().Variants["pirate"].SHA256 == "" || !a.HasVariant(l.Current, "pirate") {
 		t.Errorf("tar: %+v", l)
 	}
 	// bad: the tampered variant was refused, but the rest of the page came.

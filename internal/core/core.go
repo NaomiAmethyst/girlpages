@@ -205,11 +205,11 @@ func FetchFrom(ctx context.Context, c *repo.Client, p manpage.Page) (string, *re
 }
 
 // BulkFetch makes a fetch function for bulk runs (girl --bulk, --import):
-// it checks the repository's girlified-sources index before asking for
-// each page, so pages the repository doesn't have cost no requests. Older
+// it checks the repository's index of girl variants before asking for each
+// page, so pages the repository doesn't have cost no requests. Older
 // repositories without the index are asked page by page.
 func BulkFetch(c *repo.Client) func(ctx context.Context, p manpage.Page) (string, string, error) {
-	idx := c.Girlified()
+	idx := c.VariantIndex(repo.VariantGirl)
 	return func(ctx context.Context, p manpage.Page) (string, string, error) {
 		src, err := manpage.SourceHash(p.Path, nil)
 		if err != nil {

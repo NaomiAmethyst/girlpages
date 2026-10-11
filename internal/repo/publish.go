@@ -59,7 +59,7 @@ func (s *Store) AllPages() ([]PageRef, error) {
 // Publish writes the section indexes, the search index and finally
 // manifest.json from the pages in the store. The caller must hold Lock.
 func (s *Store) Publish(pages []PageRef) (*Manifest, error) {
-	m := &Manifest{Format: Format, Generated: now(), Variants: []string{VariantGirl, VariantMan}, Sources: Sources(pages)}
+	m := &Manifest{Format: Format, Generated: now(), Sources: Sources(pages)}
 
 	// The search index wants all of every page's text: every version's,
 	// as people may be looking for an option only an old one has.
@@ -169,9 +169,13 @@ func (s *Store) Publish(pages []PageRef) (*Manifest, error) {
 		return nil, err
 	}
 
-	if m.Index.Sources, err = s.writeSourceIndex(pages); err != nil {
+	if m.Index.Variants, err = s.writeVariantIndexes(pages); err != nil {
 		return nil, err
 	}
+	for v := range m.Index.Variants {
+		m.Variants = append(m.Variants, v)
+	}
+	sort.Strings(m.Variants)
 
 	if _, _, err := s.Write(ManifestPath(), m); err != nil {
 		return nil, err
@@ -179,38 +183,52 @@ func (s *Store) Publish(pages []PageRef) (*Manifest, error) {
 	return m, nil
 }
 
-// sourceShardSize is how many keys go in each girlified-sources shard:
-// about 64 KB.
+// sourceShardSize is how many keys go in each variant index shard: about
+// 64 KB.
 const sourceShardSize = 3500
 
-// writeSourceIndex writes the girlified-sources index, returning its
-// manifest's hash.
-func (s *Store) writeSourceIndex(pages []PageRef) (string, error) {
-	seen := map[string]bool{}
-	var keys []string
+// writeVariantIndexes writes an index of the versions that have each
+// variant, returning each one's manifest hash.
+func (s *Store) writeVariantIndexes(pages []PageRef) (map[string]string, error) {
+	keys := map[string]map[string]bool{}
 	for _, p := range pages {
 		for _, v := range p.Listing.Versions {
-			if _, ok := v.Variants[VariantGirl]; !ok {
-				continue
-			}
-			if k := v.Source[:SourceKeyLength]; !seen[k] {
-				seen[k] = true
-				keys = append(keys, k)
+			for variant := range v.Variants {
+				if !ValidVariant(variant) {
+					continue
+				}
+				if keys[variant] == nil {
+					keys[variant] = map[string]bool{}
+				}
+				keys[variant][v.Source[:SourceKeyLength]] = true
 			}
 		}
 	}
-	sort.Strings(keys)
-	sm := ShardManifest{Format: Format, Shards: []ShardRange{}}
-	for i := 0; i < len(keys); i += sourceShardSize {
-		part := keys[i:min(i+sourceShardSize, len(keys))]
-		sha, err := s.WriteAddressed(func(sha string) string { return ShardPath("sources", sha) },
-			&SourceShard{Format: Format, Length: SourceKeyLength, Sources: part})
+	out := map[string]string{}
+	for variant, set := range keys {
+		var sorted []string
+		for k := range set {
+			sorted = append(sorted, k)
+		}
+		sort.Strings(sorted)
+		kind := VariantIndexKind(variant)
+		sm := ShardManifest{Format: Format, Shards: []ShardRange{}}
+		for i := 0; i < len(sorted); i += sourceShardSize {
+			part := sorted[i:min(i+sourceShardSize, len(sorted))]
+			sha, err := s.WriteAddressed(func(sha string) string { return ShardPath(kind, sha) },
+				&SourceShard{Format: Format, Length: SourceKeyLength, Sources: part})
+			if err != nil {
+				return nil, err
+			}
+			sm.Shards = append(sm.Shards, ShardRange{First: part[0], Last: part[len(part)-1], SHA256: sha})
+		}
+		sha, err := s.WriteAddressed(func(sha string) string { return IndexManifestPath(kind, sha) }, &sm)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
-		sm.Shards = append(sm.Shards, ShardRange{First: part[0], Last: part[len(part)-1], SHA256: sha})
+		out[variant] = sha
 	}
-	return s.WriteAddressed(func(sha string) string { return IndexManifestPath("sources", sha) }, &sm)
+	return out, nil
 }
 
 func (s *Store) writeShards(kind string, ranges []ShardRange, shard func(int) any) (string, error) {
@@ -255,8 +273,13 @@ func (s *Store) GC(dryRun bool) (GCStats, error) {
 	for _, sha := range dm.Shards {
 		live[ShardPath("docs", sha)] = true
 	}
-	for _, kind := range []string{"words", "grams", "sources"} {
-		sha := map[string]string{"words": m.Index.Words, "grams": m.Index.Grams, "sources": m.Index.Sources}[kind]
+	kinds := map[string]string{"words": m.Index.Words, "grams": m.Index.Grams}
+	for variant, sha := range m.Index.Variants {
+		if ValidVariant(variant) {
+			kinds[VariantIndexKind(variant)] = sha
+		}
+	}
+	for kind, sha := range kinds {
 		if sha == "" {
 			continue
 		}

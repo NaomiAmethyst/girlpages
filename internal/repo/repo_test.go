@@ -305,48 +305,69 @@ func TestClient(t *testing.T) {
 	}
 }
 
-func TestGirlifiedIndex(t *testing.T) {
+func TestVariantIndex(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	g := NewClient(s.Dir, time.Second).Girlified()
+	// A variant made with some other prompt, on one version.
+	l, _, _ := s.Listing("grep", "1")
+	pirate, err := s.PutVariant(&Variant{Format: Format, Variant: "pirate", Source: l.Current, Syntax: SyntaxMarkup,
+		Sections: []Section{{Heading: "NAME", Body: "arr, grep be findin' lines\n"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.UpdateListing("grep", "1", func(l *Listing) error { l.CurrentVersion().Variants["pirate"] = pirate; return nil })
 	pages, _ := s.AllPages()
-	girl, plain := 0, 0
+	m, err := s.Publish(pages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(m.Variants, " ") != "girl man pirate" || len(m.Index.Variants) != 3 {
+		t.Fatalf("variants: %v %v", m.Variants, m.Index.Variants)
+	}
+	c := NewClient(s.Dir, time.Second)
+	idx := map[string]*VariantIndex{}
+	for _, v := range m.Variants {
+		idx[v] = c.VariantIndex(v)
+	}
+	counts := map[string]int{}
 	for _, p := range pages {
-		v := p.Current()
-		has, err := g.Has(ctx, v.Source)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, ok := v.Variants[VariantGirl]; ok != has {
-			t.Errorf("%s: index says %v", p.Pointer.Name, has)
-		}
-		if has {
-			girl++
-		} else {
-			plain++
+		for _, ver := range p.Listing.Versions {
+			for _, variant := range m.Variants {
+				has, err := idx[variant].Has(ctx, ver.Source)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, ok := ver.Variants[variant]; ok != has {
+					t.Errorf("%s %s: index says %v", p.Pointer.Name, variant, has)
+				}
+				if has {
+					counts[variant]++
+				}
+			}
 		}
 	}
-	if girl != 3 || plain != 34 {
-		t.Errorf("%d girlified, %d not", girl, plain)
+	if counts["girl"] != 3 || counts["man"] != 37 || counts["pirate"] != 1 {
+		t.Errorf("counts: %v", counts)
 	}
-	if has, err := g.Has(ctx, strings.Repeat("f", 64)); has || err != nil {
+	if has, err := idx["girl"].Has(ctx, strings.Repeat("f", 64)); has || err != nil {
 		t.Errorf("unknown source: %v, %v", has, err)
 	}
-	m, _ := s.Manifest()
-	var sm ShardManifest
-	s.Read(IndexManifestPath("sources", m.Index.Sources), &sm)
-	if len(sm.Shards) != 1 {
-		t.Errorf("%d shards for 3 keys", len(sm.Shards))
+	if _, err := c.VariantIndex("nobody").Has(ctx, l.Current); !errors.Is(err, ErrNoIndex) {
+		t.Errorf("a variant nobody has: %v", err)
 	}
-	// An index from before there were indexes.
-	m.Index.Sources = ""
-	s.Write(ManifestPath(), m)
-	if _, err := NewClient(s.Dir, time.Second).Girlified().Has(ctx, strings.Repeat("a", 64)); !errors.Is(err, ErrNoIndex) {
-		t.Errorf("no index: %v", err)
+	if _, err := c.VariantIndex("../etc").Has(ctx, l.Current); err == nil {
+		t.Error("bad variant names should be refused")
+	}
+	// GC keeps every variant's index.
+	if _, err := s.GC(false); err != nil {
+		t.Fatal(err)
+	}
+	if has, err := NewClient(s.Dir, time.Second).VariantIndex("pirate").Has(ctx, l.Current); !has || err != nil {
+		t.Errorf("after GC: %v, %v", has, err)
 	}
 }
 
-func TestGirlifiedIndexShards(t *testing.T) {
+func TestVariantIndexShards(t *testing.T) {
 	s, _ := Open(t.TempDir())
 	var pages []PageRef
 	want := map[string]bool{}
@@ -361,17 +382,21 @@ func TestGirlifiedIndexShards(t *testing.T) {
 		pages = append(pages, PageRef{Pointer: Pointer{Name: fmt.Sprint(i), Section: "1"},
 			Listing: &Listing{Versions: []Version{{Source: src, Variants: vs}}}})
 	}
-	sha, err := s.writeSourceIndex(pages)
+	shas, err := s.writeVariantIndexes(pages)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var sm ShardManifest
-	s.Read(IndexManifestPath("sources", sha), &sm)
+	s.Read(IndexManifestPath(VariantIndexKind("girl"), shas["girl"]), &sm)
 	if len(sm.Shards) != 2 {
-		t.Fatalf("%d shards", len(sm.Shards))
+		t.Fatalf("%d girl shards", len(sm.Shards))
 	}
-	s.Write(ManifestPath(), &Manifest{Format: Format, Index: IndexEntry{Sources: sha}})
-	g := NewClient(s.Dir, time.Second).Girlified()
+	s.Read(IndexManifestPath(VariantIndexKind("man"), shas["man"]), &sm)
+	if len(sm.Shards) != 3 {
+		t.Fatalf("%d man shards", len(sm.Shards))
+	}
+	s.Write(ManifestPath(), &Manifest{Format: Format, Index: IndexEntry{Variants: shas}})
+	g := NewClient(s.Dir, time.Second).VariantIndex("girl")
 	for src, girl := range want {
 		if has, err := g.Has(context.Background(), src); err != nil || has != girl {
 			t.Fatalf("%s: %v, %v (want %v)", src[:8], has, err, girl)

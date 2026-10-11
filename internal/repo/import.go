@@ -298,8 +298,8 @@ func (s *Store) fetchListing(ctx context.Context, c *Client, sha string) (*Listi
 			return nil, fmt.Errorf("bad source hash %q", v.Source)
 		}
 		for variant := range v.Variants {
-			if variant != VariantGirl && variant != VariantMan {
-				return nil, fmt.Errorf("unknown variant %q", variant)
+			if !ValidVariant(variant) {
+				return nil, fmt.Errorf("bad variant name %q", variant)
 			}
 		}
 	}

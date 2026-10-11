@@ -21,8 +21,8 @@
 //	index/grams/shard-ab/<sha>.json        GramShard
 //	index/docs/manifest-<sha>.json         DocsManifest
 //	index/docs/shard-ab/<sha>.json         DocShard: the pages postings name
-//	index/sources/manifest-<sha>.json      ShardManifest: source hash ranges
-//	index/sources/shard-ab/<sha>.json      SourceShard: girlified versions
+//	index/variants/<variant>/manifest-<sha>.json  ShardManifest: source ranges
+//	index/variants/<variant>/shard-ab/<sha>.json  SourceShard: versions with it
 //
 // Files whose names end in -<sha> or are named <sha>.json are named after
 // the SHA-256 of their own bytes, so they never change and can be cached
@@ -33,6 +33,7 @@ package repo
 import (
 	"fmt"
 	"path"
+	"regexp"
 	"strings"
 	"time"
 
@@ -42,7 +43,8 @@ import (
 // Format is the repository format version written into every document.
 const Format = 1
 
-// Variants of a page.
+// Variants of a page. There can be others, made with other prompts; their
+// names are short lower-case words (see ValidVariant).
 const (
 	// VariantGirl is the girlified page, in girlpages markup.
 	VariantGirl = "girl"
@@ -82,10 +84,10 @@ type IndexEntry struct {
 	Words string `json:"words"`
 	Grams string `json:"grams"`
 	Docs  string `json:"docs"`
-	// Sources names the manifest of the girlified-sources index (a
+	// Variants names, for each variant, the manifest of its index (a
 	// ShardManifest of SourceShards), which says which page versions have
-	// a girl variant without asking for each.
-	Sources string `json:"sources,omitempty"`
+	// that variant without asking for each.
+	Variants map[string]string `json:"variants,omitempty"`
 }
 
 // Pointer is a small mutable document naming an immutable one.
@@ -307,17 +309,17 @@ type WordShard struct {
 	Words  map[string][][2]int `json:"words"`
 }
 
-// SourceShard is part of the girlified-sources index: the first Length
-// hex digits of the source hash of every version with a girl variant,
-// sorted. A match means the variant is (almost certainly) there.
+// SourceShard is part of a variant's index: the first Length hex digits of
+// the source hash of every version with that variant, sorted. A match means
+// the variant is (almost certainly) there.
 type SourceShard struct {
 	Format  int      `json:"format"`
 	Length  int      `json:"length"`
 	Sources []string `json:"sources"`
 }
 
-// SourceKeyLength is how many hex digits of a source hash the
-// girlified-sources index keeps: 64 bits, so a false match (which only
+// SourceKeyLength is how many hex digits of a source hash variant indexes
+// keep: 64 bits, so a false match (which only
 // costs a request that finds nothing) is vanishingly unlikely.
 const SourceKeyLength = 16
 
@@ -371,7 +373,7 @@ func SectionIndexPath(section, sha string) string {
 }
 
 // IndexManifestPath is index/<kind>/manifest-<sha>.json; kind is
-// "words", "grams", "docs" or "sources".
+// "words", "grams", "docs" or "variants/<variant>".
 func IndexManifestPath(kind, sha string) string {
 	return path.Join("index", kind, "manifest-"+sha+".json")
 }
@@ -398,6 +400,15 @@ func EscapeName(s string) string {
 	}
 	return b.String()
 }
+
+var variantRE = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
+
+// ValidVariant reports whether s can be a variant's name: a short
+// lower-case word, safe in file names and URLs.
+func ValidVariant(s string) bool { return variantRE.MatchString(s) }
+
+// VariantIndexKind is the index kind of a variant's index.
+func VariantIndexKind(variant string) string { return "variants/" + variant }
 
 // ValidHash reports whether s looks like a hex SHA-256.
 func ValidHash(s string) bool {

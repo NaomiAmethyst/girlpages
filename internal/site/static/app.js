@@ -8,7 +8,8 @@
 //   ?src=debian/trixie&section=1            its section 1 (&sub=1ssl for one subsection)
 //   ?page=ls&sec=1                          a page (its latest version)
 //   …&v=<source hash>                       a particular version
-//   …&variant=man                           the original rather than the girly one
+//   …&variant=man                           another variant: man is the original;
+//                                           girl is the default, and there may be more
 //   …&src=debian/trixie                     the version a source has, and links that stay in it
 
 import { repoCache } from "./girlpages.js";
@@ -36,6 +37,16 @@ function browse(params) {
   return `${base}browse/?${q}`;
 }
 const sourceLabel = (key) => key.replace("/", " ");
+
+// How variants are offered. Others (made with other prompts) get their name.
+function variantLabel(v) {
+  return v === "girl" ? "💅 girly" : v === "man" ? "📜 original" : "✨ " + v;
+}
+// Girly first, the original last, anything else between.
+function variantOrder(a, b) {
+  const rank = (v) => (v === "girl" ? 0 : v === "man" ? 2 : 1);
+  return rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0);
+}
 
 // The repository's files.
 const manifest = () => cache.get("manifest.json");
@@ -169,15 +180,17 @@ async function pageView(name, sec, v, which, src) {
     l.versions.find(x => x.source === l.current) || l.versions[0];
   if (!ver) return oops("that page has no versions 🤔");
   const has = (k) => ver.variants && ver.variants[k];
-  if (!which || !has(which)) which = has("girl") ? "girl" : "man";
+  const variants = Object.keys(ver.variants || {}).filter(k => /^[a-z][a-z0-9-]{0,31}$/.test(k)).sort(variantOrder);
+  if (!which || !has(which)) which = variants[0] || "man";
   const doc = await variant(ver.source, which);
   const title = ver.title || `${name.toUpperCase()}(${sec})`;
   const latest = ver.source === l.current;
-  document.title = `${name}(${sec})${ver.description ? " — " + ver.description : ""}${which === "man" ? " (original)" : ""} · girlpages 💅`;
+  const suffix = which === "girl" ? "" : which === "man" ? " · original" : " · " + which;
+  document.title = `${name}(${sec})${ver.description ? " — " + ver.description : ""}${suffix} · girlpages 💅`;
   const here = (extra) => browse({ page: name, sec, v: ver.source === l.current ? "" : ver.source, src, ...extra });
 
   let body = "", toc = [];
-  if (which === "girl") {
+  if (doc.syntax === "girlpages-markup") {
     const link = src ? (n, s) => browse({ page: n, sec: s, src }) : (n, s) => staticPage(n, s);
     ({ html: body, toc } = renderHTML(variantText(doc), { link }));
     body = `<div class="content">${body}</div>`;
@@ -187,20 +200,20 @@ async function pageView(name, sec, v, which, src) {
       (doc.footer ? `<pre class="manhead">${esc(doc.footer)}</pre>` : "") + "</div>";
   }
   let meta = "";
-  if (which === "girl" && doc.generator) {
-    const g = doc.generator, when = g.generated ? g.generated.slice(0, 10) : "";
-    meta += `<span>girlified by ${esc(g.model || g.backend || "a model")}${when ? " on " + esc(when) : ""} 💖</span>`;
+  if (doc.generator) {
+    const g = doc.generator, when = g.generated && !g.generated.startsWith("0001") ? g.generated.slice(0, 10) : "";
+    meta += `<span>${which === "girl" ? "girlified" : "rewritten"} by ${esc(g.model || g.backend || "a model")}${when ? " on " + esc(when) : ""} 💖</span>`;
   }
-  if (has("girl") && has("man")) {
-    meta += which === "girl" ? `<a class="pill" href="${esc(here({ variant: "man" }))}">📜 original</a>`
-      : `<a class="pill" href="${esc(here({}))}">💅 girly version</a>`;
+  if (variants.length > 1) {
+    meta += variants.map(k => k === which ? `<span class="pill on">${esc(variantLabel(k))}</span>`
+      : `<a class="pill" href="${esc(here({ variant: k === variants[0] ? "" : k }))}">${esc(variantLabel(k))}</a>`).join("");
   }
   const keys = sourceKeys(ver);
   const inLine = keys.length ? `<div class="meta in">📦 ${ver.version ? "version " + esc(ver.version) + ", " : ""}in ` +
     keys.map(k => `<a href="${esc(browse({ page: name, sec, src: k }))}">${esc(sourceLabel(k))}</a>`).join(", ") + "</div>" : "";
   let notice = "";
   if (!latest) notice += `<div class="notice">🕰️ this isn't the latest version of ${esc(name)}(${esc(sec)}). <a href="${esc(staticPage(name, sec))}">here's the latest</a>.</div>`;
-  if (which === "man" && !has("girl")) notice += `<div class="notice">💤 she hasn't gotten to this version yet, so here's the original.</div>`;
+  if (which === "man" && variants.length === 1) notice += `<div class="notice">💤 she hasn't gotten to this version yet, so here's the original.</div>`;
   const versions = [...l.versions].sort((a, b) => (a.source === l.current ? -1 : b.source === l.current ? 1 : (b.added || "").localeCompare(a.added || "")));
   const vlist = versions.length > 1 ? `<div class="provenance" id="versions"><details open><summary>🕰️ ${versions.length} versions, and where they're from</summary><ul>` +
     versions.map(x => {
@@ -214,7 +227,7 @@ async function pageView(name, sec, v, which, src) {
     : `<a href="${esc(base)}section/${encodeURIComponent(sec[0])}/">section ${esc(sec)}</a>`) + ` › ${esc(title)}</nav>`;
   const tocHTML = toc.length ? `<nav class="toc card" aria-label="Contents"><h2>✨ contents</h2><ul>` +
     toc.map(t => `<li${t.level === 2 ? ' class="sub"' : ""}><a href="#${esc(t.id)}">${esc(t.text)}</a></li>`).join("") + "</ul></nav>" : "";
-  h(`<div class="layout"><article class="card manpage">${crumbs}<h1>${esc(title)}${which === "man" ? " · original" : ""}</h1>` +
+  h(`<div class="layout"><article class="card manpage">${crumbs}<h1>${esc(title)}${esc(suffix)}</h1>` +
     `<div class="meta">${meta}</div>${inLine}${notice}${body}${vlist}</article>${tocHTML}</div>`);
   if (location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView();
 }
