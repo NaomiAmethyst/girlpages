@@ -8,6 +8,7 @@
 <title>{{.Title}} · girlpages 💅</title>
 {{if .Description}}<meta name="description" content="{{.Description}}">{{end}}
 {{if .Canonical}}<link rel="canonical" href="{{.Canonical}}">{{end}}
+{{if .Prev}}<link rel="prev" href="{{.Prev}}">{{end}}{{if .Next}}<link rel="next" href="{{.Next}}">{{end}}
 {{if .NoIndex}}<meta name="robots" content="noindex, follow">{{else}}<meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large">{{end}}
 <meta property="og:site_name" content="girlpages">
 <meta property="og:locale" content="en_US">

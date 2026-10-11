@@ -347,6 +347,9 @@ type ShardRange struct {
 	First  string `json:"first"`
 	Last   string `json:"last"`
 	SHA256 string `json:"sha256"`
+	// Bytes is the shard's size, so clients can say how much fetching
+	// every shard would be (0 if not known).
+	Bytes int64 `json:"bytes,omitempty"`
 }
 
 // WordShard maps words to the pages they appear in. Postings are
@@ -377,6 +380,8 @@ type DocsManifest struct {
 	Count  int      `json:"count"`
 	Size   int      `json:"size"`
 	Shards []string `json:"shards"`
+	// Bytes is each shard's size, in step with Shards (if known).
+	Bytes []int64 `json:"bytes,omitempty"`
 }
 
 // DocShard is a slice of the page table: [name, section, description,

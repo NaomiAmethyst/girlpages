@@ -344,10 +344,21 @@ ul.pages .done { flex: none; }
 .meta .in { color: var(--muted); }
 
 /* saving sections and search for offline reading */
-.pagehead .save { margin: 0.6rem 0 0; }
+.pagehead .save { margin: 0.6rem 0 0; display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.pagehead .save .pill { font-size: 0.9rem; }
 button.pill { font: inherit; cursor: pointer; }
 button.pill:disabled { cursor: progress; opacity: 0.8; }
 
 /* the browse app, in the home page's hash */
 .routed .home-static { display: none; }
 .routed #app[hidden] { display: block; }
+
+/* long listings: a pager without JavaScript, one long list with it */
+.pager { display: flex; flex-wrap: wrap; gap: 0.4rem; justify-content: center; margin-top: 1.5rem; }
+.pager .gap { padding: 0.3rem 0.2rem; color: var(--muted); }
+.letter .sub { font-size: 0.6em; color: var(--muted); font-weight: normal; }
+.listing.virtual { overflow-anchor: none; }
+.listing.virtual .letter.cont { display: none; }
+.listing .edge-bottom:not(:empty) { text-align: center; color: var(--muted); padding: 1rem; }
+.listing .edge-top { text-align: center; }
+.listing .earlier { margin: 0.5rem auto; }

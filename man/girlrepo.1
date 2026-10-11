@@ -361,7 +361,10 @@ Website files are only rewritten when they change, so syncing the result
 somewhere is cheap.
 .PP
 The website's static pages are what search engines should see: the home
-page, the section listings, and each page's current version, girlified if it
+page, the section listings (in pages of 200,
+.IB section /page/ n /\fR,
+which the browser scrolls through as one long list, keeping only what's near
+the screen), and each page's current version, girlified if it
 has been (otherwise the original), with canonical links, OpenGraph and Twitter
 card tags, JSON-LD (TechArticle and BreadcrumbList for pages, WebSite with a
 SearchAction for the home page, CollectionPage for listings) and a sitemap.
@@ -425,8 +428,11 @@ renders them from those files: every page read before, every page of a
 section saved with its listing's
 .B save for offline
 button, and any search, once the search page's
-.B save search for offline
-button has fetched the whole index.
+.B search offline
+button has fetched the search index (and its
+.B typo matching offline
+button the index that catches typos), with a switch to show only the pages
+that can be read offline (on by default when offline).
 Every half hour while a page is open, the browser looks at
 .BR manifest.json ;
 when it has changed, the search index files and section indexes the new one

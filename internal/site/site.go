@@ -28,6 +28,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -159,8 +160,14 @@ type view struct {
 	// SaveSection, on a section's listing, is the section a button saves
 	// for offline reading (in browsers that can).
 	SaveSection string
-	Letters     []string
+	Letters     []letter
 	Groups      []group
+	// A long listing is split into pages of listPage items: this is one
+	// of them (ListPage, from 1, of ListPages), with links around it.
+	ListPage, ListPages int
+	ListFirst           string // the first page's URL, which the others go under
+	Pager               []pagerLink
+	Prev, Next          string
 
 	// page
 	Page *pageView
@@ -178,7 +185,30 @@ type chip struct {
 
 type group struct {
 	Letter string
-	Items  []item
+	// Cont is a group carried on from the page before.
+	Cont  bool
+	Items []item
+}
+
+// A letter jumps to where its names start in a listing, on whichever page.
+type letter struct {
+	Letter, URL string
+}
+
+type pagerLink struct {
+	Label, URL string
+	On         bool
+}
+
+// listPage is how many pages of the manual each page of a listing shows.
+var listPage = 200
+
+// listPageURL is page n (from 1) of the listing at u.
+func listPageURL(u string, n int) string {
+	if n <= 1 {
+		return u
+	}
+	return fmt.Sprintf("%spage/%d/", u, n)
 }
 
 type item struct {
@@ -523,9 +553,37 @@ func (b *builder) sections(pages []repo.PageRef) error {
 				}
 				return items[i].Section < items[j].Section
 			})
-			v.Groups, v.Letters = groupByLetter(items)
-			v.JSONLD = b.ldCollection(v, u, items)
-			return b.render(u, "list", v)
+			pages, letters := paginate(u, items)
+			if len(pages) == 0 {
+				pages = [][]group{nil}
+			}
+			for i, gs := range pages {
+				pv := *v
+				n := i + 1
+				pv.Groups, pv.Letters = gs, letters
+				pv.ListPage, pv.ListPages, pv.ListFirst = n, len(pages), u
+				if len(pages) > 1 {
+					pv.Pager = pager(u, n, len(pages))
+					pv.Sub = fmt.Sprintf("%s · page %d of %d", v.Sub, n, len(pages))
+				}
+				if n > 1 {
+					pv.Title = fmt.Sprintf("%s · page %d", v.Title, n)
+					pv.Prev = listPageURL(u, n-1)
+				}
+				if n < len(pages) {
+					pv.Next = listPageURL(u, n+1)
+				}
+				var its []item
+				for _, g := range gs {
+					its = append(its, g.Items...)
+				}
+				pu := listPageURL(u, n)
+				pv.JSONLD = b.ldCollection(&pv, pu, its)
+				if err := b.render(pu, "list", &pv); err != nil {
+					return err
+				}
+			}
+			return nil
 		}
 		if err := list("", ps); err != nil {
 			return err
@@ -554,21 +612,54 @@ func pluralPages(n int) string {
 	return fmt.Sprintf("%d pages", n)
 }
 
-func groupByLetter(items []item) ([]group, []string) {
-	var groups []group
-	var letters []string
-	for _, it := range items {
-		l := "#"
-		if r := []rune(it.Name); len(r) > 0 && unicode.IsLetter(r[0]) && r[0] < 0x80 {
-			l = strings.ToUpper(string(r[0]))
-		}
-		if len(groups) == 0 || groups[len(groups)-1].Letter != l {
-			groups = append(groups, group{Letter: l})
-			letters = append(letters, l)
-		}
-		groups[len(groups)-1].Items = append(groups[len(groups)-1].Items, it)
+func letterOf(name string) string {
+	if r := []rune(name); len(r) > 0 && unicode.IsLetter(r[0]) && r[0] < 0x80 {
+		return strings.ToUpper(string(r[0]))
 	}
-	return groups, letters
+	return "#"
+}
+
+// paginate splits a listing at u into pages of listPage items, grouped by
+// first letter; letters link to the page each starts on.
+func paginate(u string, items []item) (pages [][]group, letters []letter) {
+	prev := ""
+	for i, it := range items {
+		n := i / listPage
+		if i%listPage == 0 {
+			pages = append(pages, nil)
+		}
+		l := letterOf(it.Name)
+		gs := pages[n]
+		if len(gs) == 0 || gs[len(gs)-1].Letter != l {
+			gs = append(gs, group{Letter: l, Cont: l == prev})
+			if l != prev {
+				letters = append(letters, letter{Letter: l, URL: listPageURL(u, n+1) + "#letter-" + l})
+			}
+		}
+		gs[len(gs)-1].Items = append(gs[len(gs)-1].Items, it)
+		pages[n] = gs
+		prev = l
+	}
+	return pages, letters
+}
+
+// pager is the links between a listing's pages: all of them if there are
+// few, else the first, last, and those around this one.
+func pager(u string, n, total int) []pagerLink {
+	var out []pagerLink
+	gap := false
+	for i := 1; i <= total; i++ {
+		if total > 9 && i != 1 && i != total && (i < n-2 || i > n+2) {
+			if !gap {
+				out = append(out, pagerLink{Label: "…"})
+			}
+			gap = true
+			continue
+		}
+		gap = false
+		out = append(out, pagerLink{Label: strconv.Itoa(i), URL: listPageURL(u, i), On: i == n})
+	}
+	return out
 }
 
 // link is the URL for a reference like printf(3), or "" if there's no such
@@ -744,12 +835,32 @@ func (b *builder) sitemap(pages []repo.PageRef) error {
 		buf.WriteString("</url>\n")
 	}
 	loc(b.o.Base, b.m.Generated)
-	seen := map[string]bool{}
+	// Every page of every listing: a section's, and its subsections' if
+	// it has more than one.
+	count := map[string]int{}
+	var keys []string
+	subs := map[string][]string{}
 	for _, p := range pages {
-		for _, u := range []string{b.url("section", mainKey(p.Pointer.Section)), b.sectionURL(p.Pointer.Section)} {
-			if !seen[u] {
-				seen[u] = true
-				loc(u, time.Time{})
+		key, sec := mainKey(p.Pointer.Section), p.Pointer.Section
+		if count[key] == 0 {
+			keys = append(keys, key)
+		}
+		count[key]++
+		if count[key+"/"+sec] == 0 {
+			subs[key] = append(subs[key], sec)
+		}
+		count[key+"/"+sec]++
+	}
+	listing := func(u string, n int) {
+		for i := 1; (i-1)*listPage < n; i++ {
+			loc(listPageURL(u, i), time.Time{})
+		}
+	}
+	for _, key := range keys {
+		listing(b.url("section", key), count[key])
+		if len(subs[key]) > 1 {
+			for _, sec := range subs[key] {
+				listing(b.url("section", key, sec), count[key+"/"+sec])
 			}
 		}
 	}

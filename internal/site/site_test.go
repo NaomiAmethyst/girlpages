@@ -499,7 +499,11 @@ await again.settled(); // the manifest is refreshed after
 out.againFetches = [...fetched];
 down = true;
 out.offline = await names(cache(), "list");
-try { await names(cache(), "zebra"); out.offlineNew = "worked?"; }
+try {
+  const zs = new Searcher(repo, cache());
+  await zs.search("zebra", 5);
+  out.offlineNew = zs.missedTypos ? "missed typos" : "worked?";
+}
 catch (e) { out.offlineNew = e.constructor.name; }
 down = false;
 
@@ -527,6 +531,27 @@ const kept = cache();
 const kp = await kept.get("page/name-1/git-commit.json");
 out.keptPage = (await kept.get("page/page-" + kp.sha256.slice(0, 2) + "/" + kp.sha256 + ".json")).name;
 down = false;
+
+// Search saved in parts: words, then typo matching.
+{
+  const sc = cache(new MemoryStore());
+  out.wordsSize = await sc.searchSize("words");
+  await sc.saveSearch("words");
+  down = true;
+  const s1 = new Searcher(repo, sc);
+  out.offlineWords = (await s1.search("list", 5)).map(h => h.name);
+  out.offlineTypo = [(await s1.search("lsit", 5)).length, s1.missedTypos];
+  down = false;
+  await sc.saveSearch("typos");
+  down = true;
+  const s2 = new Searcher(repo, sc);
+  out.offlineTypoSaved = [(await s2.search("lsit", 5)).map(h => h.name), s2.missedTypos];
+  // Only pages that are saved: ls is (it's in section 1), printf isn't.
+  for (const [k, v] of store.m) if (!sc.store.m.has(k)) sc.store.m.set(k, v);
+  out.hasPage = [await sc.hasPage("ls", "1"), await sc.hasPage("printf", "3")];
+  out.savedOnly = (await s2.search("printf ls", 5, "", (h) => sc.hasPage(h.name, h.section))).map(h => h.name);
+  down = false;
+}
 
 // Republish; a check notices and collects garbage.
 const oldManifest = store.m.get("manifest.json");
@@ -571,6 +596,10 @@ console.log(JSON.stringify(out));
 		AgainFetches                        []string
 		KeptPage                            string
 		Swr, Revalidated                    []any
+		WordsSize                           int
+		OfflineWords, SavedOnly             []string
+		OfflineTypo, OfflineTypoSaved       []any
+		HasPage                             []bool
 		OfflineNew                          string
 		Saved                               struct{ Pages, Failed int }
 		Progress                            string
@@ -590,6 +619,14 @@ console.log(JSON.stringify(out));
 	if got.FirstFetches < 5 || !reflect.DeepEqual(got.AgainFetches, []string{"manifest.json"}) {
 		t.Errorf("fetched %d files at first, then %v (want only the manifest)", got.FirstFetches, got.AgainFetches)
 	}
+	if got.WordsSize < 1000 || len(got.OfflineWords) == 0 || fmt.Sprint(got.OfflineTypo) != "[0 true]" ||
+		!strings.Contains(fmt.Sprint(got.OfflineTypoSaved), "ls") || !strings.HasSuffix(fmt.Sprint(got.OfflineTypoSaved), "false]") {
+		t.Errorf("search saved in parts: %d bytes; offline %v; a typo without typo matching %v, with %v",
+			got.WordsSize, got.OfflineWords, got.OfflineTypo, got.OfflineTypoSaved)
+	}
+	if fmt.Sprint(got.HasPage) != "[true false]" || fmt.Sprint(got.SavedOnly) != "[ls]" {
+		t.Errorf("saved pages: %v; searching only them: %v", got.HasPage, got.SavedOnly)
+	}
 	if got.KeptPage != "git-commit" {
 		t.Errorf("a page kept for offline: %q", got.KeptPage)
 	}
@@ -598,7 +635,9 @@ console.log(JSON.stringify(out));
 	if fmt.Sprint(got.Swr) != fmt.Sprintf("[%d %d]", m1.Pages, m2c.Pages) || fmt.Sprint(got.Revalidated) != fmt.Sprintf("[true %d]", m2c.Pages) {
 		t.Errorf("stale manifest, then refreshed: %v; revalidated: %v", got.Swr, got.Revalidated)
 	}
-	if got.OfflineNew != "TypeError" {
+	// Offline, a search needing files that aren't saved fails, or (if only
+	// typo matching's are missing) goes without them.
+	if got.OfflineNew != "TypeError" && got.OfflineNew != "missed typos" {
 		t.Errorf("an uncached search offline gave %q", got.OfflineNew)
 	}
 	s1, _ := repo.Open(filepath.Join(v1, "repo"))
@@ -845,5 +884,59 @@ console.log(JSON.stringify(out));`, staticFile(t, "render.js"), ds))
 		if js[i].HTML != want[i].HTML || fmt.Sprint(js[i].TOC) != fmt.Sprint(want[i].TOC) {
 			t.Errorf("doc %d differs:\n  go: %q %v\n  js: %q %v", i, want[i].HTML, want[i].TOC, js[i].HTML, js[i].TOC)
 		}
+	}
+}
+
+// TestPagination checks that long listings are split into pages, linked
+// to each other and from the sitemap, and that pages left over when a
+// listing shrinks go.
+func TestPagination(t *testing.T) {
+	defer func(n int) { listPage = n }(listPage)
+	listPage = 4
+	out := t.TempDir()
+	var ps []pageSpec
+	for _, n := range []string{"apple", "avocado", "banana", "blueberry", "cherry", "date", "elder", "fig", "grape", "guava"} {
+		ps = append(ps, pageSpec{name: n, sec: "6", desc: "a fruit"})
+	}
+	o := Options{URL: "https://example.test", Version: "test"}
+	build(t, out, ps, o)
+	p1 := read(t, filepath.Join(out, "section", "6", "index.html"))
+	p2 := read(t, filepath.Join(out, "section", "6", "page", "2", "index.html"))
+	p3 := read(t, filepath.Join(out, "section", "6", "page", "3", "index.html"))
+	for name, want := range map[string][]string{
+		"page 1": {"apple", "blueberry", `<link rel="next" href="/section/6/page/2/">`, `href="/section/6/#letter-A">A</a>`,
+			`href="/section/6/page/2/#letter-C">C</a>`, `<span class="pill on" aria-current="page">1</span>`,
+			`data-first="/section/6/" data-page="1" data-pages="3"`, "page 1 of 3", `src="/static/listing.js"`},
+		"page 2": {"cherry", "fig", `<link rel="prev" href="/section/6/">`, `<link rel="next" href="/section/6/page/3/">`,
+			`<link rel="canonical" href="https://example.test/section/6/page/2/">`, "· page 2 · girlpages 💅</title>"},
+		"page 3": {"grape", "guava", `<h2 class="letter" id="letter-G">G</h2>`},
+	} {
+		page := map[string]string{"page 1": p1, "page 2": p2, "page 3": p3}[name]
+		for _, w := range want {
+			if !strings.Contains(page, w) {
+				t.Errorf("%s lacks %q", name, w)
+			}
+		}
+	}
+	if strings.Contains(p1, ">cherry<") || strings.Contains(p2, ">apple<") || strings.Contains(p3, `rel="next"`) {
+		t.Error("pages overlap, or the last goes on")
+	}
+	// A letter carried over a page boundary is marked, without an id.
+	build(t, out, append(ps, pageSpec{name: "banyan", sec: "6", desc: "a tree"}, pageSpec{name: "beech", sec: "6", desc: "a tree"}), o)
+	p2 = read(t, filepath.Join(out, "section", "6", "page", "2", "index.html"))
+	if !strings.Contains(p2, `<h2 class="letter cont">B <span class="sub">(continued)</span></h2>`) || strings.Contains(p2, `id="letter-B"`) {
+		t.Errorf("page 2 should carry B on from page 1:\n%s", p2)
+	}
+	sitemap := read(t, filepath.Join(out, "sitemap.xml"))
+	for _, u := range []string{"https://example.test/section/6/", "https://example.test/section/6/page/3/"} {
+		if !strings.Contains(sitemap, "<loc>"+u+"</loc>") {
+			t.Errorf("sitemap lacks %s", u)
+		}
+	}
+	// Fewer pages: the last listing page goes.
+	os.RemoveAll(filepath.Join(out, "repo"))
+	build(t, out, ps[:6], o)
+	if _, err := os.Stat(filepath.Join(out, "section", "6", "page", "3", "index.html")); err == nil {
+		t.Error("page 3 of section 6 is still there")
 	}
 }

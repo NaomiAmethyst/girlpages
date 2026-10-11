@@ -366,17 +366,36 @@ export class RepoCache {
     await Promise.all(entries.map(e => this.get(`section/${enc(e.section)}-${e.sha256}.json`)));
   }
 
-  // saveSearch fetches the whole search index, so any search works offline.
-  // progress(done, total) is called as files arrive.
-  async saveSearch({ progress = () => {} } = {}) {
-    const m = JSON.parse(await this.mutable("manifest.json", { fresh: true }));
+  // searchFiles lists the search index files a part of search needs
+  // offline, with their sizes (0 where the repository doesn't say):
+  // "words" for searching (the word index and page table), "typos" for
+  // catching typos (the trigram index).
+  async searchFiles(part, m) {
     const ix = m.index || {};
-    const files = [];
-    for (const [kind, sha] of [["words", ix.words], ["grams", ix.grams], ["docs", ix.docs]]) {
-      const im = await this.get(`index/${kind}/manifest-${sha}.json`);
-      const shas = kind === "docs" ? im.shards : im.shards.map(s => s.sha256);
-      for (const s of shas) files.push(`index/${kind}/shard-${s.slice(0, 2)}/${s}.json`);
+    const out = [];
+    for (const kind of SEARCH_PARTS[part]) {
+      const im = await this.get(`index/${kind}/manifest-${ix[kind]}.json`);
+      const shards = kind === "docs" ? im.shards.map((sha, i) => ({ sha256: sha, bytes: (im.bytes || [])[i] || 0 })) : im.shards;
+      for (const s of shards) out.push({ path: `index/${kind}/shard-${s.sha256.slice(0, 2)}/${s.sha256}.json`, bytes: s.bytes || 0 });
     }
+    return out;
+  }
+
+  // searchSize is how many bytes a part of search is, if the repository
+  // says.
+  async searchSize(part) {
+    const files = await this.searchFiles(part, await this.get("manifest.json"));
+    return files.reduce((n, f) => n + f.bytes, 0);
+  }
+
+  // saveSearch fetches a part of the search index ("words" or "typos"), so
+  // searches work offline. progress(done, total) is called as files arrive.
+  async saveSearch(part, { progress = () => {} } = {}) {
+    const m = JSON.parse(await this.mutable("manifest.json", { fresh: true }));
+    // Search needs every part's manifest (they're small) to start.
+    const ix = m.index || {};
+    await Promise.all(["words", "grams", "docs"].map(k => this.get(`index/${k}/manifest-${ix[k]}.json`)));
+    const files = (await this.searchFiles(part, m)).map(f => f.path);
     let done = 0, next = 0;
     progress(0, files.length);
     const worker = async () => {
@@ -387,9 +406,30 @@ export class RepoCache {
     };
     await Promise.all(Array.from({ length: Math.min(SAVE_JOBS, files.length) }, worker));
     const meta = this.meta.load();
-    meta.saved = { ...(meta.saved || {}), [SEARCH]: { generated: m.generated, pages: files.length, failed: 0 } };
+    meta.saved = { ...(meta.saved || {}), ["search:" + part]: { generated: m.generated, pages: files.length, failed: 0 } };
     this.meta.save(meta);
     return { pages: files.length, failed: 0 };
+  }
+
+  // hasPage reports whether a page can be read offline: its pointer,
+  // listing and the variant shown (of the latest version, or src's) are
+  // all in the store.
+  async hasPage(name, sec, src = "") {
+    try {
+      const ptr = await this.store.get(`page/name-${enc(sec)}/${enc(name)}.json`);
+      if (ptr === null) return false;
+      const sha = JSON.parse(ptr).sha256;
+      const lt = await this.store.get(`page/page-${sha.slice(0, 2)}/${sha}.json`);
+      if (lt === null) return false;
+      const l = JSON.parse(lt);
+      const source = (src && l.sources && l.sources[src]) || l.current;
+      const ver = (l.versions || []).find(v => v.source === source);
+      const vs = (ver && ver.variants) || {};
+      const which = vs.girl ? "girl" : "man";
+      return !!vs[which] && await this.store.get(`contents/${source.slice(0, 2)}/${source}/${which}-${vs[which].sha256}.json`) !== null;
+    } catch {
+      return false;
+    }
   }
 
   // saved says whether a section has been saved, and from which publish.
@@ -399,38 +439,53 @@ export class RepoCache {
 }
 
 const savedKey = (key, src) => (src ? src + " " : "") + key;
-// SEARCH is what's saved when the search index is: SaveButton's key for it.
-export const SEARCH = "search";
+// The parts of search that can be saved for offline use, and the index
+// files each needs. saveButton takes "search:<part>" as a key.
+const SEARCH_PARTS = { words: ["words", "docs"], typos: ["grams"] };
 
 // saveButton makes a button save a section for offline reading, showing how
 // it's going and whether it's done.
 export function saveButton(button, cache, key, src = "") {
-  const what = key === SEARCH ? "search " : "";
+  const part = key.startsWith("search:") ? key.slice(7) : "";
+  const what = { words: "search", typos: "typo matching" }[part] || "";
+  let size = "";
   const label = async () => {
     const s = cache.saved(key, src);
-    if (!s) return `⬇️ save ${what}for offline`;
+    const saved = what ? `✅ ${what} saved offline` : "✅ saved for offline";
+    if (!s) return what ? `⬇️ ${what} offline${size}` : "⬇️ save for offline";
     let current = "";
     try {
       current = (await cache.get("manifest.json")).generated;
     } catch {
-      return `✅ ${what}saved for offline`;
+      return saved;
     }
-    return s.generated === current ? `✅ ${what}saved for offline` : "🔄 update offline copy";
+    return s.generated === current ? saved : `🔄 update offline ${what || "copy"}`;
   };
   label().then(t => { button.textContent = t; });
+  if (part) {
+    cache.searchSize(part).then(n => {
+      if (n) size = ` · ${megabytes(n)}`;
+      return label();
+    }).then(t => { if (!button.disabled) button.textContent = t; }).catch(() => {});
+  }
   button.addEventListener("click", async () => {
     if (button.disabled) return;
     button.disabled = true;
     navigator.storage?.persist?.().catch(() => {});
     try {
       const progress = (done, total) => { button.textContent = `⏳ saving ${done}/${total}…`; };
-      const { pages, failed } = key === SEARCH ? await cache.saveSearch({ progress }) : await cache.save(key, { src, progress });
+      const { pages, failed } = part ? await cache.saveSearch(part, { progress }) : await cache.save(key, { src, progress });
       button.textContent = failed ? `💔 ${failed} of ${pages} didn't save · try again` : await label();
+      button.dispatchEvent(new CustomEvent("saved", { bubbles: true }));
     } catch {
       button.textContent = "📵 can't save while offline";
     }
     button.disabled = false;
   });
+}
+
+function megabytes(n) {
+  return n < 1e6 ? `${Math.max(1, Math.round(n / 1e3))} kB` : `${(n / 1e6).toFixed(n < 1e7 ? 1 : 0)} MB`;
 }
 
 function idle(fn) {
@@ -481,7 +536,7 @@ function boot() {
   if (typeof globalThis.caches !== "undefined") {
     for (const b of document.querySelectorAll("button[data-save-section], button[data-save-search]")) {
       b.hidden = false;
-      saveButton(b, cache, b.dataset.saveSection || SEARCH);
+      saveButton(b, cache, b.dataset.saveSection || "search:" + b.dataset.saveSearch);
     }
   }
 }

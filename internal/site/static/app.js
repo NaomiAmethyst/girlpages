@@ -19,6 +19,7 @@
 // earlier versions) redirects here.
 
 import { repoCache, saveButton, browseURL } from "./girlpages.js";
+import { VirtualList } from "./vlist.js";
 import { renderHTML, renderOriginalHTML, esc } from "./render.js";
 import { escapeName, segmentName } from "./search.js";
 
@@ -162,18 +163,30 @@ async function sourceSection(src, key, sub) {
       [...subs].sort().map(([s, n]) => `<a class="pill${s === sub ? " on" : ""}" href="${esc(browse({ src, section: key, sub: s }))}">${esc(s)} (${n})</a>`).join("");
     chips = `<div class="chips">${chips}</div>`;
   }
-  const groups = new Map();
-  for (const it of items) {
-    const l = /^[a-z]/i.test(it.name) ? it.name[0].toUpperCase() : "#";
-    if (!groups.has(l)) groups.set(l, []);
-    groups.get(l).push(it);
-  }
-  let body = `<nav class="letters" aria-label="Jump to letter">${[...groups.keys()].map(l => `<a href="#letter-${esc(l)}">${esc(l)}</a>`).join("")}</nav>`;
-  for (const [l, its] of groups) {
-    body += `<h2 class="letter" id="letter-${esc(l)}">${esc(l)}</h2><ul class="pages">` + its.map(it =>
-      `<li><a href="${esc(it.url)}"><span class="name">${esc(it.name)}</span><span class="sec">(${esc(it.sec)})</span></a>` +
-      `<span class="desc">${esc(it.desc)}</span>${it.girl ? '<span class="done" title="girlified">✨</span>' : ""}</li>`).join("") + "</ul>";
-  }
+  // Chunks of the listing, grouped by first letter, as the static
+  // listings' pages are; letters jump to the chunk they start in.
+  const letterOf = (n) => (/^[a-z]/i.test(n) ? n[0].toUpperCase() : "#");
+  const starts = new Map();
+  items.forEach((it, i) => { const l = letterOf(it.name); if (!starts.has(l)) starts.set(l, Math.floor(i / CHUNK) + 1); });
+  const chunkHTML = (n) => {
+    let out = "", prev = n > 1 ? letterOf(items[(n - 1) * CHUNK - 1].name) : "", open = false;
+    for (const it of items.slice((n - 1) * CHUNK, n * CHUNK)) {
+      const l = letterOf(it.name);
+      if (!open || l !== prev) {
+        if (open) out += "</ul>";
+        out += l === prev ? `<h2 class="letter cont">${esc(l)} <span class="sub">(continued)</span></h2>` : `<h2 class="letter" id="letter-${esc(l)}">${esc(l)}</h2>`;
+        out += '<ul class="pages">';
+        open = true;
+        prev = l;
+      }
+      out += `<li><a href="${esc(it.url)}"><span class="name">${esc(it.name)}</span><span class="sec">(${esc(it.sec)})</span></a>` +
+        `<span class="desc">${esc(it.desc)}</span>${it.girl ? '<span class="done" title="girlified">✨</span>' : ""}</li>`;
+    }
+    return open ? out + "</ul>" : out;
+  };
+  const chunks = Math.max(1, Math.ceil(items.length / CHUNK));
+  let body = `<nav class="letters" aria-label="Jump to letter">${[...starts.keys()].map(l => `<a href="#letter-${esc(l)}" data-chunk="${starts.get(l)}">${esc(l)}</a>`).join("")}</nav>` +
+    `<div class="listing"><div class="chunk" data-chunk="1">${chunkHTML(1)}</div></div>`;
   if (!items.length) body = '<div class="empty">nothing here, bestie 😭</div>';
   const crumbs = `<a href="${esc(base)}">home</a> › ` + (src ? `<a href="${esc(browse({ src }))}">${esc(sourceLabel(src))}</a> › ` : "");
   const save = "caches" in globalThis ? '<p class="save"><button type="button" class="pill" id="save"></button></p>' : "";
@@ -182,7 +195,28 @@ async function sourceSection(src, key, sub) {
     sourceChips(m, src, key[0]) + chips + body + "</div>");
   const button = document.getElementById("save");
   if (button) saveButton(button, cache, sub || key, src);
+  const listing = app.querySelector(".listing");
+  if (listing && chunks > 1 && "IntersectionObserver" in globalThis) {
+    const list = new VirtualList(listing, { count: chunks, load: async (n) => chunkHTML(n) });
+    current = list;
+    app.querySelector(".letters").addEventListener("click", (e) => {
+      const a = e.target.closest("a[data-chunk]");
+      if (!a) return;
+      e.preventDefault();
+      e.stopPropagation();
+      list.jump(+a.dataset.chunk, a.getAttribute("href").slice(1));
+    });
+    list.fill();
+  } else if (listing) {
+    for (let n = 2; n <= chunks; n++) listing.insertAdjacentHTML("beforeend", `<div class="chunk" data-chunk="${n}">${chunkHTML(n)}</div>`);
+  }
 }
+
+// CHUNK is how many pages a listing shows at a time, as the static
+// listings' pages do.
+const CHUNK = 200;
+// current is the listing on screen, stopped when the route changes.
+let current = null;
 
 // pageView shows a page; rest is what follows its name in the route:
 // [version] [variant] [mono] [versions].
@@ -308,6 +342,8 @@ function showHome() {
 }
 
 async function route() {
+  current?.destroy();
+  current = null;
   const h = location.hash;
   if (!h.startsWith("#/") || h === "#/") {
     if (home) return showHome();

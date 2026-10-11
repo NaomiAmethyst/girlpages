@@ -159,7 +159,8 @@ static-web-server and nginx, with the right cache lifetimes), and `girl`
 asks for them. That leaves a directory to upload anywhere static: the repo in `repo/`, and
 a website around it. The static part is what search engines see: a page for
 the latest version (by version number) of every man page, girlified, with
-OpenGraph, JSON-LD and a sitemap, plus section listings. Everything else runs
+OpenGraph, JSON-LD and a sitemap, plus section listings (in pages of 200,
+which scroll on into each other with JavaScript). Everything else runs
 in the browser straight from the repo: originals, older versions, browsing
 just Debian, just Debian trixie, just Arch or upstream git, and search over
 every page and version from every source (typos and all: `grpe` finds
@@ -167,8 +168,9 @@ every page and version from every source (typos and all: `grpe` finds
 fetched is kept (in the browser's Cache API), so pages you've read and
 searches you've done work without a network, and offline the app renders
 any page from them. Each section listing has a "save for offline" button
-that fetches all its pages, and the search page one that fetches the whole
-search index. When it notices a newly published repository it clears out the
+that fetches all its pages, and the search page has ones that fetch the
+search index (and, separately, its typo matching), and a switch to show only
+pages that are saved. When it notices a newly published repository it clears out the
 search index files that aren't used any more, in the background. Each page version is stored once however
 many packages, distros or aliases share it, and everything but a few pointer
 files is content-addressed, so it caches forever and syncs cheaply. The format is specified in [doc/repo-format.md](doc/repo-format.md), for anyone building tools against it.

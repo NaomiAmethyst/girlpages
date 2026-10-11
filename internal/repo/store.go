@@ -85,16 +85,22 @@ func (s *Store) Write(rel string, v any) (string, int64, error) {
 
 // WriteAddressed stores a document under a name made from its own hash.
 func (s *Store) WriteAddressed(name func(sha string) string, v any) (string, error) {
+	sha, _, err := s.writeSized(name, v)
+	return sha, err
+}
+
+// writeSized is WriteAddressed, also returning the file's size.
+func (s *Store) writeSized(name func(sha string) string, v any) (string, int64, error) {
 	b, err := Encode(v)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	sha := Hash(b)
 	p := s.abs(name(sha))
 	if _, err := os.Stat(p); err == nil {
-		return sha, nil
+		return sha, int64(len(b)), nil
 	}
-	return sha, WriteFile(p, b)
+	return sha, int64(len(b)), WriteFile(p, b)
 }
 
 // WriteFile writes data atomically, creating directories as needed.

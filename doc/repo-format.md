@@ -370,8 +370,12 @@ Every page in one section, sorted by name, for listings.
 of the versions that have that variant, by key range:
 
 ```json
-{"format": 1, "shards": [{"first": "0003…", "last": "7fff…", "sha256": "e954…"}, …]}
+{"format": 1, "shards": [{"first": "0003…", "last": "7fff…", "sha256": "e954…", "bytes": 61873}, …]}
 ```
+
+`bytes`, the shard's size, is optional (it's there so that clients can say
+how big fetching every shard would be); every shard manifest in a
+repository, including the search index's, has this shape.
 
 Each shard, `index/variants/<variant>/shard-ab/<sha>.json`, holds the first
 `length` (16) hex digits of the source hash of each version with that
@@ -482,8 +486,10 @@ text of all its versions.
 **The page table.** `index/docs/manifest-<sha>.json` lists its shards:
 
 ```json
-{"format": 1, "count": 7452, "size": 128, "shards": ["6a1f…", "9c02…", …]}
+{"format": 1, "count": 7452, "size": 128, "shards": ["6a1f…", "9c02…", …], "bytes": [11245, 10876, …]}
 ```
+
+(`bytes`, each shard's size in step with `shards`, is optional.)
 
 Pages are numbered (their *doc ids*) in name, then section, order; doc id
 `i` is entry `i % size` of shard `shards[i / size]`, found at

@@ -176,11 +176,12 @@ func (s *Store) Publish(pages []PageRef) (*Manifest, error) {
 	}
 	dm := DocsManifest{Format: Format, Count: bi.DocCount, Size: docShardSize}
 	for i := range bi.Docs {
-		sha, err := s.WriteAddressed(func(sha string) string { return ShardPath("docs", sha) }, &bi.Docs[i])
+		sha, n, err := s.writeSized(func(sha string) string { return ShardPath("docs", sha) }, &bi.Docs[i])
 		if err != nil {
 			return nil, err
 		}
 		dm.Shards = append(dm.Shards, sha)
+		dm.Bytes = append(dm.Bytes, n)
 	}
 	if m.Index.Docs, err = s.WriteAddressed(func(sha string) string { return IndexManifestPath("docs", sha) }, &dm); err != nil {
 		return nil, err
@@ -228,12 +229,12 @@ func (s *Store) writeVariantIndexes(pages []PageRef) (map[string]string, error) 
 		sm := ShardManifest{Format: Format, Shards: []ShardRange{}}
 		for i := 0; i < len(sorted); i += sourceShardSize {
 			part := sorted[i:min(i+sourceShardSize, len(sorted))]
-			sha, err := s.WriteAddressed(func(sha string) string { return ShardPath(kind, sha) },
+			sha, n, err := s.writeSized(func(sha string) string { return ShardPath(kind, sha) },
 				&SourceShard{Format: Format, Length: SourceKeyLength, Sources: part})
 			if err != nil {
 				return nil, err
 			}
-			sm.Shards = append(sm.Shards, ShardRange{First: part[0], Last: part[len(part)-1], SHA256: sha})
+			sm.Shards = append(sm.Shards, ShardRange{First: part[0], Last: part[len(part)-1], SHA256: sha, Bytes: n})
 		}
 		sha, err := s.WriteAddressed(func(sha string) string { return IndexManifestPath(kind, sha) }, &sm)
 		if err != nil {
@@ -247,11 +248,11 @@ func (s *Store) writeVariantIndexes(pages []PageRef) (map[string]string, error) 
 func (s *Store) writeShards(kind string, ranges []ShardRange, shard func(int) any) (string, error) {
 	sm := ShardManifest{Format: Format, Shards: make([]ShardRange, len(ranges))}
 	for i, r := range ranges {
-		sha, err := s.WriteAddressed(func(sha string) string { return ShardPath(kind, sha) }, shard(i))
+		sha, n, err := s.writeSized(func(sha string) string { return ShardPath(kind, sha) }, shard(i))
 		if err != nil {
 			return "", err
 		}
-		r.SHA256 = sha
+		r.SHA256, r.Bytes = sha, n
 		sm.Shards[i] = r
 	}
 	return s.WriteAddressed(func(sha string) string { return IndexManifestPath(kind, sha) }, &sm)

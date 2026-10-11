@@ -162,7 +162,15 @@ export class Searcher {
     await Promise.all(queryGrams(t).map(async g => {
       const r = findRange(this.grams, g);
       if (!r) return;
-      const sh = await this.shard("grams", r.sha256);
+      let sh;
+      try {
+        sh = await this.shard("grams", r.sha256);
+      } catch (e) {
+        // Offline without typo matching saved: search without it.
+        if (!(e instanceof TypeError)) throw e;
+        this.missedTypos = true;
+        return;
+      }
       if (!Object.hasOwn(sh.grams, g)) return;
       const ws = sh.grams[g], ns = sh.pages[g] || [];
       ws.forEach((w, i) => { if (i < ns.length) pages.set(w, ns[i]); });
@@ -194,8 +202,10 @@ export class Searcher {
 
   // search returns up to limit hits, best first:
   // {name, section, description, sources, score}. source, if given, keeps
-  // to pages from that source ("debian", "debian/trixie").
-  async search(query, limit = 50, source = "") {
+  // to pages from that source ("debian", "debian/trixie"), and accept, if
+  // given, to hits it resolves true for.
+  async search(query, limit = 50, source = "", accept = null) {
+    this.missedTypos = false;
     await this.load();
     const terms = [...new Set(tokens(query))];
     const whole = query.trim().toLowerCase();
@@ -225,7 +235,7 @@ export class Searcher {
     let res = combine(true);
     if (res.size === bonus.size) res = combine(false);
     const ranked = [...res].sort((a, b) => b[1] - a[1] || a[0] - b[0]);
-    if (!source) {
+    if (!source && !accept) {
       const top = limit > 0 ? ranked.slice(0, limit) : ranked;
       return Promise.all(top.map(async ([id, score]) => hit(await this.doc(id), score)));
     }
@@ -234,8 +244,9 @@ export class Searcher {
     for (let i = 0; i < ranked.length && i < MAX_FILTERED && (limit <= 0 || hits.length < limit); i += 64) {
       const batch = ranked.slice(i, Math.min(i + 64, MAX_FILTERED));
       const docs = await Promise.all(batch.map(([id]) => this.doc(id)));
+      const ok = await Promise.all(docs.map(d => (!source || d[3].split(" ").includes(source)) && (!accept || accept(hit(d, 0)))));
       docs.forEach((d, j) => {
-        if ((limit <= 0 || hits.length < limit) && d[3].split(" ").includes(source)) hits.push(hit(d, batch[j][1]));
+        if ((limit <= 0 || hits.length < limit) && ok[j]) hits.push(hit(d, batch[j][1]));
       });
     }
     return hits;
@@ -261,6 +272,17 @@ async function page() {
   const base = box.dataset.base;
   const params = new URLSearchParams(location.search);
   const q = params.get("q") || "", src = params.get("src") || "";
+  // Only pages saved for offline: asked for, or by default when offline.
+  const savedOnly = params.has("saved") ? params.get("saved") === "1" : navigator.onLine === false;
+  const toggle = document.getElementById("search-saved");
+  if (toggle && "caches" in globalThis) {
+    const u = new URLSearchParams(params);
+    u.set("saved", savedOnly ? "0" : "1");
+    toggle.href = `${base}search/?${u}`;
+    toggle.textContent = "📴 only saved pages";
+    toggle.classList.toggle("on", savedOnly);
+    toggle.hidden = false;
+  }
   for (const input of document.querySelectorAll('input[name="q"]')) input.value = q;
   const s = new Searcher(box.dataset.repo);
   try {
@@ -289,13 +311,16 @@ async function page() {
   document.title = `${q}${where} · search · girlpages 💅`;
   status.textContent = "looking… 🔎";
   try {
-    const hits = await s.search(q, 100, src);
+    const accept = savedOnly ? (h) => s.cache.hasPage(h.name, h.section, src) : null;
+    const hits = await s.search(q, 100, src, accept);
     list.replaceChildren();
+    const saved = savedOnly ? " saved" : "";
+    const typos = s.missedTypos ? " (typo matching isn't saved, so typos won't be caught)" : "";
     if (!hits.length) {
-      status.textContent = `nothing for “${q}”${where}, bestie 😭 try another word?`;
+      status.textContent = `nothing${saved} for “${q}”${where}, bestie 😭 try another word?${typos}`;
       return;
     }
-    status.textContent = `${hits.length === 100 ? "the top 100" : hits.length} page${hits.length === 1 ? "" : "s"} for “${q}”${where} ✨`;
+    status.textContent = `${hits.length === 100 ? "the top 100" : hits.length}${saved} page${hits.length === 1 ? "" : "s"} for “${q}”${where} ✨${typos}`;
     for (const h of hits) {
       const li = document.createElement("li");
       const a = document.createElement("a");
