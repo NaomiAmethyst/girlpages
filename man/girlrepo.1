@@ -31,6 +31,13 @@ girlrepo \- build and publish girlpages repositories and their website
 .B girlrepo
 .RB [ \-d
 .IR dir ]
+.B import
+.RI [ options ]
+.I source
+.br
+.B girlrepo
+.RB [ \-d
+.IR dir ]
 .B girlify
 .RI [ options ]
 .RI [ name ...]
@@ -245,6 +252,37 @@ List the packages that would be fetched, and how much that is.
 .BR \-\-keep\-current ", " \-s ", " \-\-no\-cache ", " \-q
 As for
 .BR ingest .
+.SS "import \fIsource\fR"
+Merges another published girlpages repository into this one.
+.I source
+is a URL or a directory: the repository itself, or a site with it in
+.BR repo/ .
+Pages this repository doesn't have are added whole; versions it doesn't have
+are added to its pages, keeping when and where they were found; versions both
+have gain each other's packages and any variants this one lacks.
+Pages whose listings are already identical are skipped, and every file
+fetched is checked against the hash its listing gives, so a damaged or
+tampered file is refused (and reported) rather than imported.
+Run
+.B publish
+afterwards.
+.TP
+.B \-\-prefer\-remote
+When both have a variant of the same version and they differ (two girl
+conversions, usually), take theirs; otherwise this repository's is kept.
+.TP
+.B \-\-take\-current
+Make their current versions current here too; otherwise only new pages take
+theirs.
+.TP
+.BR \-s ", " \-\-sections =\fIlist\fR ", " \-m ", " \-\-match =\fIregexp\fR
+Only these sections, or pages whose names match.
+.TP
+.BR \-j ", " \-\-jobs =\fIn\fR
+Fetch this many pages at once (default 8).
+.TP
+.BR \-n ", " \-\-dry\-run
+Say what would be imported.
 .SS "girlify [\fIname\fR...]"
 Converts the current version of every page (or just the named ones) that has
 no

@@ -144,6 +144,7 @@ girlrepo crawl apt https://deb.debian.org/debian trixie        # or a whole pack
 girlrepo crawl rpm https://dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os
 girlrepo crawl pacman https://geo.mirror.pkgbuild.com/core/os/x86_64
 girlrepo girlify -n --price 0.10/0.50                         # what would it cost?
+girlrepo import https://example.org/repo                       # merge in someone else's repo
 girlrepo girlify -j 8                                         # convert what isn't yet
 girlrepo publish --url https://example.org --gc               # index it and build the site
 girlrepo serve                                                # preview at localhost:1990

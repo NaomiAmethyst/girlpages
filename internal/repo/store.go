@@ -195,6 +195,19 @@ func (s *Store) UpdateListing(name, section string, fn func(*Listing) error) err
 	return err
 }
 
+// WriteRaw stores a document's bytes as they are, so a copy from another
+// repository keeps its hash.
+func (s *Store) WriteRaw(rel string, b []byte) error { return WriteFile(s.abs(rel), b) }
+
+// ReadRaw reads a stored document's bytes.
+func (s *Store) ReadRaw(rel string) ([]byte, error) {
+	b, err := os.ReadFile(s.abs(rel))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("%s: %w", rel, ErrNotFound)
+	}
+	return b, err
+}
+
 // Variant reads a stored variant.
 func (s *Store) Variant(source, variant string) (*Variant, error) {
 	var v Variant

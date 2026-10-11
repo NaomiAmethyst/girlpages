@@ -47,6 +47,8 @@ commands:
   ingest --system    add this system's man pages, noting their packages
   crawl KIND URL     add every package with man pages from a repository:
                      apt URL SUITE, rpm URL, or pacman URL
+  import SOURCE      merge another girlpages repository (a URL or a
+                     directory) into this one
   girlify [NAME...]  girlify pages that aren't yet
   publish            write the section lists, search index, manifest and
                      website
@@ -97,6 +99,7 @@ func run(args []string) int {
 	cmds := map[string]func(context.Context, []string) error{
 		"ingest":  a.ingest,
 		"crawl":   a.crawl,
+		"import":  a.importRepo,
 		"girlify": a.girlify,
 		"publish": a.publish,
 		"gc":      a.gc,
@@ -342,6 +345,94 @@ func (a *app) crawl(ctx context.Context, args []string) error {
 		}
 	}
 	return err
+}
+
+func (a *app) importRepo(ctx context.Context, args []string) error {
+	fs := flags("import", "[options] SOURCE")
+	sections := fs.StringP("sections", "s", "", "only these sections (comma separated)")
+	match := fs.StringP("match", "m", "", "only pages whose names match this regular expression")
+	preferRemote := fs.Bool("prefer-remote", false, "when both have a version's variant and they differ, take theirs")
+	takeCurrent := fs.Bool("take-current", false, "make their current versions current here too")
+	jobs := fs.IntP("jobs", "j", 8, "pages to fetch at once")
+	dry := fs.BoolP("dry-run", "n", false, "say what would be imported")
+	if err := parse(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		fs.Usage()
+		return errUsage
+	}
+	c, err := a.remote(ctx, fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	s, err := a.store()
+	if err != nil {
+		return err
+	}
+	if abs, _ := filepath.Abs(c.Base); abs == absPath(s.Dir) {
+		return fmt.Errorf("that's this repository")
+	}
+	o := repo.ImportOptions{Sections: splitSections(*sections), PreferRemote: *preferRemote, TakeCurrent: *takeCurrent,
+		Jobs: *jobs, DryRun: *dry, Log: os.Stderr}
+	if *match != "" {
+		if o.Match, err = regexp.Compile(*match); err != nil {
+			return fmt.Errorf("--match: %w", err)
+		}
+	}
+	unlock, err := s.Lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	start := time.Now()
+	st, err := s.Import(ctx, c, o)
+	verb := "imported"
+	if *dry {
+		verb = "would import"
+	}
+	fmt.Fprintf(os.Stderr, "📥 %d pages: %d the same already; %s %d new pages, %d versions, %d variants, %d places found",
+		st.Pages, st.Same, verb, st.New, st.Versions, st.Variants, st.Packages)
+	if st.Conflicts > 0 {
+		if *preferRemote {
+			fmt.Fprintf(os.Stderr, "; %d conversions differed and theirs were taken", st.Replaced)
+		} else {
+			fmt.Fprintf(os.Stderr, "; %d conversions differed and ours were kept (--prefer-remote takes theirs)", st.Conflicts)
+		}
+	}
+	if st.Failed > 0 {
+		fmt.Fprintf(os.Stderr, "; %d failed", st.Failed)
+	}
+	fmt.Fprintf(os.Stderr, " (%s)\n", time.Since(start).Round(time.Second))
+	if err == nil && !*dry && st.New+st.Versions+st.Variants+st.Packages+st.Replaced > 0 {
+		fmt.Fprintln(os.Stderr, "   next: girlrepo publish ✨")
+	}
+	if err == nil && st.Failed > 0 {
+		return fmt.Errorf("%d pages failed", st.Failed)
+	}
+	return err
+}
+
+// remote finds a published repository at src: the repository itself, or
+// a site with it in repo/.
+func (a *app) remote(ctx context.Context, src string) (*repo.Client, error) {
+	src = strings.TrimSuffix(src, "/")
+	var firstErr error
+	for _, base := range []string{src, src + "/repo"} {
+		c := repo.NewClient(base, 2*time.Minute)
+		c.UserAgent = "girlrepo/" + getVersion()
+		_, err := c.Manifest(ctx)
+		if err == nil {
+			return c, nil
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+		if !errors.Is(err, repo.ErrNotFound) {
+			return nil, err
+		}
+	}
+	return nil, fmt.Errorf("no published girlpages repository at %s (%v); run girlrepo publish there first", src, firstErr)
 }
 
 func absPath(p string) string {

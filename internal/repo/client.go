@@ -38,7 +38,7 @@ const maxDocument = 64 << 20
 // Get fetches and decodes the document at rel. Missing documents give an
 // error wrapping ErrNotFound.
 func (c *Client) Get(ctx context.Context, rel string, v any) error {
-	b, err := c.fetch(ctx, rel)
+	b, err := c.Raw(ctx, rel)
 	if err != nil {
 		return err
 	}
@@ -48,7 +48,8 @@ func (c *Client) Get(ctx context.Context, rel string, v any) error {
 	return nil
 }
 
-func (c *Client) fetch(ctx context.Context, rel string) ([]byte, error) {
+// Raw fetches the document at rel as it is.
+func (c *Client) Raw(ctx context.Context, rel string) ([]byte, error) {
 	base := c.Base
 	if dir, ok := strings.CutPrefix(base, "file://"); ok {
 		base = dir
