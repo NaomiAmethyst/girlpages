@@ -1,20 +1,21 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Naomi Persephone Amethyst <naomi@amethyst.name>
 
-package crawl
+// Package version compares package versions: Debian's, rpm's and pacman's
+// orderings, and the upstream version inside each, for deciding which of a
+// page's versions is the latest.
+package version
 
 import (
+	"regexp"
 	"strconv"
 	"strings"
 	"unicode"
 )
 
-// Repositories (rpm-md ones especially) often keep older builds next to
-// the newest; a crawl only wants the newest of each package.
-
-// CompareDeb compares Debian versions ([epoch:]upstream[-revision]) the way
+// Deb compares Debian versions ([epoch:]upstream[-revision]) the way
 // dpkg does.
-func CompareDeb(a, b string) int {
+func Deb(a, b string) int {
 	ea, ua, ra := splitDeb(a)
 	eb, ub, rb := splitDeb(b)
 	if ea != eb {
@@ -84,9 +85,9 @@ func debPart(a, b string) int {
 	return 0
 }
 
-// CompareRPM compares rpm versions ([epoch:]version-release) the way
+// RPM compares rpm versions ([epoch:]version-release) the way
 // rpmvercmp does; pacman's vercmp is the same algorithm.
-func CompareRPM(a, b string) int {
+func RPM(a, b string) int {
 	ea, va := splitEpoch(a)
 	eb, vb := splitEpoch(b)
 	if ea != eb {
@@ -223,20 +224,54 @@ func cmpInt(a, b int) int {
 	return 0
 }
 
-// newest keeps only the newest version of each package and architecture.
-func newest(pkgs []Package, cmp func(a, b string) int) []Package {
-	best := map[string]int{}
-	var out []Package
-	for _, p := range pkgs {
-		k := p.Name + "\x00" + p.Arch
-		if i, ok := best[k]; ok {
-			if cmp(p.Version, out[i].Version) > 0 {
-				out[i] = p
-			}
-			continue
-		}
-		best[k] = len(out)
-		out = append(out, p)
+// Compare compares two version strings with rpm's rules (which suit
+// upstream versions from anywhere): numbers numerically, ~ before anything,
+// ^ after.
+func Compare(a, b string) int { return rpmvercmp(a, b) }
+
+var (
+	epochRE  = regexp.MustCompile(`^[0-9]+:`)
+	repackRE = regexp.MustCompile(`[+~](dfsg|ds|repack|nmu|deb|ubuntu|build)[0-9.]*.*$`)
+	reallyRE = regexp.MustCompile(`\+really(.+)$`)
+	leadRE   = regexp.MustCompile(`^[^0-9]*`)
+)
+
+// Upstream pulls the upstream version out of a package version from any
+// distribution: "1:1.35+dfsg-3.1build1" and "1.35-5" both give "1.35",
+// "2:1.34-13.el9_8" gives "1.34", and a git version like "v3.5a (549c35b)"
+// gives "3.5a". It returns "" if there's no version number in it at all
+// (a bare commit hash, say).
+func Upstream(v string) string {
+	v = strings.TrimSpace(v)
+	git := false
+	if i := strings.Index(v, " ("); i >= 0 {
+		v, git = v[:i], true // "tag (commit)"
 	}
-	return out
+	v = epochRE.ReplaceAllString(v, "")
+	if i := strings.LastIndexByte(v, '-'); !git && i > 0 && containsDigit(v[i+1:]) {
+		v = v[:i] // the Debian revision, or rpm or pacman release
+	}
+	if m := reallyRE.FindStringSubmatch(v); m != nil {
+		v = m[1]
+	}
+	v = repackRE.ReplaceAllString(v, "")
+	v = leadRE.ReplaceAllString(v, "") // "v3.5a", "release-1.2"
+	if !containsDigit(v) || isHash(v) {
+		return ""
+	}
+	return v
+}
+
+func containsDigit(s string) bool { return strings.ContainsAny(s, "0123456789") }
+
+func isHash(s string) bool {
+	if len(s) < 7 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if !(s[i] >= '0' && s[i] <= '9' || s[i] >= 'a' && s[i] <= 'f') {
+			return false
+		}
+	}
+	return true
 }

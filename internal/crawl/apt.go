@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/NaomiAmethyst/girlpages/internal/version"
 	"io"
 	"strconv"
 	"strings"
@@ -40,7 +41,7 @@ func (a *Apt) Index(ctx context.Context, f *Fetcher) (*Index, error) {
 	if arch == "" {
 		arch = "amd64"
 	}
-	idx := &Index{Release: a.Suite, Compare: CompareDeb}
+	idx := &Index{Release: a.Suite, Compare: version.Deb}
 	rel, _, err := f.OpenFirst(ctx, a.dist("InRelease"), a.dist("Release"))
 	if err != nil {
 		return nil, fmt.Errorf("reading the suite's Release file: %w", err)

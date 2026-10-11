@@ -8,6 +8,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"github.com/NaomiAmethyst/girlpages/internal/version"
 	"io"
 	"strings"
 )
@@ -76,7 +77,7 @@ func (r *RPM) Index(ctx context.Context, f *Fetcher) (*Index, error) {
 		return nil, errors.New("this repository has no filelists index to say which packages have man pages; --all downloads every package instead")
 	}
 
-	idx := &Index{Compare: CompareRPM}
+	idx := &Index{Compare: version.RPM}
 	err = r.each(ctx, f, locs["primary"], "package", func(d *xml.Decoder, start xml.StartElement) error {
 		var p struct {
 			Name    string `xml:"name"`

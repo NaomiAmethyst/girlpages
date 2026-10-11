@@ -132,6 +132,9 @@ func MaxTypos(word string) int {
 // IndexDoc is a page to index.
 type IndexDoc struct {
 	Name, Section, Description string
+	// Sources are the keys of the sources the page comes from, for
+	// searching within one.
+	Sources []string
 	// Body is the page's text (the original, not the girly one: it's what
 	// people search for).
 	Body string
@@ -281,7 +284,7 @@ func BuildIndex(docs []IndexDoc) *BuiltIndex {
 	for i := 0; i < len(docs); i += docShardSize {
 		ds := DocShard{Format: Format}
 		for _, d := range docs[i:min(i+docShardSize, len(docs))] {
-			ds.Docs = append(ds.Docs, [3]string{d.Name, d.Section, d.Description})
+			ds.Docs = append(ds.Docs, [4]string{d.Name, d.Section, d.Description, strings.Join(d.Sources, " ")})
 		}
 		bi.Docs = append(bi.Docs, ds)
 	}

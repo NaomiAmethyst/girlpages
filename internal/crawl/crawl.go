@@ -293,3 +293,21 @@ func humanBytes(n int64) string {
 	}
 	return fmt.Sprintf("%d B", n)
 }
+
+// newest keeps only the newest version of each package and architecture.
+func newest(pkgs []Package, cmp func(a, b string) int) []Package {
+	best := map[string]int{}
+	var out []Package
+	for _, p := range pkgs {
+		k := p.Name + "\x00" + p.Arch
+		if i, ok := best[k]; ok {
+			if cmp(p.Version, out[i].Version) > 0 {
+				out[i] = p
+			}
+			continue
+		}
+		best[k] = len(out)
+		out = append(out, p)
+	}
+	return out
+}

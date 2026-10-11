@@ -33,11 +33,8 @@ import (
 type Options struct {
 	// Package is provenance recorded for every page. Fields left empty are
 	// filled in per package file from its name.
-	Package repo.Package
-	// KeepCurrent leaves pages' current versions alone, for adding older
-	// releases after newer ones.
-	KeepCurrent bool
-	Sections    []string
+	Package  repo.Package
+	Sections []string
 	// Cache is searched for existing conversions of the same text, so
 	// pages already girlified locally don't cost another LLM call.
 	Cache  cache.Set
@@ -354,19 +351,6 @@ func run(ctx context.Context, s *repo.Store, cands []candidate, o Options) (Stat
 		girl *repo.Variant
 		err  error
 	}
-	// latest is, for each page, the source of the last candidate (in the
-	// order given) that had it. Call noteLatest with mu held.
-	type latestSource struct {
-		index  int
-		source string
-	}
-	latest := map[string]latestSource{}
-	noteLatest := func(c candidate, i int, source string) {
-		key := c.name + "\x00" + c.section
-		if l, ok := latest[key]; !ok || i > l.index {
-			latest[key] = latestSource{i, source}
-		}
-	}
 	jobs := o.Jobs
 	if jobs < 1 {
 		jobs = runtime.NumCPU()
@@ -407,7 +391,6 @@ func run(ctx context.Context, s *repo.Store, cands []candidate, o Options) (Stat
 				if have != nil && have.Variants[repo.VariantMan].SHA256 != "" && s.HasVariant(source, repo.VariantMan) {
 					mu.Lock()
 					st.Known++
-					noteLatest(c, i, source)
 					mu.Unlock()
 					if !o.DryRun {
 						err = s.UpdateListing(c.name, c.section, func(l *repo.Listing) error {
@@ -475,15 +458,9 @@ func run(ctx context.Context, s *repo.Store, cands []candidate, o Options) (Stat
 						}
 					}
 					addPackage(v, c.pkg)
-					if l.Current == "" {
-						l.Current = source
-					}
 					return nil
 				})
 				mu.Lock()
-				if err == nil {
-					noteLatest(c, i, source)
-				}
 				if err != nil {
 					st.Skipped++
 					logf("💔 %s: %v\n", title, err)
@@ -500,23 +477,6 @@ func run(ctx context.Context, s *repo.Store, cands []candidate, o Options) (Stat
 	wg.Wait()
 	if err := ctx.Err(); err != nil {
 		return st, err
-	}
-	// Each page's current version is the one from the last of the paths
-	// given (or packages found) that has it, whichever worker got there
-	// first.
-	if !o.DryRun && !o.KeepCurrent {
-		for key, l := range latest {
-			name, sec, _ := strings.Cut(key, "\x00")
-			err := s.UpdateListing(name, sec, func(li *repo.Listing) error {
-				if li.Find(l.source) != nil {
-					li.Current = l.source
-				}
-				return nil
-			})
-			if err != nil {
-				return st, err
-			}
-		}
 	}
 	return st, nil
 }

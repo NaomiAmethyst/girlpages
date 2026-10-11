@@ -15,11 +15,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/NaomiAmethyst/girlpages/internal/render"
 	"github.com/NaomiAmethyst/girlpages/internal/repo"
 )
 
@@ -121,51 +123,68 @@ func TestBuild(t *testing.T) {
 	}
 	home := read(t, filepath.Join(out, "index.html"))
 	for _, want := range []string{`href="/girlpages/section/1/"`, `href="/girlpages/section/3/"`, "6 pages", "3 girlified",
-		`href="/girlpages/static/style.css?v=test"`, `<link rel="canonical" href="https://example.test/girlpages/">`} {
+		`href="/girlpages/static/style.css?v=test"`, `<link rel="canonical" href="https://example.test/girlpages/">`,
+		`<meta property="og:type" content="website">`, `"@type":"WebSite"`,
+		`"urlTemplate":"https://example.test/girlpages/search/?q={search_term_string}"`,
+		`href="/girlpages/browse/?src=debian%2Ftrixie"`} {
 		if !strings.Contains(home, want) {
 			t.Errorf("home page lacks %q", want)
 		}
 	}
 	ls := read(t, filepath.Join(out, "man", "1", "ls", "index.html"))
 	for _, want := range []string{"<title>ls(1) — list directory contents, newer · girlpages 💅</title>",
-		`<meta name="description" content="list directory contents, newer">`,
+		`<link rel="canonical" href="https://example.test/girlpages/man/1/ls/">`,
+		`<meta property="og:type" content="article">`, `<meta property="og:url" content="https://example.test/girlpages/man/1/ls/">`,
+		`<meta property="og:image" content="https://example.test/girlpages/static/icon-512.png">`,
+		`<meta name="twitter:card" content="summary">`, `<meta property="article:modified_time"`,
 		`<code>ls</code> slays, see <a href="/girlpages/man/1/ls/">ls(1)</a> and nope(1)`, // only real pages are links
-		`href="/girlpages/man/1/ls/original/"`, "girlified by fake-1", "debian trixie: ls 10",
-		`href="/girlpages/man/1/ls/v/`, "where they're from"} {
+		`href="/girlpages/browse/?page=ls&amp;sec=1&amp;variant=man"`, "girlified by fake-1",
+		`href="/girlpages/browse/?page=ls&amp;sec=1#versions"`, "2 versions", "version 10, in",
+		`href="/girlpages/browse/?page=ls&amp;sec=1&amp;src=debian%2Ftrixie"`} {
 		if !strings.Contains(ls, want) {
 			t.Errorf("ls page lacks %q", want)
 		}
 	}
 	if strings.Contains(ls, "noindex") {
-		t.Error("the current version should be indexable")
+		t.Error("the latest version should be indexable")
 	}
-	orig := read(t, filepath.Join(out, "man", "1", "ls", "original", "index.html"))
-	if !strings.Contains(orig, "&lt;b&gt;list directory contents, newer&lt;/b&gt; &amp; more") || !strings.Contains(orig, "noindex") {
-		t.Error("original page should be escaped and not indexed")
+	// Structured data parses and says the right things.
+	m := regexp.MustCompile(`<script type="application/ld\+json">(.*?)</script>`).FindStringSubmatch(ls)
+	if m == nil {
+		t.Fatal("no JSON-LD")
 	}
-	olds, _ := filepath.Glob(filepath.Join(out, "man", "1", "ls", "v", "*", "index.html"))
-	if len(olds) != 1 {
-		t.Fatalf("old versions: %v", olds)
+	var ldata struct {
+		Graph []map[string]any `json:"@graph"`
 	}
-	old := read(t, olds[0])
-	if !strings.Contains(old, "older version") || !strings.Contains(old, "noindex") ||
-		!strings.Contains(old, `<link rel="canonical" href="https://example.test/girlpages/man/1/ls/">`) {
-		t.Error("old version page should point at the current one")
+	if err := json.Unmarshal([]byte(m[1]), &ldata); err != nil || len(ldata.Graph) != 2 {
+		t.Fatalf("JSON-LD: %v %s", err, m[1])
+	}
+	art := ldata.Graph[0]
+	if art["@type"] != "TechArticle" || art["url"] != "https://example.test/girlpages/man/1/ls/" ||
+		art["about"].(map[string]any)["softwareVersion"] != "10" || ldata.Graph[1]["@type"] != "BreadcrumbList" {
+		t.Errorf("JSON-LD: %s", m[1])
 	}
 
-	// Not girlified: the page is the original, and there's no separate one.
-	gc := read(t, filepath.Join(out, "man", "1", "git-commit", "index.html"))
-	if !strings.Contains(gc, "hasn't gotten to this one yet") || !strings.Contains(gc, "record changes to the repository") {
-		t.Error("ungirlified page should show the original")
+	// Only the latest version is static: no originals, versions or sources.
+	for _, gone := range []string{"man/1/ls/original", "man/1/ls/v", "src"} {
+		if _, err := os.Stat(filepath.Join(out, gone)); err == nil {
+			t.Errorf("%s shouldn't be there", gone)
+		}
 	}
-	if _, err := os.Stat(filepath.Join(out, "man", "1", "git-commit", "original")); err == nil {
-		t.Error("ungirlified page shouldn't have a separate original")
+
+	// Not girlified: the page is the original.
+	gc := read(t, filepath.Join(out, "man", "1", "git-commit", "index.html"))
+	if !strings.Contains(gc, "hasn't gotten to this one yet") || !strings.Contains(gc, "&lt;b&gt;record changes to the repository&lt;/b&gt; &amp; more") {
+		t.Error("ungirlified page should show the original, escaped")
+	}
+	if strings.Contains(gc, "variant=man") {
+		t.Error("ungirlified page shouldn't link to a separate original")
 	}
 
 	// Odd names.
 	sec1 := read(t, filepath.Join(out, "section", "1", "index.html"))
-	if !strings.Contains(sec1, `href="/girlpages/man/1/%5B/"`) {
-		t.Error("section 1 should link [ as %5B")
+	if !strings.Contains(sec1, `href="/girlpages/man/1/%5B/"`) || !strings.Contains(sec1, `"@type":"CollectionPage"`) {
+		t.Error("section 1 should link [ as %5B, and say it's a collection")
 	}
 	if _, err := os.Stat(filepath.Join(out, "man", "1", "[", "index.html")); err != nil {
 		t.Error(err)
@@ -173,26 +192,27 @@ func TestBuild(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(out, "man", "7", "%2Ehidden", "index.html")); err != nil {
 		t.Error("dot names should be escaped on disk: ", err)
 	}
-	// Subsections get their own lists under the main section.
 	sec3 := read(t, filepath.Join(out, "section", "3", "index.html"))
 	if !strings.Contains(sec3, "SSL_new") || !strings.Contains(sec3, `href="/girlpages/section/3/3ssl/"`) {
 		t.Error("section 3 should list 3ssl pages and link the subsection")
 	}
-	if !strings.Contains(read(t, filepath.Join(out, "section", "3", "3ssl", "index.html")), "SSL_new") {
-		t.Error("no 3ssl list")
-	}
 
 	sitemap := read(t, filepath.Join(out, "sitemap.xml"))
-	if !strings.Contains(sitemap, "<loc>https://example.test/girlpages/man/1/%5B/</loc>") || strings.Contains(sitemap, "/v/") {
+	if !strings.Contains(sitemap, "<loc>https://example.test/girlpages/man/1/%5B/</loc>") || strings.Contains(sitemap, "browse") ||
+		!strings.Contains(sitemap, "<lastmod>") {
 		t.Errorf("sitemap:\n%s", sitemap)
 	}
-	if robots := read(t, filepath.Join(out, "robots.txt")); !strings.Contains(robots, "Disallow: /girlpages/repo/") {
+	robots := read(t, filepath.Join(out, "robots.txt"))
+	if !strings.Contains(robots, "Disallow: /girlpages/repo/") || !strings.Contains(robots, "Disallow: /girlpages/browse/") {
 		t.Errorf("robots.txt: %s", robots)
 	}
-	for _, f := range []string{"404.html", "search/index.html", "static/style.css", "static/search.js", ".nojekyll"} {
+	for _, f := range []string{"404.html", "search/index.html", "browse/index.html", "static/app.js", "static/render.js", ".nojekyll"} {
 		if _, err := os.Stat(filepath.Join(out, f)); err != nil {
 			t.Error(err)
 		}
+	}
+	if b := read(t, filepath.Join(out, "browse", "index.html")); !strings.Contains(b, "noindex") || !strings.Contains(b, "static/app.js") {
+		t.Error("the browse app shouldn't be indexed")
 	}
 
 	// Rebuilding the same thing writes nothing.
@@ -202,78 +222,175 @@ func TestBuild(t *testing.T) {
 	}
 }
 
+func TestNoURL(t *testing.T) {
+	out := t.TempDir()
+	build(t, out, specs, Options{})
+	ls := read(t, filepath.Join(out, "man", "1", "ls", "index.html"))
+	if strings.Contains(ls, "og:url") || strings.Contains(ls, "canonical") || strings.Contains(ls, `"url"`) {
+		t.Error("without a site URL there should be no absolute URLs")
+	}
+	if _, err := os.Stat(filepath.Join(out, "sitemap.xml")); err == nil {
+		t.Error("no sitemap without a URL")
+	}
+}
+
 func TestPrune(t *testing.T) {
 	out := t.TempDir()
 	s, _ := build(t, out, specs, Options{})
+	// Leftovers from an older girlrepo.
+	for _, old := range []string{"man/1/ls/original/index.html", "man/1/ls/v/abc/index.html", "src/debian/index.html"} {
+		os.MkdirAll(filepath.Dir(filepath.Join(out, old)), 0o755)
+		os.WriteFile(filepath.Join(out, old), []byte("old"), 0o644)
+	}
 	if err := os.Remove(filepath.Join(s.Dir, repo.NamePath("git-commit", "1"))); err != nil {
 		t.Fatal(err)
 	}
 	_, st := build(t, out, nil, Options{})
-	if st.Removed != 1 {
+	if st.Removed != 4 {
 		t.Errorf("removed %d pages", st.Removed)
 	}
-	if _, err := os.Stat(filepath.Join(out, "man", "1", "git-commit")); err == nil {
-		t.Error("git-commit's page is still there")
+	for _, gone := range []string{"man/1/git-commit", "man/1/ls/v", "src"} {
+		if _, err := os.Stat(filepath.Join(out, gone)); err == nil {
+			t.Errorf("%s is still there", gone)
+		}
 	}
 }
 
-// TestSearchJS checks that the browser search agrees with the Go one.
-func TestSearchJS(t *testing.T) {
-	node, err := exec.LookPath("node")
+// node runs a module script, skipping the test if there's no node.
+func node(t *testing.T, script string) []byte {
+	t.Helper()
+	bin, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("node not installed")
 	}
+	out, err := exec.Command(bin, "--input-type=module", "-e", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("node: %v\n%s", err, out)
+	}
+	return out
+}
+
+func staticFile(t *testing.T, name string) string {
+	t.Helper()
+	p, err := filepath.Abs(filepath.Join("static", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return "file://" + p
+}
+
+// TestSearchJS checks that the browser search agrees with the Go one,
+// within sources too.
+func TestSearchJS(t *testing.T) {
 	out := t.TempDir()
 	more := append([]pageSpec{}, specs...)
+	arch := []repo.Package{{Distro: "arch", Release: "rolling", Name: "x", Version: "1"}}
 	for i := 0; i < 40; i++ {
-		more = append(more, pageSpec{name: fmt.Sprintf("filler%02d", i), sec: "3", desc: "a filler page about lists"})
+		ps := []pageSpec{{name: fmt.Sprintf("filler%02d", i), sec: "3", desc: "a filler page about lists"}}
+		if i%3 == 0 {
+			ps[0].pkgs = arch
+		}
+		more = append(more, ps...)
 	}
 	build(t, out, more, Options{})
 	srv := httptest.NewServer(http.FileServer(http.Dir(out)))
 	defer srv.Close()
 
-	queries := []string{"ls", "list", "lsit", "directory contents", "git-commit", "commit", "[", "printf", "prntf",
-		"ssl", "fill", "filler07", "zzzz", "hidden", "lists page"}
+	type query struct {
+		Q   string `json:"q"`
+		Src string `json:"src"`
+	}
+	queries := []query{{"ls", ""}, {"list", ""}, {"lsit", ""}, {"directory contents", ""}, {"git-commit", ""}, {"commit", ""},
+		{"[", ""}, {"printf", ""}, {"prntf", ""}, {"ssl", ""}, {"fill", ""}, {"filler07", ""}, {"zzzz", ""}, {"hidden", ""},
+		{"lists page", ""}, {"filler", "arch/rolling"}, {"filler", "arch"}, {"filler", "debian/trixie"}, {"ls", "arch"}}
 	sr := &repo.Searcher{Client: repo.NewClient(srv.URL+"/repo", 5*time.Second)}
 	var want []string
 	for _, q := range queries {
-		hits, err := sr.Search(context.Background(), q, 10)
+		hits, err := sr.SearchIn(context.Background(), q.Q, q.Src, 10)
 		if err != nil {
 			t.Fatal(err)
 		}
 		var line []string
 		for _, h := range hits {
-			line = append(line, fmt.Sprintf("%s(%s)%s=%g", h.Name, h.Section, h.Description, h.Score))
+			line = append(line, fmt.Sprintf("%s(%s)%s=%g[%s]", h.Name, h.Section, h.Description, h.Score, strings.Join(h.Sources, " ")))
 		}
-		want = append(want, q+": "+strings.Join(line, " "))
+		want = append(want, q.Q+"@"+q.Src+": "+strings.Join(line, " "))
+	}
+	if !strings.HasPrefix(want[0], "ls@: ls(1)") || !strings.Contains(want[2], "ls(1)") ||
+		!strings.Contains(want[15], "filler00(3)") || strings.Contains(want[15], "filler01(3)") || want[18] != "ls@arch: " {
+		t.Fatalf("Go search found the wrong things: %q", want)
 	}
 
-	if !strings.HasPrefix(want[0], "ls: ls(1)") || !strings.Contains(want[2], "ls(1)") {
-		t.Fatalf("Go search found the wrong things: %q", want[:3])
-	}
-
-	js, _ := filepath.Abs("static/search.js")
 	qs, _ := json.Marshal(queries)
-	script := fmt.Sprintf(`
+	got := node(t, fmt.Sprintf(`
 const { Searcher } = await import(%q);
 const s = new Searcher(%q);
 for (const q of %s) {
-  const hits = await s.search(q, 10);
-  console.log(q + ": " + hits.map(h => h.name + "(" + h.section + ")" + h.description + "=" + h.score).join(" "));
-}`, "file://"+js, srv.URL+"/repo/", qs)
-	cmd := exec.Command(node, "--input-type=module", "-e", script)
-	got, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("node: %v\n%s", err, got)
-	}
+  const hits = await s.search(q.q, 10, q.src);
+  console.log(q.q + "@" + q.src + ": " + hits.map(h => h.name + "(" + h.section + ")" + h.description + "=" + h.score + "[" + h.sources.join(" ") + "]").join(" "));
+}`, staticFile(t, "search.js"), srv.URL+"/repo/", qs))
 	gotLines := strings.Split(strings.TrimSpace(string(got)), "\n")
 	for i := range want {
-		if i >= len(gotLines) || gotLines[i] != want[i] {
+		if i >= len(gotLines) || strings.TrimRight(gotLines[i], " ") != strings.TrimRight(want[i], " ") {
 			g := ""
 			if i < len(gotLines) {
 				g = gotLines[i]
 			}
 			t.Errorf("JS and Go disagree:\n  go: %s\n  js: %s", want[i], g)
+		}
+	}
+}
+
+// TestRenderJS checks the browser renders markup exactly as Go does.
+func TestRenderJS(t *testing.T) {
+	cases := []string{
+		"# ✨ NAME ✨\n\n`ls` - list stuff\nand more\n\n- **`-a`** — all\n  continued\n  - nested\n1. first\n2) second\n\n```\ncode  here\n  indented\n```\n\n> careful\n> bestie\n\n---\n",
+		"<pink>a <mint>b</mint> c</pink> and <rainbow>rainbow</rainbow> <file> <b> *em* **bold** ***both*** `<pink>`",
+		"see ls(1), printf(3), git-commit(1), x(9z) and https://example.org/a_(b). or <https://x.y/z>, \\*not em\\*",
+		"| a | b |\n|---|:-:|\n| `x` | **y** |\n\n# Same\n\n# Same\n\n## Sub heading ##\n\n### deeper\n",
+		"   ```bash\n   echo \"hi\" & <bye>\n\tindented\n   ```\n\n* star list\n+ plus list\n• bullet\n10. ten\n",
+		"files *.c and 2*3 lone ** stars a*b*c _under_ x_y_z émoji 💅 *italic é* 'quotes' \"dq\" <3 & ok",
+		"",
+		"no heading at all\n\n\n\nlots of blanks\n   \n",
+		"- a\n\n- b\n    - c\n        - d\n- e\n\n1. x\n- y\n",
+	}
+	link := func(name, sec string) string {
+		if name == "nope" {
+			return ""
+		}
+		return "/man/" + sec + "/" + name + "/"
+	}
+	type result struct {
+		HTML string
+		TOC  []render.Heading
+	}
+	var want []result
+	for _, c := range cases {
+		h, toc := render.HTML(c, render.HTMLOptions{Link: link})
+		want = append(want, result{h, toc})
+	}
+	cs, _ := json.Marshal(cases)
+	got := node(t, fmt.Sprintf(`
+const { renderHTML } = await import(%q);
+const out = [];
+for (const c of %s) {
+  const r = renderHTML(c, { link: (n, s) => n === "nope" ? "" : "/man/" + s + "/" + n + "/" });
+  out.push({ HTML: r.html, TOC: r.toc.map(h => ({ ID: h.id, Text: h.text, Level: h.level })) });
+}
+console.log(JSON.stringify(out));`, staticFile(t, "render.js"), cs))
+	var js []result
+	if err := json.Unmarshal(got, &js); err != nil {
+		t.Fatalf("%v: %s", err, got)
+	}
+	for i := range want {
+		if want[i].TOC == nil {
+			want[i].TOC = []render.Heading{}
+		}
+		if js[i].TOC == nil {
+			js[i].TOC = []render.Heading{}
+		}
+		if js[i].HTML != want[i].HTML || fmt.Sprint(js[i].TOC) != fmt.Sprint(want[i].TOC) {
+			t.Errorf("case %d differs:\n  go: %q %v\n  js: %q %v", i, want[i].HTML, want[i].TOC, js[i].HTML, js[i].TOC)
 		}
 	}
 }
@@ -306,8 +423,8 @@ func TestPWAFiles(t *testing.T) {
 		f.Close()
 	}
 	sw := read(t, filepath.Join(out, "sw.js"))
-	if strings.Contains(sw, "/*") && strings.Contains(sw, `/*BASE*/`) || !strings.Contains(sw, `const BASE = "/girlpages/";`) ||
-		!strings.Contains(sw, `"static/girlpages.js"`) || !strings.Contains(sw, `"offline/"`) {
+	if strings.Contains(sw, `/*BASE*/`) || !strings.Contains(sw, `const BASE = "/girlpages/";`) ||
+		!strings.Contains(sw, `"static/app.js"`) || !strings.Contains(sw, `"browse/"`) || !strings.Contains(sw, `"offline/"`) {
 		t.Errorf("service worker constants not filled in:\n%s", sw[:600])
 	}
 	home := read(t, filepath.Join(out, "index.html"))
@@ -316,9 +433,6 @@ func TestPWAFiles(t *testing.T) {
 		if !strings.Contains(home, want) {
 			t.Errorf("home page lacks %q", want)
 		}
-	}
-	if strings.Contains(read(t, filepath.Join(out, "search", "index.html")), "girlpages.js") {
-		t.Error("the search page should only load search.js, which imports girlpages.js")
 	}
 	if !strings.Contains(read(t, filepath.Join(out, "offline", "index.html")), "offline") {
 		t.Error("no offline page")
@@ -478,61 +592,51 @@ console.log(JSON.stringify(out));
 
 func TestSources(t *testing.T) {
 	out := t.TempDir()
-	trixie := repo.Package{Distro: "debian", Release: "trixie", Name: "coreutils", Version: "9.7"}
-	noble := repo.Package{Distro: "ubuntu", Release: "noble", Name: "coreutils", Version: "9.4"}
-	archp := repo.Package{Distro: "arch", Release: "rolling", Name: "grep", Version: "3.12"}
+	trixie := repo.Package{Distro: "debian", Release: "trixie", Name: "coreutils", Version: "9.7-3"}
+	noble := repo.Package{Distro: "ubuntu", Release: "noble", Name: "coreutils", Version: "9.4-2"}
+	archp := repo.Package{Distro: "arch", Release: "rolling", Name: "grep", Version: "3.12-1"}
 	git := repo.Package{Name: "tool", Version: "v1 (abc)", URL: "https://example.org/tool.git"}
 	s, _ := build(t, out, []pageSpec{
 		{name: "ls", sec: "1", desc: "list directory contents", girl: true, pkgs: []repo.Package{trixie}},
-		{name: "ls", sec: "1", desc: "list directory contents, newer", added: 10, pkgs: []repo.Package{noble}},
+		{name: "ls", sec: "1", desc: "list directory contents, older", added: 10, pkgs: []repo.Package{noble}},
 		{name: "grep", sec: "1", desc: "print lines", girl: true, pkgs: []repo.Package{archp}},
-		{name: "tool", sec: "1", desc: "does tool things", pkgs: []repo.Package{git}},
+		{name: "tool", sec: "8", desc: "does tool things", pkgs: []repo.Package{git}},
 	}, Options{})
 	m, _ := s.Manifest()
 	var labels []string
 	for _, e := range m.Sources {
-		labels = append(labels, fmt.Sprintf("%s=%d", e.Label(), e.Pages))
+		labels = append(labels, fmt.Sprintf("%s=%d%v", e.Key(), e.Pages, e.Sections))
 	}
-	if got := strings.Join(labels, " "); got != "arch=1 arch rolling=1 debian=1 debian trixie=1 ubuntu=1 ubuntu noble=1 upstream=1" {
+	if got := strings.Join(labels, " "); got != "arch=1map[1:1] arch/rolling=1map[1:1] debian=1map[1:1] debian/trixie=1map[1:1] "+
+		"ubuntu=1map[1:1] ubuntu/noble=1map[1:1] upstream=1map[8:1]" {
 		t.Errorf("manifest sources: %s", got)
 	}
+	// 9.7 beats 9.4, though ubuntu's was added later.
 	l, _, _ := s.Listing("ls", "1")
-	var trixieSrc string
-	for _, v := range l.Versions {
-		if v.From("debian", "trixie") {
-			trixieSrc = v.Source
+	if l.CurrentVersion().Description != "list directory contents" || l.Sources["ubuntu/noble"] == l.Current ||
+		l.Sources["debian/trixie"] != l.Current || l.Versions[0].Version == "" {
+		t.Errorf("ls listing: %+v", l)
+	}
+	// The section index says which sources have a page, and which version
+	// those that don't have the latest have.
+	var si repo.SectionIndex
+	s.Read(repo.SectionIndexPath("1", m.Sections[0].SHA256), &si)
+	for _, p := range si.Pages {
+		if p.Name == "ls" && (strings.Join(p.Sources, " ") != "debian debian/trixie ubuntu ubuntu/noble" ||
+			p.Other["ubuntu/noble"] != l.Sources["ubuntu/noble"] || p.Other["debian"] != "" || p.Versions != 2 || p.Version != "9.7") {
+			t.Errorf("ls in section 1: %+v", p)
 		}
 	}
-
-	home := read(t, filepath.Join(out, "index.html"))
-	for _, want := range []string{`href="/src/debian/"`, `href="/src/debian/trixie/"`, `href="/src/upstream/"`, "latest of everything"} {
-		if !strings.Contains(home, want) {
-			t.Errorf("home lacks %q", want)
-		}
-	}
-	// Debian's ls is the older version, under v/; Ubuntu's is current.
-	deb := read(t, filepath.Join(out, "src", "debian", "trixie", "section", "1", "index.html"))
-	if !strings.Contains(deb, `href="/man/1/ls/v/`+trixieSrc+`/"`) || strings.Contains(deb, "grep") ||
-		!strings.Contains(deb, "list directory contents</span>") || !strings.Contains(deb, "in debian trixie") {
-		t.Errorf("debian trixie section 1:\n%s", deb)
-	}
-	ub := read(t, filepath.Join(out, "src", "ubuntu", "section", "1", "index.html"))
-	if !strings.Contains(ub, `href="/man/1/ls/"`) || !strings.Contains(ub, "newer") {
-		t.Errorf("ubuntu section 1 should link the current ls")
-	}
-	// Chips switch source but stay in section 1.
-	if !strings.Contains(deb, `href="/src/arch/section/1/"`) || !strings.Contains(deb, `href="/section/1/"`) {
-		t.Error("source chips should stay in the section")
-	}
-	if up := read(t, filepath.Join(out, "src", "upstream", "index.html")); !strings.Contains(up, "1 page") {
-		t.Errorf("upstream home")
-	}
-	// Pages say where they're from.
+	// Static pages link into the browse app for sources.
 	page := read(t, filepath.Join(out, "man", "1", "ls", "index.html"))
-	if !strings.Contains(page, "📦 ubuntu noble") || !strings.Contains(page, ">debian trixie</a>") {
-		t.Errorf("ls page should say it's from ubuntu noble and link debian trixie's version")
+	if !strings.Contains(page, "version 9.7, in") || !strings.Contains(page, `href="/browse/?page=ls&amp;sec=1&amp;src=debian%2Ftrixie"`) {
+		t.Error("ls page should say where it's from")
 	}
-	if tp := read(t, filepath.Join(out, "man", "1", "tool", "index.html")); !strings.Contains(tp, "📦 upstream tool v1 (abc)") {
+	if tp := read(t, filepath.Join(out, "man", "8", "tool", "index.html")); !strings.Contains(tp, `src=upstream">upstream</a>`) {
 		t.Error("git page should say it's upstream")
+	}
+	sec1 := read(t, filepath.Join(out, "section", "1", "index.html"))
+	if !strings.Contains(sec1, `href="/browse/?section=1&amp;src=arch%2Frolling"`) || strings.Contains(sec1, "src=upstream") {
+		t.Error("section 1 should offer the sources that have pages in it, and only those")
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"archive/tar"
 	"context"
 	"fmt"
+	"github.com/NaomiAmethyst/girlpages/internal/version"
 	"io"
 	"path"
 	"strconv"
@@ -84,7 +85,7 @@ func (p *Pacman) Index(ctx context.Context, f *Fetcher) (*Index, error) {
 			}
 		}
 	}
-	idx := &Index{Distro: "arch", Release: "rolling", Compare: CompareRPM}
+	idx := &Index{Distro: "arch", Release: "rolling", Compare: version.RPM}
 	for _, dir := range order {
 		e := byDir[dir]
 		if e.desc == nil {

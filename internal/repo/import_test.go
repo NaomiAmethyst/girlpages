@@ -136,9 +136,10 @@ func TestImport(t *testing.T) {
 	if g, err := a.Variant(srcs["ls"], VariantGirl); err != nil || !strings.Contains(g.Text(), "ls but cute") {
 		t.Errorf("ls girl variant: %v", err)
 	}
-	// grep: their version is added, ours stays current.
+	// grep: their version is added, and it's current: both are 9.7, but
+	// theirs was added later.
 	l = listing(t, a, "grep", "1")
-	if len(l.Versions) != 2 || l.Current != srcs["grep"] {
+	if len(l.Versions) != 2 || l.Current == srcs["grep"] {
 		t.Errorf("grep: %+v", l)
 	}
 	// cat: the conversions differ; ours stays.
@@ -171,10 +172,9 @@ func TestImport(t *testing.T) {
 		t.Errorf("second import: %+v, %v", st, err)
 	}
 
-	// Preferring theirs, and taking their current versions, from a
-	// directory this time.
+	// Preferring theirs, from a directory this time.
 	a, srcs = newLocal()
-	st, err = a.Import(ctx, NewClient(b.Dir, time.Second), ImportOptions{PreferRemote: true, TakeCurrent: true})
+	st, err = a.Import(ctx, NewClient(b.Dir, time.Second), ImportOptions{PreferRemote: true})
 	if err != nil || st.Replaced != 1 {
 		t.Fatalf("prefer remote: %+v, %v", st, err)
 	}
@@ -185,8 +185,5 @@ func TestImport(t *testing.T) {
 		if !strings.Contains(g.Text(), "their cat") || l.Find(srcs["cat"]).Variants[VariantGirl].SHA256 != Hash(raw) {
 			t.Errorf("%s should point at their conversion", alias)
 		}
-	}
-	if l := listing(t, a, "grep", "1"); l.Current == srcs["grep"] {
-		t.Error("--take-current should make their grep current")
 	}
 }

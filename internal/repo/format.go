@@ -33,6 +33,8 @@ import (
 	"path"
 	"strings"
 	"time"
+
+	"github.com/NaomiAmethyst/girlpages/internal/version"
 )
 
 // Format is the repository format version written into every document.
@@ -93,9 +95,14 @@ type Listing struct {
 	Format  int    `json:"format"`
 	Name    string `json:"name"`
 	Section string `json:"section"`
-	// Current is the source hash of the version to show by default.
+	// Current is the source hash of the latest version by version number,
+	// the one shown by default. It's worked out whenever the listing
+	// changes.
 	Current  string    `json:"current"`
 	Versions []Version `json:"versions"`
+	// Sources maps each source's key ("debian/trixie") to the source hash
+	// of the version it has, for clients. Also worked out on every change.
+	Sources map[string]string `json:"sources,omitempty"`
 }
 
 // Version is one version of a page: one distinct roff source.
@@ -106,6 +113,9 @@ type Version struct {
 	Added       time.Time              `json:"added"`
 	Variants    map[string]VariantInfo `json:"variants"`
 	Packages    []Package              `json:"packages,omitempty"`
+	// Version is the upstream version number (see Upstream), for clients.
+	// It's worked out whenever the listing changes.
+	Version string `json:"version,omitempty"`
 }
 
 // VariantInfo describes a stored variant.
@@ -159,14 +169,55 @@ func (l *Listing) Find(source string) *Version {
 }
 
 // CurrentVersion returns the version to show by default.
-func (l *Listing) CurrentVersion() *Version {
-	if v := l.Find(l.Current); v != nil {
-		return v
+// It's always the latest by version number (see Latest); Current records
+// which that is for clients.
+func (l *Listing) CurrentVersion() *Version { return l.Latest() }
+
+// Upstream is the highest upstream version (see version.Upstream) of the
+// packages a version was found in, or "" if none says.
+func (v *Version) Upstream() string {
+	best := ""
+	for _, p := range v.Packages {
+		if u := version.Upstream(p.Version); u != "" && (best == "" || version.Compare(u, best) > 0) {
+			best = u
+		}
 	}
-	if len(l.Versions) > 0 {
-		return &l.Versions[0]
+	return best
+}
+
+// Newer reports whether v is a later version of a page than w: by upstream
+// version number, then (for the same upstream version, as with a distro's
+// patched copy) by how many places have it, then by when it was added.
+func (v *Version) Newer(w *Version) bool {
+	uv, uw := v.Upstream(), w.Upstream()
+	switch {
+	case uv != "" && uw == "":
+		return true
+	case uv == "" && uw != "":
+		return false
+	case uv != uw:
+		if c := version.Compare(uv, uw); c != 0 {
+			return c > 0
+		}
 	}
-	return nil
+	if len(v.Packages) != len(w.Packages) {
+		return len(v.Packages) > len(w.Packages)
+	}
+	if !v.Added.Equal(w.Added) {
+		return v.Added.After(w.Added)
+	}
+	return v.Source > w.Source
+}
+
+// Latest is the page's latest version by version number.
+func (l *Listing) Latest() *Version {
+	var best *Version
+	for i := range l.Versions {
+		if v := &l.Versions[i]; best == nil || v.Newer(best) {
+			best = v
+		}
+	}
+	return best
 }
 
 // Variant is one rendering of one version of a page.
@@ -215,9 +266,18 @@ type IndexPage struct {
 	Description string `json:"description,omitempty"`
 	// Page is the SHA-256 of the page's Listing.
 	Page string `json:"page"`
-	// Source is the current version's source hash.
+	// Source is the latest version's source hash.
 	Source    string `json:"source"`
 	Girlified bool   `json:"girlified,omitempty"`
+	// Version is the latest version's upstream version number, if known.
+	Version string `json:"version,omitempty"`
+	// Versions is how many versions the page has.
+	Versions int `json:"versions,omitempty"`
+	// Sources are the keys of the sources the page has versions from
+	// ("debian", "debian/trixie", "upstream"); Other gives, for those whose
+	// version isn't the latest, the source hash of theirs.
+	Sources []string          `json:"sources,omitempty"`
+	Other   map[string]string `json:"other,omitempty"`
 }
 
 // ShardManifest lists index shards by the range of keys each holds. Shards
@@ -250,10 +310,11 @@ type DocsManifest struct {
 	Shards []string `json:"shards"`
 }
 
-// DocShard is a slice of the page table: [name, section, description].
+// DocShard is a slice of the page table: [name, section, description,
+// source keys separated by spaces].
 type DocShard struct {
 	Format int         `json:"format"`
-	Docs   [][3]string `json:"docs"`
+	Docs   [][4]string `json:"docs"`
 }
 
 // GramShard maps trigrams to the words containing them. Pages holds, in

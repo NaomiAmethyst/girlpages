@@ -26,9 +26,6 @@ type ImportOptions struct {
 	// of the same version and they differ (usually two girl conversions).
 	// Otherwise the local one stays.
 	PreferRemote bool
-	// TakeCurrent makes the other repository's current version current
-	// here too. Otherwise pages already here keep theirs.
-	TakeCurrent bool
 	// Jobs is how many pages are fetched at once.
 	Jobs   int
 	DryRun bool
@@ -209,9 +206,6 @@ func (s *Store) Import(ctx context.Context, c *Client, o ImportOptions) (ImportS
 						if lv.Description == "" {
 							lv.Description = rv.Description
 						}
-					}
-					if (newPage || o.TakeCurrent) && l.Find(r.listing.Current) != nil {
-						l.Current = r.listing.Current
 					}
 					return nil
 				}

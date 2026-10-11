@@ -180,7 +180,6 @@ func (a *app) ingest(ctx context.Context, args []string) error {
 	fs.StringVar(&pkg.Name, "package", "", "package name, if it can't be told from the file name")
 	fs.StringVar(&pkg.Version, "package-version", "", "package version, likewise")
 	fs.StringVar(&pkg.Arch, "arch", "", "package architecture, likewise")
-	keep := fs.Bool("keep-current", false, "don't make these the current versions (for older releases)")
 	sections := fs.StringP("sections", "s", "", "only these sections (comma separated)")
 	jobs := fs.IntP("jobs", "j", 0, "pages to render at once (default: one per CPU)")
 	dry := fs.BoolP("dry-run", "n", false, "say what would be added")
@@ -197,7 +196,7 @@ func (a *app) ingest(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	o := ingest.Options{Package: pkg, KeepCurrent: *keep, Sections: splitSections(*sections), Jobs: *jobs,
+	o := ingest.Options{Package: pkg, Sections: splitSections(*sections), Jobs: *jobs,
 		DryRun: *dry, Quiet: *quiet, Log: os.Stderr}
 	if !*noCache {
 		o.Cache = core.CacheSet(a.cfg)
@@ -285,7 +284,6 @@ func (a *app) crawl(ctx context.Context, args []string) error {
 	again := fs.Bool("again", false, "ingest packages even if an earlier crawl did")
 	allVersions := fs.Bool("all-versions", false, "crawl every version the repository has, not just the newest of each package")
 	all := fs.Bool("all", false, "download every package if the repository can't say which have man pages")
-	keep := fs.Bool("keep-current", false, "don't make these the current versions (for older releases)")
 	sections := fs.StringP("sections", "s", "", "only pages in these sections (comma separated)")
 	dry := fs.BoolP("dry-run", "n", false, "list the packages that would be fetched")
 	noCache := fs.Bool("no-cache", false, "don't take conversions from girl's cache")
@@ -323,7 +321,7 @@ func (a *app) crawl(ctx context.Context, args []string) error {
 	o := crawl.Options{Distro: *distro, Release: *release, Limit: *limit, Jobs: *jobs, Group: *group,
 		Again: *again, AllVersions: *allVersions, DryRun: *dry, Fetcher: a.fetcher(), Log: os.Stderr, Quiet: *quiet,
 		State:  filepath.Join(config.UserCacheDir(), "girlrepo-crawl", repo.Hash([]byte(absPath(s.Dir)))[:16]+".json"),
-		Ingest: ingest.Options{KeepCurrent: *keep, Sections: splitSections(*sections), Log: os.Stderr}}
+		Ingest: ingest.Options{Sections: splitSections(*sections), Log: os.Stderr}}
 	if *match != "" {
 		re, err := regexp.Compile(*match)
 		if err != nil {
@@ -352,7 +350,6 @@ func (a *app) importRepo(ctx context.Context, args []string) error {
 	sections := fs.StringP("sections", "s", "", "only these sections (comma separated)")
 	match := fs.StringP("match", "m", "", "only pages whose names match this regular expression")
 	preferRemote := fs.Bool("prefer-remote", false, "when both have a version's variant and they differ, take theirs")
-	takeCurrent := fs.Bool("take-current", false, "make their current versions current here too")
 	jobs := fs.IntP("jobs", "j", 8, "pages to fetch at once")
 	dry := fs.BoolP("dry-run", "n", false, "say what would be imported")
 	if err := parse(fs, args); err != nil {
@@ -373,7 +370,7 @@ func (a *app) importRepo(ctx context.Context, args []string) error {
 	if abs, _ := filepath.Abs(c.Base); abs == absPath(s.Dir) {
 		return fmt.Errorf("that's this repository")
 	}
-	o := repo.ImportOptions{Sections: splitSections(*sections), PreferRemote: *preferRemote, TakeCurrent: *takeCurrent,
+	o := repo.ImportOptions{Sections: splitSections(*sections), PreferRemote: *preferRemote,
 		Jobs: *jobs, DryRun: *dry, Log: os.Stderr}
 	if *match != "" {
 		if o.Match, err = regexp.Compile(*match); err != nil {
@@ -574,6 +571,14 @@ func (a *app) publish(ctx context.Context, args []string) error {
 	pages, err := s.AllPages()
 	if err != nil {
 		return err
+	}
+	if n, err := s.Refresh(pages); err != nil {
+		return err
+	} else if n > 0 {
+		fmt.Fprintf(os.Stderr, "🔄 brought %d listings up to date\n", n)
+		if pages, err = s.AllPages(); err != nil {
+			return err
+		}
 	}
 	m, err := s.Publish(pages)
 	if err != nil {

@@ -61,31 +61,43 @@ func (s *Store) AllPages() ([]PageRef, error) {
 func (s *Store) Publish(pages []PageRef) (*Manifest, error) {
 	m := &Manifest{Format: Format, Generated: now(), Variants: []string{VariantGirl, VariantMan}, Sources: Sources(pages)}
 
-	// The search index wants every page's text; read them all at once.
+	// The search index wants all of every page's text: every version's,
+	// as people may be looking for an option only an old one has.
 	docs := make([]IndexDoc, len(pages))
 	errs := make([]error, len(pages))
 	parallel(len(pages), func(i int) {
 		p := pages[i]
-		v := p.Current()
-		docs[i] = IndexDoc{Name: p.Pointer.Name, Section: p.Pointer.Section, Description: v.Description}
-		for _, variant := range []string{VariantMan, VariantGirl} {
+		keys, _ := p.Listing.SourceKeys()
+		d := IndexDoc{Name: p.Pointer.Name, Section: p.Pointer.Section, Description: p.Current().Description,
+			Sources: keys}
+		var body strings.Builder
+		descs := map[string]bool{d.Description: true}
+		for _, v := range p.Listing.Versions {
+			if v.Description != "" && !descs[v.Description] {
+				descs[v.Description] = true
+				body.WriteString(v.Description)
+				body.WriteByte('\n')
+			}
+			variant := VariantMan
 			if _, ok := v.Variants[variant]; !ok {
-				continue
+				variant = VariantGirl
+				if _, ok := v.Variants[variant]; !ok {
+					continue
+				}
 			}
 			doc, err := s.Variant(v.Source, variant)
 			if err != nil {
 				errs[i] = fmt.Errorf("%s(%s): %w", p.Pointer.Name, p.Pointer.Section, err)
 				return
 			}
-			var body strings.Builder
 			for _, sct := range doc.Sections {
 				body.WriteString(sct.Heading)
 				body.WriteByte('\n')
 				body.WriteString(sct.Body)
 			}
-			docs[i].Body = body.String()
-			return
 		}
+		d.Body = body.String()
+		docs[i] = d
 	})
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
@@ -102,10 +114,16 @@ func (s *Store) Publish(pages []PageRef) (*Manifest, error) {
 			bySection[sec] = si
 			order = append(order, sec)
 		}
-		si.Pages = append(si.Pages, IndexPage{
+		keys, other := p.Listing.SourceKeys()
+		ip := IndexPage{
 			Name: p.Pointer.Name, Title: v.Title, Description: v.Description,
 			Page: p.Pointer.SHA256, Source: v.Source, Girlified: p.Girlified(),
-		})
+			Version: v.Upstream(), Sources: keys, Other: other,
+		}
+		if n := len(p.Listing.Versions); n > 1 {
+			ip.Versions = n
+		}
+		si.Pages = append(si.Pages, ip)
 		m.Pages++
 		if p.Girlified() {
 			m.Girlified++

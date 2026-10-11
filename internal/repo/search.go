@@ -15,7 +15,9 @@ import (
 // Hit is a search result.
 type Hit struct {
 	Name, Section, Description string
-	Score                      float64
+	// Sources are the keys of the sources the page comes from.
+	Sources []string
+	Score   float64
 }
 
 // Searcher queries a published index. web/search.js is the same algorithm
@@ -42,6 +44,16 @@ const (
 // Search finds up to limit pages for a query. Pages matching every word
 // come first; if none do, pages matching any word are returned.
 func (s *Searcher) Search(ctx context.Context, query string, limit int) ([]Hit, error) {
+	return s.SearchIn(ctx, query, "", limit)
+}
+
+// maxFiltered is how many ranked pages a search within a source looks
+// through for ones from that source.
+const maxFiltered = 2000
+
+// SearchIn is Search limited to pages from one source (a key such as
+// "debian" or "debian/trixie"; "" for all).
+func (s *Searcher) SearchIn(ctx context.Context, query, source string, limit int) ([]Hit, error) {
 	if err := s.load(ctx); err != nil {
 		return nil, err
 	}
@@ -116,18 +128,31 @@ func (s *Searcher) Search(ctx context.Context, query string, limit int) ([]Hit, 
 		}
 		return ranked[i].id < ranked[j].id
 	})
-	if limit > 0 && len(ranked) > limit {
-		ranked = ranked[:limit]
-	}
-	hits := make([]Hit, 0, len(ranked))
-	for _, r := range ranked {
+	var hits []Hit
+	for i, r := range ranked {
+		if limit > 0 && len(hits) >= limit || source != "" && i >= maxFiltered {
+			break
+		}
 		d, err := s.doc(ctx, r.id)
 		if err != nil {
 			return nil, err
 		}
-		hits = append(hits, Hit{Name: d[0], Section: d[1], Description: d[2], Score: r.score})
+		srcs := strings.Fields(d[3])
+		if source != "" && !contains(srcs, source) {
+			continue
+		}
+		hits = append(hits, Hit{Name: d[0], Section: d[1], Description: d[2], Sources: srcs, Score: r.score})
 	}
 	return hits, nil
+}
+
+func contains(ss []string, s string) bool {
+	for _, x := range ss {
+		if x == s {
+			return true
+		}
+	}
+	return false
 }
 
 func dedupe(ts []string) []string {
@@ -199,19 +224,19 @@ func (s *Searcher) postings(ctx context.Context, w string) ([][2]int, error) {
 }
 
 // doc looks up a page in the page table.
-func (s *Searcher) doc(ctx context.Context, id int) ([3]string, error) {
+func (s *Searcher) doc(ctx context.Context, id int) ([4]string, error) {
 	if s.docs.Size < 1 || id < 0 || id/s.docs.Size >= len(s.docs.Shards) {
-		return [3]string{}, fmt.Errorf("search index has no page %d", id)
+		return [4]string{}, fmt.Errorf("search index has no page %d", id)
 	}
 	sh, err := s.shard(ctx, "docs", s.docs.Shards[id/s.docs.Size], func() any { return &DocShard{} })
 	if err != nil {
-		return [3]string{}, err
+		return [4]string{}, err
 	}
 	ds := sh.(*DocShard)
 	if i := id % s.docs.Size; i < len(ds.Docs) {
 		return ds.Docs[i], nil
 	}
-	return [3]string{}, fmt.Errorf("search index has no page %d", id)
+	return [4]string{}, fmt.Errorf("search index has no page %d", id)
 }
 
 // prefixWords lists indexed words that start with p (but aren't p).

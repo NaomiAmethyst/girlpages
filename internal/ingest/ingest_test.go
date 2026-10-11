@@ -294,14 +294,15 @@ func TestIngestAndGirlify(t *testing.T) {
 	if len(l.Versions) != 2 || l.CurrentVersion().Description != "does foo, now faster" || l.Versions[0].Source != l.Current {
 		t.Fatalf("after update: %+v", l)
 	}
-	// Re-adding the old one with KeepCurrent doesn't change which is current.
+	// Ingesting the old one again doesn't make it current: with no version
+	// numbers to go on, the one added last is the latest.
 	write(t, filepath.Join(root, "man1", "foo.1"), []byte(roff("foo", "1", "does foo")))
-	if _, err := Paths(ctx, s, []string{root}, Options{KeepCurrent: true, Quiet: true, Log: io.Discard}); err != nil {
+	if _, err := Paths(ctx, s, []string{root}, Options{Quiet: true, Log: io.Discard}); err != nil {
 		t.Fatal(err)
 	}
 	l, _, _ = s.Listing("foo", "1")
 	if l.CurrentVersion().Description != "does foo, now faster" {
-		t.Errorf("KeepCurrent changed the current version: %+v", l)
+		t.Errorf("re-ingesting the old version made it current: %+v", l)
 	}
 }
 
@@ -355,9 +356,9 @@ func TestGirlifyBatch(t *testing.T) {
 	}
 }
 
-// The current version is the one from the last path given, however the
-// workers happen to finish.
-func TestIngestCurrentIsLastPath(t *testing.T) {
+// The current version is the one with the highest version number, in
+// whatever order sources come.
+func TestIngestCurrentIsHighestVersion(t *testing.T) {
 	needTools(t)
 	older := filepath.Join(t.TempDir(), "man")
 	newer := filepath.Join(t.TempDir(), "man")
@@ -367,23 +368,28 @@ func TestIngestCurrentIsLastPath(t *testing.T) {
 		write(t, filepath.Join(newer, "man1", name+".1"), []byte(roff(name, "1", "the new one")))
 	}
 	ctx := context.Background()
-	for _, c := range []struct {
-		paths []string
-		want  string
-	}{{[]string{older, newer}, "the new one"}, {[]string{newer, older}, "the old one"}} {
-		for run := 0; run < 3; run++ {
-			s, err := repo.Open(t.TempDir())
-			if err != nil {
+	for _, newFirst := range []bool{true, false} {
+		s, err := repo.Open(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		runs := []Source{
+			{Path: older, Package: repo.Package{Distro: "debian", Release: "trixie", Name: "x", Version: "1.10-2"}},
+			{Path: newer, Package: repo.Package{Distro: "arch", Name: "x", Version: "1.9-1"}},
+		}
+		if newFirst {
+			runs[0], runs[1] = runs[1], runs[0]
+		}
+		for _, r := range runs {
+			if _, err := Sources(ctx, s, []Source{r}, Options{Jobs: 8, Quiet: true, Log: io.Discard}); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := Paths(ctx, s, c.paths, Options{Jobs: 8, Quiet: true, Log: io.Discard}); err != nil {
-				t.Fatal(err)
-			}
-			pages, _ := s.AllPages()
-			for _, p := range pages {
-				if len(p.Listing.Versions) != 2 || p.Current().Description != c.want {
-					t.Fatalf("%v: %s has %d versions, current %q", c.paths, p.Pointer.Name, len(p.Listing.Versions), p.Current().Description)
-				}
+		}
+		pages, _ := s.AllPages()
+		for _, p := range pages {
+			// 1.10 is higher than 1.9, so debian's (the "old one") is latest.
+			if len(p.Listing.Versions) != 2 || p.Current().Description != "the old one" || p.Listing.Current != p.Current().Source {
+				t.Fatalf("%s: current %q", p.Pointer.Name, p.Current().Description)
 			}
 		}
 	}
@@ -440,7 +446,8 @@ func TestGit(t *testing.T) {
 	if l, _, _ := s.Listing("tool.conf", "5"); l == nil {
 		t.Error("compressed page missed")
 	}
-	// The default branch has the newer page.
+	// The default branch has a newer page, but no version number, so the
+	// tagged one stays latest.
 	head, cleanup2, err := CloneGit(ctx, "git+file://"+src)
 	if err != nil {
 		t.Fatal(err)
@@ -450,7 +457,7 @@ func TestGit(t *testing.T) {
 		t.Fatal(err)
 	}
 	l, _, _ = s.Listing("tool", "1")
-	if len(l.Versions) != 2 || l.CurrentVersion().Description != "does newer tool things" {
+	if len(l.Versions) != 2 || l.CurrentVersion().Description != "does tool things" || l.CurrentVersion().Version != "1.0" {
 		t.Errorf("tool at HEAD: %+v", l)
 	}
 	if _, _, err := CloneGit(ctx, "git+file://"+src+"#no-such-ref"); err == nil {

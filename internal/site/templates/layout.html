@@ -6,13 +6,25 @@
 <meta name="color-scheme" content="light dark">
 <meta name="generator" content="girlpages {{.Version}}">
 <title>{{.Title}} · girlpages 💅</title>
-{{if .Description}}<meta name="description" content="{{.Description}}">
-<meta property="og:description" content="{{.Description}}">{{end}}
-<meta property="og:title" content="{{.Title}} · girlpages">
+{{if .Description}}<meta name="description" content="{{.Description}}">{{end}}
+{{if .Canonical}}<link rel="canonical" href="{{.Canonical}}">{{end}}
+{{if .NoIndex}}<meta name="robots" content="noindex, follow">{{else}}<meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large">{{end}}
 <meta property="og:site_name" content="girlpages">
-{{if .Canonical}}<link rel="canonical" href="{{.Canonical}}">
-<meta property="og:url" content="{{.Canonical}}">{{end}}
-{{if .NoIndex}}<meta name="robots" content="noindex, follow">{{end}}
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="{{.OGType}}">
+<meta property="og:title" content="{{.Title}}">
+{{if .Description}}<meta property="og:description" content="{{.Description}}">{{end}}
+{{if .Canonical}}<meta property="og:url" content="{{.Canonical}}">{{end}}
+{{if .OGImage}}<meta property="og:image" content="{{.OGImage}}">
+<meta property="og:image:width" content="512">
+<meta property="og:image:height" content="512">
+<meta property="og:image:alt" content="girlpages: a white flower on a pink and purple gradient">{{end}}
+{{if .Modified}}<meta property="article:modified_time" content="{{.Modified}}">{{end}}
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="{{.Title}}">
+{{if .Description}}<meta name="twitter:description" content="{{.Description}}">{{end}}
+{{if .OGImage}}<meta name="twitter:image" content="{{.OGImage}}">{{end}}
+{{if .JSONLD}}<script type="application/ld+json">{{.JSONLD}}</script>{{end}}
 <link rel="icon" href="{{.Base}}static/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="{{.Base}}static/apple-touch-icon.png">
 <link rel="manifest" href="{{.Base}}manifest.webmanifest">
@@ -32,7 +44,7 @@
 {{template "content" .}}
 </main>
 <footer>made with 💖 by <a href="https://github.com/NaomiAmethyst/girlpages">girlpages</a> {{.Version}} · rewritten by an LLM, so check the original when it really matters</footer>
-{{if not .Search}}<script type="module" src="{{.Base}}static/girlpages.js"></script>{{end}}
+<script type="module" src="{{.Base}}static/girlpages.js"></script>
 <script>function girlTheme(){var r=document.documentElement,c=r.dataset.theme,d=c?c==="dark":matchMedia("(prefers-color-scheme: dark)").matches,n=d?"light":"dark";r.dataset.theme=n;try{localStorage.setItem("girlpages-theme",n)}catch(e){}}</script>
 </body>
 </html>

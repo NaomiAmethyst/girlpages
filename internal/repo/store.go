@@ -184,9 +184,7 @@ func (s *Store) UpdateListing(name, section string, fn func(*Listing) error) err
 		}
 		return a.Source < b.Source
 	})
-	if l.Current == "" && len(l.Versions) > 0 {
-		l.Current = l.Versions[0].Source
-	}
+	l.derive()
 	sha, err := s.WriteAddressed(ListingPath, l)
 	if err != nil {
 		return err
@@ -206,6 +204,50 @@ func (s *Store) ReadRaw(rel string) ([]byte, error) {
 		return nil, fmt.Errorf("%s: %w", rel, ErrNotFound)
 	}
 	return b, err
+}
+
+// derive works out the fields that follow from the versions.
+func (l *Listing) derive() {
+	for i := range l.Versions {
+		l.Versions[i].Version = l.Versions[i].Upstream()
+	}
+	l.Current = ""
+	if v := l.Latest(); v != nil {
+		l.Current = v.Source
+	}
+	l.Sources = nil
+	for _, src := range sourcesOf(l) {
+		if v := l.VersionFrom(src.Distro, src.Release); v != nil {
+			if l.Sources == nil {
+				l.Sources = map[string]string{}
+			}
+			l.Sources[src.Key()] = v.Source
+		}
+	}
+}
+
+// Refresh rewrites listings whose derived fields are out of date (written
+// by an older girlrepo, say), returning how many changed. The caller must
+// hold Lock.
+func (s *Store) Refresh(pages []PageRef) (int, error) {
+	n := 0
+	for _, p := range pages {
+		want := *p.Listing
+		want.Versions = append([]Version(nil), p.Listing.Versions...)
+		want.derive()
+		same := want.Current == p.Listing.Current && fmt.Sprint(want.Sources) == fmt.Sprint(p.Listing.Sources)
+		for i := range want.Versions {
+			same = same && want.Versions[i].Version == p.Listing.Versions[i].Version
+		}
+		if same {
+			continue
+		}
+		if err := s.UpdateListing(p.Pointer.Name, p.Pointer.Section, func(*Listing) error { return nil }); err != nil {
+			return n, err
+		}
+		n++
+	}
+	return n, nil
 }
 
 // Variant reads a stored variant.

@@ -127,13 +127,12 @@ requests replaced by what they include, and symlinks followed (inside the
 unpacked package, for absolute links).
 The same page from different packages or distributions is stored once, noting
 everywhere it was found.
-A page whose source changed becomes a new version, and the current one unless
-.B \-\-keep\-current
-is given; old versions are kept.
-When one run finds different versions of the same page (the same name and
-section), the one from the last
-.I path
-given is current, so list older sources first.
+A page whose source changed becomes a new version; old versions are kept.
+A page's current version, the one the website shows, is its latest by version
+number: the upstream version of the packages it was found in (\fB1.35\fR from
+both \fB1.35+dfsg\-3.1\fR and \fB1.35\-5\fR; epochs, Debian revisions, rpm
+and pacman releases and repacking suffixes don't count), then, for the same
+version, the one found in the most places, then the one added last.
 New versions are rendered with
 .BR man (1)
 to make their
@@ -161,10 +160,6 @@ and
 Record the package, for directories, or for a single package file whose name
 doesn't follow its format's convention.
 Package files are otherwise identified by their names.
-.TP
-.B \-\-keep\-current
-Don't make the ingested versions current: for adding older releases after
-newer ones.
 .TP
 .BR \-s ", " \-\-sections =\fIlist\fR
 Only these sections.
@@ -249,7 +244,7 @@ Download every package if the repository has no file lists.
 .BR \-n ", " \-\-dry\-run
 List the packages that would be fetched, and how much that is.
 .TP
-.BR \-\-keep\-current ", " \-s ", " \-\-no\-cache ", " \-q
+.BR \-s ", " \-\-no\-cache ", " \-q
 As for
 .BR ingest .
 .SS "import \fIsource\fR"
@@ -271,10 +266,6 @@ afterwards.
 When both have a variant of the same version and they differ (two girl
 conversions, usually), take theirs; otherwise this repository's is kept.
 .TP
-.B \-\-take\-current
-Make their current versions current here too; otherwise only new pages take
-theirs.
-.TP
 .BR \-s ", " \-\-sections =\fIlist\fR ", " \-m ", " \-\-match =\fIregexp\fR
 Only these sections, or pages whose names match.
 .TP
@@ -284,7 +275,7 @@ Fetch this many pages at once (default 8).
 .BR \-n ", " \-\-dry\-run
 Say what would be imported.
 .SS "girlify [\fIname\fR...]"
-Converts the current version of every page (or just the named ones) that has
+Converts the current (latest) version of every page (or just the named ones) that has
 no
 .B girl
 variant yet, using the backend and model from girl's configuration (see
@@ -357,19 +348,28 @@ visible.
 Website files are only rewritten when they change, so syncing the result
 somewhere is cheap.
 .PP
-Besides the latest of everything, the site can be browsed by where pages come
-from: a distribution
-.RB ( /src/debian/ ),
+The website's static pages are what search engines should see: the home
+page, the section listings, and each page's current version, girlified if it
+has been (otherwise the original), with canonical links, OpenGraph and Twitter
+card tags, JSON-LD (TechArticle and BreadcrumbList for pages, WebSite with a
+SearchAction for the home page, CollectionPage for listings) and a sitemap.
+Everything else happens in the browser, read straight from the repository by
+.BR /browse/ :
+originals, older versions, and browsing by where pages come from, a
+distribution
+.RB ( ?src=debian ),
 a release of one
-.RB ( /src/debian/trixie/ ),
+.RB ( ?src=debian/trixie )
 or
 .B upstream
-for pages from git repositories.
-Each lists the version of every page that source has (its current version if
-the source has that, otherwise the one from there added last), and every page
-says where its version comes from and links the others.
-.B manifest.json
-lists the sources too.
+for git repositories, each showing the version of every page that source
+has.
+.B /search/
+searches every page from every source, all of their versions' text, and can
+keep to one source.
+Without
+.B \-\-url
+there are no absolute URLs, so no canonical links, OpenGraph URLs or sitemap.
 .TP
 .BR \-\-url =\fIurl\fR
 The site's absolute URL, for canonical links and
@@ -501,10 +501,10 @@ The repository.
 Held while the repository is being changed.
 .TP
 .IR dir /man/ section / name /
-A page on the website; old versions are under
-.BI v/ source /\fR,
-and girlified pages have the original under
-.BR original/ .
+A page's current version on the website.
+.TP
+.IR dir /browse/
+The browser app for everything else.
 .SH "EXIT STATUS"
 0 on success, 1 for a usage error, 2 if something failed, 130 if interrupted.
 .SH EXAMPLES

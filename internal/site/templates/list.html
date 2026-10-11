@@ -1,9 +1,9 @@
 {{define "content"}}
 <div class="card">
-<div class="crumbs"><a href="{{.Base}}">home</a>{{if .Source}} › <a href="{{.HomeURL}}">{{.Source}}</a>{{end}} › {{.Heading}}</div>
+<nav class="crumbs" aria-label="Breadcrumbs"><a href="{{.Base}}">home</a> › {{.Heading}}</nav>
 <div class="pagehead">
 <h1>{{.Heading}}</h1>
-<p class="sub">{{.Sub}}{{if .Source}} in {{.Source}}{{end}}</p>
+<p class="sub">{{.Sub}}</p>
 </div>
 {{if .Sources}}<nav class="chips sources" aria-label="Browse by source">{{range .Sources}}<a class="pill{{if .On}} on{{end}}" href="{{.URL}}">{{.Label}}</a>{{end}}</nav>{{end}}
 {{if .Chips}}<div class="chips">{{range .Chips}}<a class="pill{{if .On}} on{{end}}" href="{{.URL}}">{{.Label}}</a>{{end}}</div>{{end}}

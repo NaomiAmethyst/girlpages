@@ -20,8 +20,19 @@ const Upstream = "upstream"
 type SourceEntry struct {
 	Distro  string `json:"distro"`
 	Release string `json:"release,omitempty"`
-	// Pages is how many pages have a version from it.
-	Pages int `json:"pages"`
+	// Pages is how many pages have a version from it, and Sections how
+	// many in each main section ("1", "3"…).
+	Pages    int            `json:"pages"`
+	Sections map[string]int `json:"sections,omitempty"`
+}
+
+// Key is how a source is named in section indexes and the search index:
+// "debian", "debian/trixie" or "upstream".
+func (e SourceEntry) Key() string {
+	if e.Release == "" {
+		return e.Distro
+	}
+	return e.Distro + "/" + e.Release
 }
 
 // Label is how a source is written: "debian trixie".
@@ -72,50 +83,83 @@ func (v *Version) SourceLabels() []string {
 }
 
 // VersionFrom picks the version of a page to show for a source: the
-// current one if it came from there, otherwise the one from there that was
-// added last. It returns nil if the source doesn't have the page.
+// latest by version number of those that came from there. It returns nil
+// if the source doesn't have the page.
 func (l *Listing) VersionFrom(distro, release string) *Version {
-	if cur := l.CurrentVersion(); cur != nil && cur.From(distro, release) {
-		return cur
-	}
 	var best *Version
 	for i := range l.Versions {
 		v := &l.Versions[i]
-		if v.From(distro, release) && (best == nil || v.Added.After(best.Added)) {
+		if v.From(distro, release) && (best == nil || v.Newer(best)) {
 			best = v
 		}
 	}
 	return best
 }
 
-// Sources lists every source the pages come from, distributions before
-// their releases, with how many pages each has.
-func Sources(pages []PageRef) []SourceEntry {
-	count := map[[2]string]int{}
-	for _, p := range pages {
-		seen := map[[2]string]bool{}
-		for _, v := range p.Listing.Versions {
-			for _, pk := range v.Packages {
-				s := pk.Source()
-				if s == "" {
-					continue
-				}
-				keys := [][2]string{{s, ""}}
-				if pk.Release != "" && s != Upstream {
-					keys = append(keys, [2]string{s, pk.Release})
-				}
-				for _, k := range keys {
-					if !seen[k] {
-						seen[k] = true
-						count[k]++
-					}
+// sourcesOf lists the sources a page has versions from.
+func sourcesOf(l *Listing) []SourceEntry {
+	seen := map[[2]string]bool{}
+	var out []SourceEntry
+	for _, v := range l.Versions {
+		for _, pk := range v.Packages {
+			s := pk.Source()
+			if s == "" {
+				continue
+			}
+			keys := [][2]string{{s, ""}}
+			if pk.Release != "" && s != Upstream {
+				keys = append(keys, [2]string{s, pk.Release})
+			}
+			for _, k := range keys {
+				if !seen[k] {
+					seen[k] = true
+					out = append(out, SourceEntry{Distro: k[0], Release: k[1]})
 				}
 			}
 		}
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key() < out[j].Key() })
+	return out
+}
+
+// SourceKeys lists the keys of the sources a page has versions from, and,
+// for each whose version isn't the latest, which version it has.
+func (l *Listing) SourceKeys() ([]string, map[string]string) {
+	var keys []string
+	var other map[string]string
+	latest := l.Latest()
+	for _, src := range sourcesOf(l) {
+		keys = append(keys, src.Key())
+		if v := l.VersionFrom(src.Distro, src.Release); v != nil && latest != nil && v.Source != latest.Source {
+			if other == nil {
+				other = map[string]string{}
+			}
+			other[src.Key()] = v.Source
+		}
+	}
+	return keys, other
+}
+
+// Sources lists every source the pages come from, distributions before
+// their releases, with how many pages each has.
+func Sources(pages []PageRef) []SourceEntry {
+	count := map[[2]string]*SourceEntry{}
+	for _, p := range pages {
+		key := p.Pointer.Section[:1]
+		for _, src := range sourcesOf(p.Listing) {
+			k := [2]string{src.Distro, src.Release}
+			e := count[k]
+			if e == nil {
+				e = &SourceEntry{Distro: src.Distro, Release: src.Release, Sections: map[string]int{}}
+				count[k] = e
+			}
+			e.Pages++
+			e.Sections[key]++
+		}
+	}
 	var out []SourceEntry
-	for k, n := range count {
-		out = append(out, SourceEntry{Distro: k[0], Release: k[1], Pages: n})
+	for _, e := range count {
+		out = append(out, *e)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Distro != out[j].Distro {

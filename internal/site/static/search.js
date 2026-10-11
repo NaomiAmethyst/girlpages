@@ -203,8 +203,10 @@ export class Searcher {
     return out;
   }
 
-  // search returns up to limit hits, best first: {name, section, description, score}.
-  async search(query, limit = 50) {
+  // search returns up to limit hits, best first:
+  // {name, section, description, sources, score}. source, if given, keeps
+  // to pages from that source ("debian", "debian/trixie").
+  async search(query, limit = 50, source = "") {
     await this.load();
     const terms = [...new Set(tokens(query))];
     const whole = query.trim().toLowerCase();
@@ -233,44 +235,84 @@ export class Searcher {
     };
     let res = combine(true);
     if (res.size === bonus.size) res = combine(false);
-    let ranked = [...res].sort((a, b) => b[1] - a[1] || a[0] - b[0]);
-    if (limit > 0) ranked = ranked.slice(0, limit);
-    return Promise.all(ranked.map(async ([id, score]) => {
-      const d = await this.doc(id);
-      return { name: d[0], section: d[1], description: d[2], score };
-    }));
+    const ranked = [...res].sort((a, b) => b[1] - a[1] || a[0] - b[0]);
+    if (!source) {
+      const top = limit > 0 ? ranked.slice(0, limit) : ranked;
+      return Promise.all(top.map(async ([id, score]) => hit(await this.doc(id), score)));
+    }
+    // Within a source: look further down the ranking, a batch at a time.
+    const hits = [];
+    for (let i = 0; i < ranked.length && i < MAX_FILTERED && (limit <= 0 || hits.length < limit); i += 64) {
+      const batch = ranked.slice(i, Math.min(i + 64, MAX_FILTERED));
+      const docs = await Promise.all(batch.map(([id]) => this.doc(id)));
+      docs.forEach((d, j) => {
+        if ((limit <= 0 || hits.length < limit) && d[3].split(" ").includes(source)) hits.push(hit(d, batch[j][1]));
+      });
+    }
+    return hits;
   }
+}
+
+const MAX_FILTERED = 2000;
+
+function hit(d, score) {
+  return { name: d[0], section: d[1], description: d[2], sources: d[3] ? d[3].split(" ") : [], score };
 }
 
 function addBest(m, id, score) {
   if (!m.has(id) || score > m.get(id)) m.set(id, score);
 }
 
-// The search page.
+// The search page: ?q=words, and &src=debian/trixie to keep to a source.
 async function page() {
   const box = document.getElementById("search");
   if (!box) return;
   const status = document.getElementById("search-status");
   const list = document.getElementById("search-results");
   const base = box.dataset.base;
-  const q = new URLSearchParams(location.search).get("q") || "";
+  const params = new URLSearchParams(location.search);
+  const q = params.get("q") || "", src = params.get("src") || "";
   for (const input of document.querySelectorAll('input[name="q"]')) input.value = q;
+  const s = new Searcher(box.dataset.repo);
+  try {
+    await s.load();
+    const chips = document.getElementById("search-sources");
+    const link = (key, label) => {
+      const a = document.createElement("a");
+      a.className = "pill" + (key === src ? " on" : "");
+      const u = new URLSearchParams({ q });
+      if (key) u.set("src", key);
+      a.href = `${base}search/?${u}`;
+      a.textContent = label;
+      return a;
+    };
+    if (chips && s.manifest.sources && s.manifest.sources.length) {
+      chips.append(link("", "✨ everywhere"));
+      for (const e of s.manifest.sources) {
+        chips.append(link(e.release ? `${e.distro}/${e.release}` : e.distro, e.release ? "· " + e.release : e.distro));
+      }
+    }
+  } catch {
+    // the search itself will say what's wrong
+  }
   if (!q.trim()) return;
-  document.title = `${q} · search · girlpages 💅`;
+  const where = src ? ` in ${src.replace("/", " ")}` : "";
+  document.title = `${q}${where} · search · girlpages 💅`;
   status.textContent = "looking… 🔎";
   try {
-    const s = new Searcher(box.dataset.repo);
-    const hits = await s.search(q, 100);
+    const hits = await s.search(q, 100, src);
     list.replaceChildren();
     if (!hits.length) {
-      status.textContent = `nothing for “${q}”, bestie 😭 try another word?`;
+      status.textContent = `nothing for “${q}”${where}, bestie 😭 try another word?`;
       return;
     }
-    status.textContent = `${hits.length === 100 ? "the top 100" : hits.length} page${hits.length === 1 ? "" : "s"} for “${q}” ✨`;
+    status.textContent = `${hits.length === 100 ? "the top 100" : hits.length} page${hits.length === 1 ? "" : "s"} for “${q}”${where} ✨`;
     for (const h of hits) {
       const li = document.createElement("li");
       const a = document.createElement("a");
-      a.href = `${base}man/${encodeURIComponent(segmentName(h.section))}/${encodeURIComponent(segmentName(h.name))}/`;
+      a.href = src
+        ? `${base}browse/?${new URLSearchParams({ page: h.name, sec: h.section, src })}`
+        : `${base}man/${encodeURIComponent(segmentName(h.section))}/${encodeURIComponent(segmentName(h.name))}/`;
       const name = document.createElement("span");
       name.className = "name";
       name.textContent = h.name;

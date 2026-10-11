@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Naomi Persephone Amethyst <naomi@amethyst.name>
 
-// Package site builds a static website from a girlpages repository: an
-// HTML page for every man page (so search engines can read them), section
-// listings, and a search page that queries the repository's index from
-// the browser. It only reads the repository, so anyone can build a site
-// from a published one.
+// Package site builds a static website from a girlpages repository.
+//
+// Only what search engines should see is static: the home page, the
+// section listings, and the latest version (by version number) of every
+// page, girlified if it has been, with canonical links, OpenGraph and
+// JSON-LD. Everything else (originals, older versions, browsing by
+// distribution or release, and search) is done in the browser by
+// /browse/ and /search/, straight from the repository. The site only reads
+// the repository, so anyone can build one from a published repository.
 package site
 
 import (
@@ -38,17 +42,19 @@ import (
 //go:embed templates/*.html
 var templateFS embed.FS
 
-//go:embed static/search.js
-var searchJS string
-
-//go:embed static/girlpages.js
-var girlpagesJS string
-
-//go:embed static/sw.js
-var serviceWorkerJS string
+//go:embed static/*.js
+var staticFS embed.FS
 
 // SearchJS is the browser search module.
-func SearchJS() string { return searchJS }
+func SearchJS() string { return staticJS("search.js") }
+
+func staticJS(name string) string {
+	b, err := staticFS.ReadFile("static/" + name)
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
+}
 
 var templates = map[string]*template.Template{}
 
@@ -59,7 +65,7 @@ func init() {
 		}
 		return fmt.Sprintf("%d pages", n)
 	}}
-	for _, name := range []string{"home", "list", "page", "original", "search", "notfound", "offline"} {
+	for _, name := range []string{"home", "list", "page", "search", "browse", "notfound", "offline"} {
 		templates[name] = template.Must(template.New(name).Funcs(funcs).ParseFS(templateFS,
 			"templates/layout.html", "templates/"+name+".html"))
 	}
@@ -68,13 +74,13 @@ func init() {
 // Options controls a build.
 type Options struct {
 	// Out is the site's root directory. The repository is expected at
-	// Out/repo, so the search page can find it.
+	// Out/repo, so the browser can find it.
 	Out string
 	// Base is the URL path the site is served from, such as "/" or
 	// "/girlpages/".
 	Base string
-	// URL is the site's absolute URL, for canonical links and the
-	// sitemap. Optional.
+	// URL is the site's absolute URL, for canonical links, OpenGraph,
+	// JSON-LD and the sitemap. Sites meant for search engines need it.
 	URL     string
 	Version string
 	Log     io.Writer
@@ -90,6 +96,7 @@ type builder struct {
 	mu      sync.Mutex // guards st and written
 	st      Stats
 	s       *repo.Store
+	m       *repo.Manifest
 	written map[string]bool
 	byName  map[string][]string // name → sections
 }
@@ -103,31 +110,20 @@ func Build(s *repo.Store, pages []repo.PageRef, m *repo.Manifest, o Options) (St
 		o.Base += "/"
 	}
 	o.URL = strings.TrimSuffix(o.URL, "/")
-	b := &builder{o: o, s: s, written: map[string]bool{}, byName: map[string][]string{}}
+	if o.Log == nil {
+		o.Log = io.Discard
+	}
+	b := &builder{o: o, s: s, m: m, written: map[string]bool{}, byName: map[string][]string{}}
 	for _, p := range pages {
 		b.byName[p.Pointer.Name] = append(b.byName[p.Pointer.Name], p.Pointer.Section)
 	}
-	scopes := b.scopes(repo.Sources(pages))
 	steps := []func() error{
-		func() error { return b.static() },
-		func() error {
-			for _, sc := range scopes {
-				if err := b.home(pages, m, sc, scopes); err != nil {
-					return err
-				}
-			}
-			return nil
-		},
-		func() error {
-			for _, sc := range scopes {
-				if err := b.sections(pages, sc, scopes); err != nil {
-					return err
-				}
-			}
-			return nil
-		},
+		b.static,
+		func() error { return b.home(pages) },
+		func() error { return b.sections(pages) },
 		func() error { return b.pages(pages) },
-		func() error { return b.search() },
+		b.search,
+		b.browse,
 		func() error { return b.sitemap(pages) },
 	}
 	for _, step := range steps {
@@ -143,28 +139,27 @@ type view struct {
 	Title, Description, Canonical string
 	Base, Version, Query          string
 	NoIndex                       bool
-	// Search pages load the search script, which brings the rest.
-	Search bool
+	// OpenGraph: the kind of thing ("website", "article"), an absolute
+	// image URL, and when an article changed.
+	OGType, OGImage, Modified string
+	// JSONLD is structured data about the page, already JSON.
+	JSONLD template.JS
 
 	// home
 	Sections         []card
 	Total, Girlified int
 	Generated        string
 
-	// Sources lead to the other ways of browsing; Source is this one's
-	// ("debian trixie"), empty for everything.
+	// Sources lead to browsing by distribution or release.
 	Sources []chip
-	Source  string
-	HomeURL string
 
 	// list
 	Heading, Sub string
-	Crumb        *crumb
 	Chips        []chip
 	Letters      []string
 	Groups       []group
 
-	// page, original
+	// page
 	Page *pageView
 }
 
@@ -172,8 +167,6 @@ type card struct {
 	Key, Name, Emoji, URL string
 	Count, Girlified      int
 }
-
-type crumb struct{ Label, URL string }
 
 type chip struct {
 	Label, URL string
@@ -192,27 +185,25 @@ type item struct {
 
 type pageView struct {
 	Name, Section, Title, Description string
-	SectionURL, URL, OriginalURL      string
-	Body                              template.HTML
-	TOC                               []render.Heading
-	Girlified                         bool
-	Model, Generated                  string
-	Header, Footer                    string
-	Original                          []textSection
-	Packages                          []string
-	Versions                          []versionLink
-	// In is where this version comes from: "debian trixie, ubuntu noble".
-	In         string
-	Old        bool // an older version, not the current one
-	CurrentURL string
+	SectionURL, URL                   string
+	// BrowseURL is the page in the browser app, for originals and other
+	// versions.
+	BrowseURL       string
+	Body            template.HTML
+	TOC             []render.Heading
+	Girlified       bool
+	Model, Modified string
+	Header, Footer  string
+	Original        []textSection
+	Packages        []string
+	// In lists the sources this version is in, each linking to the page as
+	// that source has it; Versions is how many versions there are.
+	In       []chip
+	Versions int
+	Version  string // upstream version number
 }
 
 type textSection struct{ Heading, Body string }
-
-type versionLink struct {
-	Label, URL string
-	Current    bool
-}
 
 func (b *builder) url(parts ...string) string {
 	u := b.o.Base
@@ -243,6 +234,17 @@ func (b *builder) sectionURL(sec string) string {
 	return b.url("section", sec)
 }
 
+// browseURL is a view in the browser app, from name, value pairs.
+func (b *builder) browseURL(params ...string) string {
+	q := url.Values{}
+	for i := 0; i+1 < len(params); i += 2 {
+		if params[i+1] != "" {
+			q.Set(params[i], params[i+1])
+		}
+	}
+	return b.o.Base + "browse/?" + q.Encode()
+}
+
 // file maps a site URL path to the file that serves it.
 func (b *builder) file(u string) string {
 	rel := strings.TrimPrefix(u, b.o.Base)
@@ -259,7 +261,8 @@ func (b *builder) file(u string) string {
 	return filepath.Join(b.o.Out, filepath.Join(parts...))
 }
 
-func (b *builder) canonical(u string) string {
+// abs makes a site path absolute, if the site's URL is known.
+func (b *builder) abs(u string) string {
 	if b.o.URL == "" {
 		return ""
 	}
@@ -284,9 +287,13 @@ func (b *builder) write(path string, data []byte) error {
 
 func (b *builder) render(u, name string, v *view) error {
 	v.Base, v.Version = b.o.Base, b.o.Version
-	if v.Canonical == "" {
-		v.Canonical = b.canonical(u)
+	if v.Canonical == "" && !v.NoIndex {
+		v.Canonical = b.abs(u)
 	}
+	if v.OGType == "" {
+		v.OGType = "website"
+	}
+	v.OGImage = b.abs(b.o.Base + "static/icon-512.png")
 	var buf bytes.Buffer
 	if err := templates[name].ExecuteTemplate(&buf, "layout", v); err != nil {
 		return err
@@ -295,21 +302,26 @@ func (b *builder) render(u, name string, v *view) error {
 }
 
 func (b *builder) static() error {
-	icons := appIcons()
-	files := map[string][]byte{
-		"style.css":    []byte(web.StyleCSS()),
-		"search.js":    []byte(searchJS),
-		"girlpages.js": []byte(girlpagesJS),
-	}
-	for name, data := range icons {
+	files := map[string][]byte{"style.css": []byte(web.StyleCSS())}
+	for name, data := range appIcons() {
 		files[name] = data
+	}
+	scripts, err := fs.ReadDir(staticFS, "static")
+	if err != nil {
+		return err
+	}
+	for _, e := range scripts {
+		if e.Name() != "sw.js" {
+			files[e.Name()] = []byte(staticJS(e.Name()))
+		}
 	}
 	// What the service worker keeps for offline use. Changing any of it
 	// changes its version, so browsers fetch the new ones.
-	shell := []string{"", "search/", "offline/", "manifest.webmanifest"}
+	shell := []string{"", "search/", "browse/", "offline/", "manifest.webmanifest"}
 	h := sha256.New()
 	io.WriteString(h, b.o.Version)
-	io.WriteString(h, serviceWorkerJS)
+	sw := staticJS("sw.js")
+	io.WriteString(h, sw)
 	for _, name := range sortedKeys(files) {
 		if err := b.write(filepath.Join(b.o.Out, "static", name), files[name]); err != nil {
 			return err
@@ -350,11 +362,11 @@ func (b *builder) static() error {
 		out, _ := json.Marshal(v)
 		return string(out)
 	}
-	sw := strings.NewReplacer(
+	sw = strings.NewReplacer(
 		`/*BASE*/"/"`, js(b.o.Base),
 		`/*VERSION*/"dev"`, js(hex.EncodeToString(h.Sum(nil))[:16]),
 		`/*SHELL*/[]`, js(shell),
-	).Replace(serviceWorkerJS)
+	).Replace(sw)
 	if err := b.write(filepath.Join(b.o.Out, "sw.js"), []byte(sw)); err != nil {
 		return err
 	}
@@ -363,7 +375,7 @@ func (b *builder) static() error {
 	if err := b.write(filepath.Join(b.o.Out, ".nojekyll"), nil); err != nil {
 		return err
 	}
-	robots := "User-agent: *\nDisallow: " + b.o.Base + "repo/\n"
+	robots := "User-agent: *\nDisallow: " + b.o.Base + "repo/\nDisallow: " + b.o.Base + "browse/\n"
 	if b.o.URL != "" {
 		robots += "Sitemap: " + b.o.URL + "/sitemap.xml\n"
 	}
@@ -384,104 +396,49 @@ func sortedKeys(m map[string][]byte) []string {
 
 func mainKey(sec string) string { return sec[:1] }
 
-// scope is a way of browsing: everything (the latest of each page), or the
-// pages from one source.
-type scope struct {
-	src    repo.SourceEntry // empty for everything
-	prefix []string         // URL parts before section/…
-}
-
-func (sc scope) all() bool { return sc.src.Distro == "" }
-
-// entry is a page as a scope sees it: the version it shows.
-type entry struct {
-	p repo.PageRef
-	v *repo.Version
-}
-
-func (sc scope) entries(pages []repo.PageRef) []entry {
-	var out []entry
-	for _, p := range pages {
-		v := p.Current()
-		if !sc.all() {
-			v = p.Listing.VersionFrom(sc.src.Distro, sc.src.Release)
-		}
-		if v != nil {
-			out = append(out, entry{p, v})
-		}
-	}
-	return out
-}
-
-// versionURL is where a version of a page lives: its page if it's the
-// current one, else under v/.
-func (b *builder) versionURL(e entry) string {
-	name, sec := e.p.Pointer.Name, e.p.Pointer.Section
-	if e.v.Source == e.p.Listing.CurrentVersion().Source {
-		return b.pageURL(name, sec)
-	}
-	return b.url("man", sec, name, "v", e.v.Source)
-}
-
 func girlified(v *repo.Version) bool {
 	_, ok := v.Variants[repo.VariantGirl]
 	return ok
 }
 
-func (b *builder) scopes(sources []repo.SourceEntry) []scope {
-	out := []scope{{}}
-	for _, src := range sources {
-		prefix := []string{"src", src.Distro}
-		if src.Release != "" {
-			prefix = append(prefix, src.Release)
-		}
-		out = append(out, scope{src: src, prefix: prefix})
-	}
-	return out
-}
-
-// sourceChips lead from one scope to the others, at the same place
-// (parts after the scope's prefix) if there is one.
-func (b *builder) sourceChips(scopes []scope, on scope, parts ...string) []chip {
-	if len(scopes) < 2 {
+// sourceChips lead to browsing everything, or a section, by source.
+func (b *builder) sourceChips(section string) []chip {
+	if len(b.m.Sources) == 0 {
 		return nil
 	}
-	var cs []chip
-	for _, sc := range scopes {
-		label := "✨ latest of everything"
-		if !sc.all() {
-			label = sc.src.Label()
-			if sc.src.Release != "" {
-				label = "· " + sc.src.Release
-			}
+	cs := []chip{{Label: "✨ latest of everything", URL: b.url(), On: true}}
+	if section != "" {
+		cs[0].URL = b.url("section", section)
+	}
+	for _, src := range b.m.Sources {
+		if section != "" && src.Sections[section] == 0 {
+			continue
 		}
-		cs = append(cs, chip{Label: label, URL: b.url(append(append([]string{}, sc.prefix...), parts...)...),
-			On: sc.src == on.src})
+		label := src.Distro
+		if src.Release != "" {
+			label = "· " + src.Release
+		}
+		cs = append(cs, chip{Label: label, URL: b.browseURL("src", src.Key(), "section", section)})
 	}
 	return cs
 }
 
-func (b *builder) home(pages []repo.PageRef, m *repo.Manifest, sc scope, scopes []scope) error {
+func (b *builder) home(pages []repo.PageRef) error {
 	cards := map[string]*card{}
 	v := &view{Title: "the manual, but make it girly",
 		Description: "Every Unix man page, rewritten by an LLM in the voice of a Gen Z girl, with every detail kept. 💅",
-		Generated:   m.Generated.Format(time.DateOnly), Sources: b.sourceChips(scopes, sc)}
-	if !sc.all() {
-		v.Source = sc.src.Label()
-		v.Title = sc.src.Label() + " · the manual, but make it girly"
-		v.Description = "Every " + sc.src.Label() + " man page, rewritten by an LLM in the voice of a Gen Z girl, with every detail kept. 💅"
-	}
-	for _, e := range sc.entries(pages) {
-		key := mainKey(e.p.Pointer.Section)
+		Generated:   b.m.Generated.Format(time.DateOnly), Sources: b.sourceChips("")}
+	for _, p := range pages {
+		key := mainKey(p.Pointer.Section)
 		c := cards[key]
 		if c == nil {
 			name, emoji := web.SectionName(key)
-			c = &card{Key: key, Name: name, Emoji: emoji, URL: b.url(append(append([]string{}, sc.prefix...), "section", key)...)}
+			c = &card{Key: key, Name: name, Emoji: emoji, URL: b.url("section", key)}
 			cards[key] = c
 		}
 		c.Count++
 		v.Total++
-		if girlified(e.v) {
+		if p.Girlified() {
 			c.Girlified++
 			v.Girlified++
 		}
@@ -490,7 +447,8 @@ func (b *builder) home(pages []repo.PageRef, m *repo.Manifest, sc scope, scopes 
 		v.Sections = append(v.Sections, *c)
 	}
 	sort.Slice(v.Sections, func(i, j int) bool { return sectionLess(v.Sections[i].Key, v.Sections[j].Key) })
-	return b.render(b.url(sc.prefix...), "home", v)
+	v.JSONLD = b.ldWebSite(v)
+	return b.render(b.o.Base, "home", v)
 }
 
 func isDigit(s string) bool { return s != "" && s[0] >= '0' && s[0] <= '9' }
@@ -504,22 +462,18 @@ func sectionLess(a, b string) bool {
 
 // sections writes a page for each main section (1, 3…) listing all its
 // subsections' pages, and one for each subsection (3p, 3ssl…).
-// sections writes, for a scope, a page for each main section (1, 3…)
-// listing all its subsections' pages, and one for each subsection (3p,
-// 3ssl…).
-func (b *builder) sections(pages []repo.PageRef, sc scope, scopes []scope) error {
-	byKey := map[string][]entry{}
+func (b *builder) sections(pages []repo.PageRef) error {
+	byKey := map[string][]repo.PageRef{}
 	subs := map[string]map[string]int{}
-	for _, e := range sc.entries(pages) {
-		key := mainKey(e.p.Pointer.Section)
-		byKey[key] = append(byKey[key], e)
+	for _, p := range pages {
+		key := mainKey(p.Pointer.Section)
+		byKey[key] = append(byKey[key], p)
 		if subs[key] == nil {
 			subs[key] = map[string]int{}
 		}
-		subs[key][e.p.Pointer.Section]++
+		subs[key][p.Pointer.Section]++
 	}
-	at := func(parts ...string) string { return b.url(append(append([]string{}, sc.prefix...), parts...)...) }
-	for key, es := range byKey {
+	for key, ps := range byKey {
 		var secs []string
 		for s := range subs[key] {
 			secs = append(secs, s)
@@ -530,31 +484,30 @@ func (b *builder) sections(pages []repo.PageRef, sc scope, scopes []scope) error
 			if len(secs) < 2 {
 				return nil
 			}
-			cs := []chip{{Label: "all", URL: at("section", key), On: on == ""}}
+			cs := []chip{{Label: "all", URL: b.url("section", key), On: on == ""}}
 			for _, s := range secs {
-				cs = append(cs, chip{Label: fmt.Sprintf("%s (%d)", s, subs[key][s]), URL: at("section", key, s), On: on == s})
+				cs = append(cs, chip{Label: fmt.Sprintf("%s (%d)", s, subs[key][s]), URL: b.url("section", key, s), On: on == s})
 			}
 			return cs
 		}
-		list := func(sec string, es []entry) error {
-			label, parts := key, []string{"section", key}
+		list := func(sec string, ps []repo.PageRef) error {
+			label, u := key, b.url("section", key)
 			if sec != "" {
-				label, parts = sec, []string{"section", key, sec}
+				label, u = sec, b.url("section", key, sec)
 			}
-			heading := "section " + label + " · " + name + " " + emoji
-			title := "section " + label + " · " + strings.ToLower(name)
-			desc := fmt.Sprintf("%s: every page in section %s of the manual, girlified.", name, label)
-			if !sc.all() {
-				title = sc.src.Label() + " · " + title
-				desc = fmt.Sprintf("%s: every page in section %s of the %s manual, girlified.", name, label, sc.src.Label())
+			v := &view{
+				Title:       "section " + label + " · " + strings.ToLower(name),
+				Description: fmt.Sprintf("%s: every page in section %s of the manual, girlified.", name, label),
+				Heading:     "section " + label + " · " + name + " " + emoji,
+				Sub:         pluralPages(len(ps)),
+				Chips:       chipsFor(sec),
+				Sources:     b.sourceChips(key),
 			}
-			v := &view{Title: title, Description: desc, Heading: heading, Sub: pluralPages(len(es)),
-				Chips: chipsFor(sec), Sources: b.sourceChips(scopes, sc, parts...), Source: sc.src.Label(),
-				HomeURL: at()}
 			var items []item
-			for _, e := range es {
-				items = append(items, item{Name: e.p.Pointer.Name, Section: e.p.Pointer.Section, Desc: e.v.Description,
-					URL: b.versionURL(e), Girlified: girlified(e.v)})
+			for _, p := range ps {
+				cur := p.Current()
+				items = append(items, item{Name: p.Pointer.Name, Section: p.Pointer.Section, Desc: cur.Description,
+					URL: b.pageURL(p.Pointer.Name, p.Pointer.Section), Girlified: p.Girlified()})
 			}
 			sort.SliceStable(items, func(i, j int) bool {
 				a, c := strings.ToLower(items[i].Name), strings.ToLower(items[j].Name)
@@ -564,17 +517,18 @@ func (b *builder) sections(pages []repo.PageRef, sc scope, scopes []scope) error
 				return items[i].Section < items[j].Section
 			})
 			v.Groups, v.Letters = groupByLetter(items)
-			return b.render(at(parts...), "list", v)
+			v.JSONLD = b.ldCollection(v, u, items)
+			return b.render(u, "list", v)
 		}
-		if err := list("", es); err != nil {
+		if err := list("", ps); err != nil {
 			return err
 		}
 		if len(secs) > 1 {
 			for _, sec := range secs {
-				var sp []entry
-				for _, e := range es {
-					if e.p.Pointer.Section == sec {
-						sp = append(sp, e)
+				var sp []repo.PageRef
+				for _, p := range ps {
+					if p.Pointer.Section == sec {
+						sp = append(sp, p)
 					}
 				}
 				if err := list(sec, sp); err != nil {
@@ -627,18 +581,9 @@ func (b *builder) link(name, sec string) string {
 	return ""
 }
 
+// pages writes each page's latest version.
 func (b *builder) pages(pages []repo.PageRef) error {
-	type job struct {
-		p   repo.PageRef
-		ver repo.Version
-	}
-	var jobs []job
-	for _, p := range pages {
-		for _, v := range p.Listing.Versions {
-			jobs = append(jobs, job{p, v})
-		}
-	}
-	errs := make([]error, len(jobs))
+	errs := make([]error, len(pages))
 	var next atomic.Int64
 	var wg sync.WaitGroup
 	for w := 0; w < runtime.NumCPU(); w++ {
@@ -647,14 +592,13 @@ func (b *builder) pages(pages []repo.PageRef) error {
 			defer wg.Done()
 			for {
 				i := int(next.Add(1)) - 1
-				if i >= len(jobs) {
+				if i >= len(pages) {
 					return
 				}
-				j := jobs[i]
-				err := b.page(j.p, j.ver, j.ver.Source != j.p.Current().Source)
+				err := b.page(pages[i])
 				if errors.Is(err, repo.ErrNotFound) {
 					b.mu.Lock()
-					fmt.Fprintf(b.o.Log, "💔 %s(%s): %v\n", j.p.Pointer.Name, j.p.Pointer.Section, err)
+					fmt.Fprintf(b.o.Log, "💔 %s(%s): %v\n", pages[i].Pointer.Name, pages[i].Pointer.Section, err)
 					b.mu.Unlock()
 					err = nil
 				}
@@ -666,39 +610,22 @@ func (b *builder) pages(pages []repo.PageRef) error {
 	return errors.Join(errs...)
 }
 
-func (b *builder) page(p repo.PageRef, ver repo.Version, old bool) error {
+func (b *builder) page(p repo.PageRef) error {
 	name, sec := p.Pointer.Name, p.Pointer.Section
+	ver := p.Current()
 	u := b.pageURL(name, sec)
-	if old {
-		u = b.url("man", sec, name, "v", ver.Source)
-	}
 	title := ver.Title
 	if title == "" {
 		title = strings.ToUpper(name) + "(" + sec + ")"
 	}
 	pv := &pageView{Name: name, Section: sec, Title: title, Description: ver.Description,
-		SectionURL: b.sectionURL(sec), URL: u, OriginalURL: u + "original/", Old: old,
-		CurrentURL: b.pageURL(name, sec)}
+		SectionURL: b.sectionURL(sec), URL: u, BrowseURL: b.browseURL("page", name, "sec", sec),
+		Versions: len(p.Listing.Versions), Version: ver.Upstream()}
 	for _, pk := range ver.Packages {
 		pv.Packages = append(pv.Packages, pk.String())
 	}
-	pv.In = strings.Join(ver.SourceLabels(), ", ")
-	if len(p.Listing.Versions) > 1 {
-		cur := p.Current()
-		for _, v := range p.Listing.Versions {
-			label := strings.Join(v.SourceLabels(), ", ")
-			if label == "" && len(v.Packages) > 0 {
-				label = v.Packages[len(v.Packages)-1].String()
-			}
-			if label == "" {
-				label = "added " + v.Added.Format(time.DateOnly)
-			}
-			vu := b.url("man", sec, name, "v", v.Source)
-			if v.Source == cur.Source {
-				vu = b.pageURL(name, sec)
-			}
-			pv.Versions = append(pv.Versions, versionLink{Label: label, URL: vu, Current: v.Source == ver.Source})
-		}
+	for _, src := range sourcesIn(ver) {
+		pv.In = append(pv.In, chip{Label: src.Label(), URL: b.browseURL("page", name, "sec", sec, "src", src.Key())})
 	}
 
 	man, err := b.s.Variant(ver.Source, repo.VariantMan)
@@ -709,16 +636,8 @@ func (b *builder) page(p repo.PageRef, ver repo.Version, old bool) error {
 	for _, s := range man.Sections {
 		pv.Original = append(pv.Original, textSection{Heading: s.Heading, Body: s.Body})
 	}
-	desc := ver.Description
-	if desc == "" {
-		desc = "the " + title + " man page, girlified"
-	}
-	v := &view{Title: pageTitle(name, sec, ver.Description), Description: desc, Page: pv, NoIndex: old}
-	if old {
-		v.Canonical = b.canonical(b.pageURL(name, sec))
-	}
-
-	if _, ok := ver.Variants[repo.VariantGirl]; ok {
+	modified := ver.Added
+	if girlified(ver) {
 		girl, err := b.s.Variant(ver.Source, repo.VariantGirl)
 		if err != nil {
 			return err
@@ -731,19 +650,46 @@ func (b *builder) page(p repo.PageRef, ver repo.Version, old bool) error {
 				pv.Model = g.Backend
 			}
 			if !g.Generated.IsZero() {
-				pv.Generated = g.Generated.Format(time.DateOnly)
+				modified = g.Generated
 			}
 		}
 	}
-	if err := b.render(u, "page", v); err != nil {
-		return err
+	if !modified.IsZero() {
+		pv.Modified = modified.UTC().Format(time.DateOnly)
 	}
-	if !pv.Girlified {
-		return nil // the page itself is the original
+	desc := ver.Description
+	if desc == "" {
+		desc = "the " + title + " man page"
 	}
-	ov := &view{Title: pageTitle(name, sec, "the original"), Description: desc, Page: pv, NoIndex: true,
-		Canonical: b.canonical(b.pageURL(name, sec))}
-	return b.render(pv.OriginalURL, "original", ov)
+	desc = name + "(" + sec + "): " + desc + ", rewritten in the voice of a Gen Z girl with every detail kept 💅"
+	v := &view{Title: pageTitle(name, sec, ver.Description), Description: desc, Page: pv, OGType: "article"}
+	if !modified.IsZero() {
+		v.Modified = modified.UTC().Format(time.RFC3339)
+	}
+	v.JSONLD = b.ldArticle(ver, pv, v, modified)
+	return b.render(u, "page", v)
+}
+
+// sourcesIn lists the distribution releases (or upstream) a version came
+// from.
+func sourcesIn(v *repo.Version) []repo.SourceEntry {
+	seen := map[string]bool{}
+	var out []repo.SourceEntry
+	for _, p := range v.Packages {
+		e := repo.SourceEntry{Distro: p.Source(), Release: p.Release}
+		if e.Distro == "" {
+			continue
+		}
+		if e.Distro == repo.Upstream {
+			e.Release = ""
+		}
+		if !seen[e.Key()] {
+			seen[e.Key()] = true
+			out = append(out, e)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key() < out[j].Key() })
+	return out
 }
 
 func pageTitle(name, sec, desc string) string {
@@ -755,13 +701,18 @@ func pageTitle(name, sec, desc string) string {
 }
 
 func (b *builder) search() error {
-	return b.render(b.o.Base+"search/", "search", &view{Title: "search", NoIndex: true, Search: true})
+	return b.render(b.o.Base+"search/", "search", &view{Title: "search", NoIndex: true})
+}
+
+func (b *builder) browse() error {
+	return b.render(b.o.Base+"browse/", "browse", &view{Title: "browse", NoIndex: true})
 }
 
 func (b *builder) sitemap(pages []repo.PageRef) error {
+	path := filepath.Join(b.o.Out, "sitemap.xml")
 	if b.o.URL == "" {
 		// Without an absolute URL there's no sitemap; don't leave an old one.
-		if err := os.Remove(filepath.Join(b.o.Out, "sitemap.xml")); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
 		return nil
@@ -769,27 +720,35 @@ func (b *builder) sitemap(pages []repo.PageRef) error {
 	var buf bytes.Buffer
 	buf.WriteString(`<?xml version="1.0" encoding="UTF-8"?>` + "\n" +
 		`<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">` + "\n")
-	loc := func(u string) {
+	loc := func(u string, mod time.Time) {
 		buf.WriteString("<url><loc>")
-		template.HTMLEscape(&buf, []byte(b.canonical(u)))
-		buf.WriteString("</loc></url>\n")
+		template.HTMLEscape(&buf, []byte(b.abs(u)))
+		buf.WriteString("</loc>")
+		if !mod.IsZero() {
+			buf.WriteString("<lastmod>" + mod.UTC().Format(time.DateOnly) + "</lastmod>")
+		}
+		buf.WriteString("</url>\n")
 	}
-	loc(b.o.Base)
+	loc(b.o.Base, b.m.Generated)
 	seen := map[string]bool{}
 	for _, p := range pages {
-		if k := mainKey(p.Pointer.Section); !seen[k] {
-			seen[k] = true
-			loc(b.url("section", k))
+		for _, u := range []string{b.url("section", mainKey(p.Pointer.Section)), b.sectionURL(p.Pointer.Section)} {
+			if !seen[u] {
+				seen[u] = true
+				loc(u, time.Time{})
+			}
 		}
 	}
 	for _, p := range pages {
-		loc(b.pageURL(p.Pointer.Name, p.Pointer.Section))
+		loc(b.pageURL(p.Pointer.Name, p.Pointer.Section), p.Current().Added)
 	}
 	buf.WriteString("</urlset>\n")
-	return b.write(filepath.Join(b.o.Out, "sitemap.xml"), buf.Bytes())
+	return b.write(path, buf.Bytes())
 }
 
-// prune removes pages from earlier builds that no longer exist.
+// prune removes pages from earlier builds that no longer exist (including
+// the per-version, per-original and per-source pages earlier versions of
+// girlrepo made).
 func (b *builder) prune() error {
 	for _, dir := range []string{"man", "section", "src"} {
 		root := filepath.Join(b.o.Out, dir)
@@ -810,6 +769,7 @@ func (b *builder) prune() error {
 			return err
 		}
 		removeEmptyDirs(root)
+		_ = os.Remove(root) // if it's empty now
 	}
 	return nil
 }
