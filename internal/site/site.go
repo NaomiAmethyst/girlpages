@@ -107,10 +107,25 @@ func Build(s *repo.Store, pages []repo.PageRef, m *repo.Manifest, o Options) (St
 	for _, p := range pages {
 		b.byName[p.Pointer.Name] = append(b.byName[p.Pointer.Name], p.Pointer.Section)
 	}
+	scopes := b.scopes(repo.Sources(pages))
 	steps := []func() error{
 		func() error { return b.static() },
-		func() error { return b.home(pages, m) },
-		func() error { return b.sections(pages) },
+		func() error {
+			for _, sc := range scopes {
+				if err := b.home(pages, m, sc, scopes); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+		func() error {
+			for _, sc := range scopes {
+				if err := b.sections(pages, sc, scopes); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
 		func() error { return b.pages(pages) },
 		func() error { return b.search() },
 		func() error { return b.sitemap(pages) },
@@ -135,6 +150,12 @@ type view struct {
 	Sections         []card
 	Total, Girlified int
 	Generated        string
+
+	// Sources lead to the other ways of browsing; Source is this one's
+	// ("debian trixie"), empty for everything.
+	Sources []chip
+	Source  string
+	HomeURL string
 
 	// list
 	Heading, Sub string
@@ -180,8 +201,10 @@ type pageView struct {
 	Original                          []textSection
 	Packages                          []string
 	Versions                          []versionLink
-	Old                               bool // an older version, not the current one
-	CurrentURL                        string
+	// In is where this version comes from: "debian trixie, ubuntu noble".
+	In         string
+	Old        bool // an older version, not the current one
+	CurrentURL string
 }
 
 type textSection struct{ Heading, Body string }
@@ -361,22 +384,104 @@ func sortedKeys(m map[string][]byte) []string {
 
 func mainKey(sec string) string { return sec[:1] }
 
-func (b *builder) home(pages []repo.PageRef, m *repo.Manifest) error {
+// scope is a way of browsing: everything (the latest of each page), or the
+// pages from one source.
+type scope struct {
+	src    repo.SourceEntry // empty for everything
+	prefix []string         // URL parts before section/…
+}
+
+func (sc scope) all() bool { return sc.src.Distro == "" }
+
+// entry is a page as a scope sees it: the version it shows.
+type entry struct {
+	p repo.PageRef
+	v *repo.Version
+}
+
+func (sc scope) entries(pages []repo.PageRef) []entry {
+	var out []entry
+	for _, p := range pages {
+		v := p.Current()
+		if !sc.all() {
+			v = p.Listing.VersionFrom(sc.src.Distro, sc.src.Release)
+		}
+		if v != nil {
+			out = append(out, entry{p, v})
+		}
+	}
+	return out
+}
+
+// versionURL is where a version of a page lives: its page if it's the
+// current one, else under v/.
+func (b *builder) versionURL(e entry) string {
+	name, sec := e.p.Pointer.Name, e.p.Pointer.Section
+	if e.v.Source == e.p.Listing.CurrentVersion().Source {
+		return b.pageURL(name, sec)
+	}
+	return b.url("man", sec, name, "v", e.v.Source)
+}
+
+func girlified(v *repo.Version) bool {
+	_, ok := v.Variants[repo.VariantGirl]
+	return ok
+}
+
+func (b *builder) scopes(sources []repo.SourceEntry) []scope {
+	out := []scope{{}}
+	for _, src := range sources {
+		prefix := []string{"src", src.Distro}
+		if src.Release != "" {
+			prefix = append(prefix, src.Release)
+		}
+		out = append(out, scope{src: src, prefix: prefix})
+	}
+	return out
+}
+
+// sourceChips lead from one scope to the others, at the same place
+// (parts after the scope's prefix) if there is one.
+func (b *builder) sourceChips(scopes []scope, on scope, parts ...string) []chip {
+	if len(scopes) < 2 {
+		return nil
+	}
+	var cs []chip
+	for _, sc := range scopes {
+		label := "✨ latest of everything"
+		if !sc.all() {
+			label = sc.src.Label()
+			if sc.src.Release != "" {
+				label = "· " + sc.src.Release
+			}
+		}
+		cs = append(cs, chip{Label: label, URL: b.url(append(append([]string{}, sc.prefix...), parts...)...),
+			On: sc.src == on.src})
+	}
+	return cs
+}
+
+func (b *builder) home(pages []repo.PageRef, m *repo.Manifest, sc scope, scopes []scope) error {
 	cards := map[string]*card{}
 	v := &view{Title: "the manual, but make it girly",
 		Description: "Every Unix man page, rewritten by an LLM in the voice of a Gen Z girl, with every detail kept. 💅",
-		Generated:   m.Generated.Format(time.DateOnly)}
-	for _, p := range pages {
-		key := mainKey(p.Pointer.Section)
+		Generated:   m.Generated.Format(time.DateOnly), Sources: b.sourceChips(scopes, sc)}
+	if !sc.all() {
+		v.Source = sc.src.Label()
+		v.Title = sc.src.Label() + " · the manual, but make it girly"
+		v.Description = "Every " + sc.src.Label() + " man page, rewritten by an LLM in the voice of a Gen Z girl, with every detail kept. 💅"
+	}
+	for _, e := range sc.entries(pages) {
+		key := mainKey(e.p.Pointer.Section)
 		c := cards[key]
 		if c == nil {
 			name, emoji := web.SectionName(key)
-			c = &card{Key: key, Name: name, Emoji: emoji, URL: b.url("section", key)}
+			c = &card{Key: key, Name: name, Emoji: emoji, URL: b.url(append(append([]string{}, sc.prefix...), "section", key)...)}
 			cards[key] = c
 		}
 		c.Count++
 		v.Total++
-		if p.Girlified() {
+		if girlified(e.v) {
 			c.Girlified++
 			v.Girlified++
 		}
@@ -385,7 +490,7 @@ func (b *builder) home(pages []repo.PageRef, m *repo.Manifest) error {
 		v.Sections = append(v.Sections, *c)
 	}
 	sort.Slice(v.Sections, func(i, j int) bool { return sectionLess(v.Sections[i].Key, v.Sections[j].Key) })
-	return b.render(b.o.Base, "home", v)
+	return b.render(b.url(sc.prefix...), "home", v)
 }
 
 func isDigit(s string) bool { return s != "" && s[0] >= '0' && s[0] <= '9' }
@@ -399,18 +504,22 @@ func sectionLess(a, b string) bool {
 
 // sections writes a page for each main section (1, 3…) listing all its
 // subsections' pages, and one for each subsection (3p, 3ssl…).
-func (b *builder) sections(pages []repo.PageRef) error {
-	byKey := map[string][]repo.PageRef{}
+// sections writes, for a scope, a page for each main section (1, 3…)
+// listing all its subsections' pages, and one for each subsection (3p,
+// 3ssl…).
+func (b *builder) sections(pages []repo.PageRef, sc scope, scopes []scope) error {
+	byKey := map[string][]entry{}
 	subs := map[string]map[string]int{}
-	for _, p := range pages {
-		key := mainKey(p.Pointer.Section)
-		byKey[key] = append(byKey[key], p)
+	for _, e := range sc.entries(pages) {
+		key := mainKey(e.p.Pointer.Section)
+		byKey[key] = append(byKey[key], e)
 		if subs[key] == nil {
 			subs[key] = map[string]int{}
 		}
-		subs[key][p.Pointer.Section]++
+		subs[key][e.p.Pointer.Section]++
 	}
-	for key, ps := range byKey {
+	at := func(parts ...string) string { return b.url(append(append([]string{}, sc.prefix...), parts...)...) }
+	for key, es := range byKey {
 		var secs []string
 		for s := range subs[key] {
 			secs = append(secs, s)
@@ -421,29 +530,31 @@ func (b *builder) sections(pages []repo.PageRef) error {
 			if len(secs) < 2 {
 				return nil
 			}
-			cs := []chip{{Label: "all", URL: b.url("section", key), On: on == ""}}
+			cs := []chip{{Label: "all", URL: at("section", key), On: on == ""}}
 			for _, s := range secs {
-				cs = append(cs, chip{Label: fmt.Sprintf("%s (%d)", s, subs[key][s]), URL: b.url("section", key, s), On: on == s})
+				cs = append(cs, chip{Label: fmt.Sprintf("%s (%d)", s, subs[key][s]), URL: at("section", key, s), On: on == s})
 			}
 			return cs
 		}
-		list := func(sec string, ps []repo.PageRef) error {
-			label, u := key, b.url("section", key)
+		list := func(sec string, es []entry) error {
+			label, parts := key, []string{"section", key}
 			if sec != "" {
-				label, u = sec, b.url("section", key, sec)
+				label, parts = sec, []string{"section", key, sec}
 			}
-			v := &view{
-				Title:       "section " + label + " · " + strings.ToLower(name),
-				Description: fmt.Sprintf("%s: every page in section %s of the manual, girlified.", name, label),
-				Heading:     "section " + label + " · " + name + " " + emoji,
-				Sub:         pluralPages(len(ps)),
-				Chips:       chipsFor(sec),
+			heading := "section " + label + " · " + name + " " + emoji
+			title := "section " + label + " · " + strings.ToLower(name)
+			desc := fmt.Sprintf("%s: every page in section %s of the manual, girlified.", name, label)
+			if !sc.all() {
+				title = sc.src.Label() + " · " + title
+				desc = fmt.Sprintf("%s: every page in section %s of the %s manual, girlified.", name, label, sc.src.Label())
 			}
+			v := &view{Title: title, Description: desc, Heading: heading, Sub: pluralPages(len(es)),
+				Chips: chipsFor(sec), Sources: b.sourceChips(scopes, sc, parts...), Source: sc.src.Label(),
+				HomeURL: at()}
 			var items []item
-			for _, p := range ps {
-				cur := p.Current()
-				items = append(items, item{Name: p.Pointer.Name, Section: p.Pointer.Section, Desc: cur.Description,
-					URL: b.pageURL(p.Pointer.Name, p.Pointer.Section), Girlified: p.Girlified()})
+			for _, e := range es {
+				items = append(items, item{Name: e.p.Pointer.Name, Section: e.p.Pointer.Section, Desc: e.v.Description,
+					URL: b.versionURL(e), Girlified: girlified(e.v)})
 			}
 			sort.SliceStable(items, func(i, j int) bool {
 				a, c := strings.ToLower(items[i].Name), strings.ToLower(items[j].Name)
@@ -453,17 +564,17 @@ func (b *builder) sections(pages []repo.PageRef) error {
 				return items[i].Section < items[j].Section
 			})
 			v.Groups, v.Letters = groupByLetter(items)
-			return b.render(u, "list", v)
+			return b.render(at(parts...), "list", v)
 		}
-		if err := list("", ps); err != nil {
+		if err := list("", es); err != nil {
 			return err
 		}
 		if len(secs) > 1 {
 			for _, sec := range secs {
-				var sp []repo.PageRef
-				for _, p := range ps {
-					if p.Pointer.Section == sec {
-						sp = append(sp, p)
+				var sp []entry
+				for _, e := range es {
+					if e.p.Pointer.Section == sec {
+						sp = append(sp, e)
 					}
 				}
 				if err := list(sec, sp); err != nil {
@@ -571,12 +682,16 @@ func (b *builder) page(p repo.PageRef, ver repo.Version, old bool) error {
 	for _, pk := range ver.Packages {
 		pv.Packages = append(pv.Packages, pk.String())
 	}
+	pv.In = strings.Join(ver.SourceLabels(), ", ")
 	if len(p.Listing.Versions) > 1 {
 		cur := p.Current()
 		for _, v := range p.Listing.Versions {
-			label := v.Added.Format(time.DateOnly)
-			if len(v.Packages) > 0 {
+			label := strings.Join(v.SourceLabels(), ", ")
+			if label == "" && len(v.Packages) > 0 {
 				label = v.Packages[len(v.Packages)-1].String()
+			}
+			if label == "" {
+				label = "added " + v.Added.Format(time.DateOnly)
 			}
 			vu := b.url("man", sec, name, "v", v.Source)
 			if v.Source == cur.Source {
@@ -676,7 +791,7 @@ func (b *builder) sitemap(pages []repo.PageRef) error {
 
 // prune removes pages from earlier builds that no longer exist.
 func (b *builder) prune() error {
-	for _, dir := range []string{"man", "section"} {
+	for _, dir := range []string{"man", "section", "src"} {
 		root := filepath.Join(b.o.Out, dir)
 		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {

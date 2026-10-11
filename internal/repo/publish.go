@@ -59,7 +59,7 @@ func (s *Store) AllPages() ([]PageRef, error) {
 // Publish writes the section indexes, the search index and finally
 // manifest.json from the pages in the store. The caller must hold Lock.
 func (s *Store) Publish(pages []PageRef) (*Manifest, error) {
-	m := &Manifest{Format: Format, Generated: now(), Variants: []string{VariantGirl, VariantMan}}
+	m := &Manifest{Format: Format, Generated: now(), Variants: []string{VariantGirl, VariantMan}, Sources: Sources(pages)}
 
 	// The search index wants every page's text; read them all at once.
 	docs := make([]IndexDoc, len(pages))

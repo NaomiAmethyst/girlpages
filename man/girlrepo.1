@@ -356,6 +356,20 @@ Until it runs, nothing ingested or girlified since the last publish is
 visible.
 Website files are only rewritten when they change, so syncing the result
 somewhere is cheap.
+.PP
+Besides the latest of everything, the site can be browsed by where pages come
+from: a distribution
+.RB ( /src/debian/ ),
+a release of one
+.RB ( /src/debian/trixie/ ),
+or
+.B upstream
+for pages from git repositories.
+Each lists the version of every page that source has (its current version if
+the source has that, otherwise the one from there added last), and every page
+says where its version comes from and links the others.
+.B manifest.json
+lists the sources too.
 .TP
 .BR \-\-url =\fIurl\fR
 The site's absolute URL, for canonical links and

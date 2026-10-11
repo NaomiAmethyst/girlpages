@@ -61,6 +61,8 @@ type Manifest struct {
 	Variants  []string       `json:"variants"`
 	Sections  []SectionEntry `json:"sections"`
 	Index     IndexEntry     `json:"index"`
+	// Sources are the distributions (and releases) pages come from.
+	Sources []SourceEntry `json:"sources,omitempty"`
 }
 
 // SectionEntry is a section in the manifest.

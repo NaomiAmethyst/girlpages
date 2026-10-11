@@ -1,12 +1,13 @@
 {{define "content"}}
 <section class="hero">
 <h1>✨ girlpages ✨</h1>
-<p>the manual, but make it girly 💅</p>
+<p>{{if .Source}}the <strong>{{.Source}}</strong> manual{{else}}the manual{{end}}, but make it girly 💅</p>
 <form class="hero-search" action="{{.Base}}search/" role="search">
 <input type="search" name="q" placeholder="what are we reading today? 🔎" aria-label="Search manual pages">
 </form>
 <div class="stats">{{pages .Total}} · {{.Girlified}} girlified ✨ · updated {{.Generated}}</div>
 </section>
+{{if .Sources}}<nav class="chips sources" aria-label="Browse by source">{{range .Sources}}<a class="pill{{if .On}} on{{end}}" href="{{.URL}}">{{.Label}}</a>{{end}}</nav>{{end}}
 <div class="sections">
 {{range .Sections}}<a class="section-card" href="{{.URL}}">
 <span class="emoji">{{.Emoji}}</span>

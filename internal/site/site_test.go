@@ -27,6 +27,8 @@ type pageSpec struct {
 	name, sec, desc string
 	girl            bool
 	added           int64
+	// pkgs are where it's from; by default debian trixie.
+	pkgs []repo.Package
 }
 
 // build makes a repository from specs in out/repo and publishes it.
@@ -61,7 +63,7 @@ func build(t *testing.T, out string, specs []pageSpec, o Options) (*repo.Store, 
 		err = s.UpdateListing(p.name, p.sec, func(l *repo.Listing) error {
 			l.Versions = append(l.Versions, repo.Version{Source: src, Title: title, Description: p.desc,
 				Added: time.Unix(1700000000+p.added, 0).UTC(), Variants: vs,
-				Packages: []repo.Package{{Distro: "debian", Release: "trixie", Name: p.name, Version: fmt.Sprint(p.added)}}})
+				Packages: p.packages()})
 			l.Current = src
 			return nil
 		})
@@ -83,6 +85,13 @@ func build(t *testing.T, out string, specs []pageSpec, o Options) (*repo.Store, 
 		t.Fatal(err)
 	}
 	return s, st
+}
+
+func (p pageSpec) packages() []repo.Package {
+	if p.pkgs != nil {
+		return p.pkgs
+	}
+	return []repo.Package{{Distro: "debian", Release: "trixie", Name: p.name, Version: fmt.Sprint(p.added)}}
 }
 
 var specs = []pageSpec{
@@ -122,7 +131,7 @@ func TestBuild(t *testing.T) {
 		`<meta name="description" content="list directory contents, newer">`,
 		`<code>ls</code> slays, see <a href="/girlpages/man/1/ls/">ls(1)</a> and nope(1)`, // only real pages are links
 		`href="/girlpages/man/1/ls/original/"`, "girlified by fake-1", "debian trixie: ls 10",
-		`href="/girlpages/man/1/ls/v/`, "other versions"} {
+		`href="/girlpages/man/1/ls/v/`, "where they're from"} {
 		if !strings.Contains(ls, want) {
 			t.Errorf("ls page lacks %q", want)
 		}
@@ -464,5 +473,66 @@ console.log(JSON.stringify(out));
 	}
 	if len(got.Small) == 0 || got.SmallSize > 40000 {
 		t.Errorf("small quota: %v, %d bytes used", got.Small, got.SmallSize)
+	}
+}
+
+func TestSources(t *testing.T) {
+	out := t.TempDir()
+	trixie := repo.Package{Distro: "debian", Release: "trixie", Name: "coreutils", Version: "9.7"}
+	noble := repo.Package{Distro: "ubuntu", Release: "noble", Name: "coreutils", Version: "9.4"}
+	archp := repo.Package{Distro: "arch", Release: "rolling", Name: "grep", Version: "3.12"}
+	git := repo.Package{Name: "tool", Version: "v1 (abc)", URL: "https://example.org/tool.git"}
+	s, _ := build(t, out, []pageSpec{
+		{name: "ls", sec: "1", desc: "list directory contents", girl: true, pkgs: []repo.Package{trixie}},
+		{name: "ls", sec: "1", desc: "list directory contents, newer", added: 10, pkgs: []repo.Package{noble}},
+		{name: "grep", sec: "1", desc: "print lines", girl: true, pkgs: []repo.Package{archp}},
+		{name: "tool", sec: "1", desc: "does tool things", pkgs: []repo.Package{git}},
+	}, Options{})
+	m, _ := s.Manifest()
+	var labels []string
+	for _, e := range m.Sources {
+		labels = append(labels, fmt.Sprintf("%s=%d", e.Label(), e.Pages))
+	}
+	if got := strings.Join(labels, " "); got != "arch=1 arch rolling=1 debian=1 debian trixie=1 ubuntu=1 ubuntu noble=1 upstream=1" {
+		t.Errorf("manifest sources: %s", got)
+	}
+	l, _, _ := s.Listing("ls", "1")
+	var trixieSrc string
+	for _, v := range l.Versions {
+		if v.From("debian", "trixie") {
+			trixieSrc = v.Source
+		}
+	}
+
+	home := read(t, filepath.Join(out, "index.html"))
+	for _, want := range []string{`href="/src/debian/"`, `href="/src/debian/trixie/"`, `href="/src/upstream/"`, "latest of everything"} {
+		if !strings.Contains(home, want) {
+			t.Errorf("home lacks %q", want)
+		}
+	}
+	// Debian's ls is the older version, under v/; Ubuntu's is current.
+	deb := read(t, filepath.Join(out, "src", "debian", "trixie", "section", "1", "index.html"))
+	if !strings.Contains(deb, `href="/man/1/ls/v/`+trixieSrc+`/"`) || strings.Contains(deb, "grep") ||
+		!strings.Contains(deb, "list directory contents</span>") || !strings.Contains(deb, "in debian trixie") {
+		t.Errorf("debian trixie section 1:\n%s", deb)
+	}
+	ub := read(t, filepath.Join(out, "src", "ubuntu", "section", "1", "index.html"))
+	if !strings.Contains(ub, `href="/man/1/ls/"`) || !strings.Contains(ub, "newer") {
+		t.Errorf("ubuntu section 1 should link the current ls")
+	}
+	// Chips switch source but stay in section 1.
+	if !strings.Contains(deb, `href="/src/arch/section/1/"`) || !strings.Contains(deb, `href="/section/1/"`) {
+		t.Error("source chips should stay in the section")
+	}
+	if up := read(t, filepath.Join(out, "src", "upstream", "index.html")); !strings.Contains(up, "1 page") {
+		t.Errorf("upstream home")
+	}
+	// Pages say where they're from.
+	page := read(t, filepath.Join(out, "man", "1", "ls", "index.html"))
+	if !strings.Contains(page, "📦 ubuntu noble") || !strings.Contains(page, ">debian trixie</a>") {
+		t.Errorf("ls page should say it's from ubuntu noble and link debian trixie's version")
+	}
+	if tp := read(t, filepath.Join(out, "man", "1", "tool", "index.html")); !strings.Contains(tp, "📦 upstream tool v1 (abc)") {
+		t.Error("git page should say it's upstream")
 	}
 }

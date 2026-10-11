@@ -153,9 +153,10 @@ girlrepo serve                                                # preview at local
 That leaves a directory to upload anywhere static: the repo in `repo/`, and
 a website around it with an HTML page per man page (so search engines can
 find them), section listings, old versions, which packages each page came
-from, and search. Search runs in the browser against a sharded index in the
-repo, fetching only the shards a query needs (typos and all: `grpe` finds
-`grep`). The site installs as an app (a PWA) and works offline: pages you've
+from, and search. It can be browsed as the latest of everything, or by
+source: just Debian, just Debian trixie, just Arch, or upstream git. Search
+runs in the browser against a sharded index in the repo, fetching only the
+shards a query needs (typos and all: `grpe` finds `grep`). The site installs as an app (a PWA) and works offline: pages you've
 read are kept by a service worker, and every index shard fetched is kept in
 localStorage, so searches you've done before work without a network. When it
 notices a newly published repository it clears out the shards that aren't

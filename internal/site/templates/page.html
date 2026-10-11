@@ -6,6 +6,8 @@
 <div class="meta">
 {{if .Girlified}}{{if .Model}}<span>girlified by {{.Model}}{{if .Generated}} on {{.Generated}}{{end}} 💖</span>{{end}}{{end}}
 {{if .Girlified}}<a class="pill" href="{{.OriginalURL}}">📜 original</a>{{end}}
+{{if .In}}<span class="in">📦 {{.In}}</span>{{end}}
+{{if .Versions}}<a class="pill" href="#versions">🕰️ {{len .Versions}} versions</a>{{end}}
 </div>
 {{if .Old}}<div class="notice">🕰️ this is an older version of this page. <a href="{{.CurrentURL}}">here's the current one</a>.</div>{{end}}
 {{if .Girlified}}<div class="content">
@@ -22,5 +24,5 @@
 {{end}}{{end}}
 {{define "provenance"}}{{if or .Packages .Versions}}<div class="provenance">
 {{if .Packages}}<details><summary>📦 where this page comes from</summary><ul>{{range .Packages}}<li>{{.}}</li>{{end}}</ul></details>{{end}}
-{{if .Versions}}<details><summary>🕰️ other versions</summary><ul>{{range .Versions}}<li>{{if .Current}}<strong>{{.Label}}</strong> (this one){{else}}<a href="{{.URL}}">{{.Label}}</a>{{end}}</li>{{end}}</ul></details>{{end}}
+{{if .Versions}}<details id="versions" open><summary>🕰️ versions, and where they're from</summary><ul>{{range .Versions}}<li>{{if .Current}}<strong>{{.Label}}</strong> (this one){{else}}<a href="{{.URL}}">{{.Label}}</a>{{end}}</li>{{end}}</ul></details>{{end}}
 </div>{{end}}{{end}}
