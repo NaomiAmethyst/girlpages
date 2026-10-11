@@ -169,7 +169,7 @@ localStorage, so searches you've done before work without a network. When it
 notices a newly published repository it clears out the files that aren't
 used any more, in the background. Each page version is stored once however
 many packages, distros or aliases share it, and everything but a few pointer
-files is content-addressed, so it caches forever and syncs cheaply. The format is in `girlrepo(1)`.
+files is content-addressed, so it caches forever and syncs cheaply. The format is specified in [doc/repo-format.md](doc/repo-format.md), for anyone building tools against it.
 
 ## Configure
 
