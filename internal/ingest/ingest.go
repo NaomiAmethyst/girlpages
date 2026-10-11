@@ -564,7 +564,13 @@ type GirlifyOptions struct {
 	Batch *llm.Batcher
 	// NoWait leaves batches running for a later run to collect.
 	NoWait bool
+	// PartsDir, if set, keeps the parts of long pages as they're converted,
+	// so a page that fails part way only needs its missing parts again.
+	PartsDir string
 }
+
+// progressEvery is how often girlify reports on a long page's parts.
+const progressEvery = 30 * time.Second
 
 // GirlifyStats summarises a Girlify run.
 type GirlifyStats struct {
@@ -786,6 +792,13 @@ func Girlify(ctx context.Context, s *repo.Store, o GirlifyOptions) (GirlifyStats
 	}
 	logf("💅 girlifying %d pages with %s, %d at a time\n", len(order), o.Backend.Name(), max(o.Jobs, 1))
 	made := cacheMakers(o.Cache)
+	// Every request shares Jobs slots, so when only a few long pages are
+	// left their parts use the rest.
+	o.LLM.Slots = make(chan struct{}, max(o.Jobs, 1))
+	o.LLM.Parallel = max(o.Jobs, 1)
+	if o.PartsDir != "" {
+		o.LLM.Parts = partDir(o.PartsDir)
+	}
 
 	var (
 		mu   sync.Mutex
@@ -799,7 +812,17 @@ func Girlify(ctx context.Context, s *repo.Store, o GirlifyOptions) (GirlifyStats
 			defer wg.Done()
 			for w := range queue {
 				start := time.Now()
-				fromCache, err := girlifyOne(ctx, s, o, made, w.source, w.title, func(info repo.VariantInfo) error {
+				var last time.Time
+				lo := o
+				lo.LLM.Progress = func(done, total int) {
+					if total > 1 && done < total && time.Since(last) >= progressEvery {
+						if !last.IsZero() || done > 0 {
+							logf("⏳ %s: %d/%d parts\n", w.title, done, total)
+						}
+						last = time.Now()
+					}
+				}
+				fromCache, err := girlifyOne(ctx, s, lo, made, w.source, w.title, func(info repo.VariantInfo) error {
 					return recordGirl(s, w.source, w.pages, info)
 				})
 				n := done.Add(1)
@@ -835,7 +858,7 @@ func Girlify(ctx context.Context, s *repo.Store, o GirlifyOptions) (GirlifyStats
 	return st, ctx.Err()
 }
 
-func girlifyOne(ctx context.Context, s *repo.Store, o GirlifyOptions, made makers, source, title string, record func(repo.VariantInfo) error) (bool, error) {
+func girlifyOne(ctx context.Context, s *repo.Store, o GirlifyOptions, made makers, source, title string, record func(repo.VariantInfo) error) (_ bool, err error) {
 	man, err := s.Variant(source, repo.VariantMan)
 	if err != nil {
 		return false, err
@@ -849,11 +872,19 @@ func girlifyOne(ctx context.Context, s *repo.Store, o GirlifyOptions, made maker
 		}
 	}
 	if !fromCache {
-		markup, err = llm.Convert(ctx, o.Backend, title, text, llm.Options{
-			ChunkSize: o.LLM.ChunkSize, Parallel: 1, ExtraInstructions: o.LLM.ExtraInstructions,
-		})
+		lo := o.LLM
+		lo.Parallel = max(lo.Parallel, 1)
+		markup, err = llm.Convert(ctx, o.Backend, title, text, lo)
 		if err != nil {
 			return false, err
+		}
+		if pd, ok := lo.Parts.(partDir); ok {
+			// Once the page is safely stored, its parts aren't needed.
+			defer func() {
+				if err == nil {
+					pd.forget(o.Backend, llm.Plan(title, text, lo))
+				}
+			}()
 		}
 		g = &repo.Generator{Backend: o.Backend.Name(), Model: o.Backend.Model(), PromptVersion: llm.PromptVersion,
 			Generated: time.Now().UTC().Truncate(time.Second)}

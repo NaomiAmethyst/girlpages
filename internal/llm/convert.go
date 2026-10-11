@@ -7,6 +7,8 @@ package llm
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"regexp"
@@ -31,6 +33,29 @@ type Options struct {
 	ExtraInstructions string
 	// Progress, if set, is called as chunks finish.
 	Progress func(done, total int)
+	// Slots, if set, is shared by conversions running at once, holding a
+	// token while each request is out: so a few long pages can use all of
+	// it, rather than Parallel each. Parallel still limits each page.
+	Slots chan struct{}
+	// Parts, if set, keeps parts as they're converted, so a conversion
+	// that fails (or is stopped) part way can start again where it was.
+	Parts PartCache
+}
+
+// A PartCache keeps converted parts, by PartKey.
+type PartCache interface {
+	Part(key string) (string, bool)
+	PutPart(key, out string) error
+}
+
+// PartKey identifies a converted part: the same prompts to the same model
+// get the same key.
+func PartKey(b Backend, p Part) string {
+	h := sha256.New()
+	for _, s := range []string{b.Name(), b.Model(), p.System, p.User} {
+		fmt.Fprintf(h, "%d:%s", len(s), s)
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // Part is one request in a conversion: a chunk of the page and the prompts
@@ -93,11 +118,37 @@ func Convert(ctx context.Context, b Backend, title, text string, o Options) (str
 				return
 			}
 			defer func() { <-sem }()
-			out, err := ConvertPart(ctx, b, parts[i])
-			if err != nil {
-				errs[i] = err
-				cancel()
-				return
+			key := ""
+			if o.Parts != nil {
+				key = PartKey(b, parts[i])
+			}
+			out, ok := "", false
+			if key != "" {
+				out, ok = o.Parts.Part(key)
+			}
+			if !ok {
+				if o.Slots != nil {
+					select {
+					case o.Slots <- struct{}{}:
+					case <-ctx.Done():
+						errs[i] = ctx.Err()
+						return
+					}
+				}
+				var err error
+				out, err = ConvertPart(ctx, b, parts[i])
+				if o.Slots != nil {
+					<-o.Slots
+				}
+				if err != nil {
+					errs[i] = err
+					cancel()
+					return
+				}
+				if key != "" && len(chunks) > 1 {
+					// Best effort: losing one only costs a request.
+					_ = o.Parts.PutPart(key, out)
+				}
 			}
 			results[i] = out
 			if o.Progress != nil {

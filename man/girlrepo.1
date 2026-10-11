@@ -290,7 +290,11 @@ carries on.
 Override the configured backend and model.
 .TP
 .BR \-j ", " \-\-jobs =\fIn\fR
-Convert this many pages at once (default from the configuration).
+Send this many requests at once (default from the configuration): to as
+many pages, or, when fewer pages are left, to the parts of long ones.
+Long pages report their progress every half minute, and each part is kept
+as it's converted, so a page that fails part way only needs its missing
+parts the next time.
 .TP
 .BR \-\-limit =\fIn\fR
 Stop after this many pages.
@@ -613,6 +617,11 @@ The repository.
 .TP
 .IR dir /repo/.lock
 Held while the repository is being changed.
+.TP
+.B ~/.cache/girlpages/girlrepo\-parts/
+Parts of long pages
+.B girlify
+has converted, until their page is done.
 .TP
 .IR dir /man/ section / name /
 A page's current version on the website.

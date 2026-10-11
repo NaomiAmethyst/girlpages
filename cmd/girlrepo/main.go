@@ -465,6 +465,7 @@ func (a *app) girlify(ctx context.Context, args []string) error {
 		LLM:  llm.Options{ChunkSize: a.cfg.ChunkSize, ExtraInstructions: a.cfg.ExtraInstructions},
 		Jobs: *jobs, Limit: *limit, Sections: splitSections(*sections), Names: fs.Args(),
 		AllVersions: *all, Force: *force, Reprompt: *reprompt, DryRun: *dry, Quiet: *quiet, Log: os.Stderr,
+		PartsDir: filepath.Join(config.UserCacheDir(), "girlrepo-parts"),
 	}
 	if !*noCache && !*force {
 		o.Cache = core.CacheSet(a.cfg)

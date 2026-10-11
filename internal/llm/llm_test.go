@@ -6,12 +6,15 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 const sample = `LS(1)                     User Commands                    LS(1)
@@ -226,4 +229,100 @@ func TestClaudeArgs(t *testing.T) {
 			t.Errorf("args %q missing %q", a, want)
 		}
 	}
+}
+
+type memParts struct {
+	mu sync.Mutex
+	m  map[string]string
+}
+
+func (p *memParts) Part(key string) (string, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	s, ok := p.m[key]
+	return s, ok
+}
+
+func (p *memParts) PutPart(key, out string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.m[key] = out
+	return nil
+}
+
+// A conversion that fails part way picks up where it left off.
+func TestConvertResumes(t *testing.T) {
+	n := len(Split(sample, 120))
+	if n < 3 {
+		t.Fatalf("sample splits into %d parts", n)
+	}
+	fail := true
+	var calls atomic.Int32
+	b := &errBackend{fn: func(user string) (string, error) {
+		calls.Add(1)
+		if fail && strings.Contains(user, fmt.Sprintf("this is part %d.", n-1)) {
+			return "", errors.New("boom")
+		}
+		return "ok " + strings.Join(optionsIn(user), " "), nil
+	}}
+	parts := &memParts{m: map[string]string{}}
+	o := Options{ChunkSize: 120, Parallel: 1, Parts: parts}
+	if _, err := Convert(context.Background(), b, "ls(1)", sample, o); err == nil {
+		t.Fatal("no error")
+	}
+	// Parts are taken in no set order, so some may not have been tried.
+	kept := len(parts.m)
+	if kept >= n {
+		t.Errorf("kept %d parts of %d", kept, n)
+	}
+	fail = false
+	calls.Store(0)
+	if _, err := Convert(context.Background(), b, "ls(1)", sample, o); err != nil {
+		t.Fatal(err)
+	}
+	if got := int(calls.Load()); got != n-kept {
+		t.Errorf("the second try made %d requests, want %d", got, n-kept)
+	}
+}
+
+// Conversions sharing slots never have more requests out than it holds.
+func TestConvertSlots(t *testing.T) {
+	var cur, most atomic.Int32
+	b := &errBackend{fn: func(user string) (string, error) {
+		c := cur.Add(1)
+		for {
+			m := most.Load()
+			if c <= m || most.CompareAndSwap(m, c) {
+				break
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+		cur.Add(-1)
+		return "ok " + strings.Join(optionsIn(user), " "), nil
+	}}
+	slots := make(chan struct{}, 3)
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := Convert(context.Background(), b, "ls(1)", sample, Options{ChunkSize: 120, Parallel: 8, Slots: slots}); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	if m := most.Load(); m != 3 {
+		t.Errorf("at most %d requests at once, want 3", m)
+	}
+}
+
+type errBackend struct {
+	fn func(user string) (string, error)
+}
+
+func (b *errBackend) Name() string  { return "err" }
+func (b *errBackend) Model() string { return "" }
+func (b *errBackend) Complete(_ context.Context, _, user string) (string, error) {
+	return b.fn(user)
 }

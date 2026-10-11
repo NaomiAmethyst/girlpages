@@ -7,14 +7,17 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -590,3 +593,66 @@ func TestGirlifyAlias(t *testing.T) {
 type otherModel struct{ *fake }
 
 func (otherModel) Model() string { return "fake-2" }
+
+// flaky fails the first request for one part of a page, then works.
+type flaky struct {
+	fake
+	mu     sync.Mutex
+	failed bool
+}
+
+func (f *flaky) Complete(ctx context.Context, sys, user string) (string, error) {
+	f.mu.Lock()
+	fail := !f.failed && strings.Contains(user, "this is part 2.")
+	f.failed = f.failed || fail
+	f.mu.Unlock()
+	if fail {
+		return "", errors.New("boom")
+	}
+	return f.fake.Complete(ctx, sys, user)
+}
+
+// A long page that fails part way is picked up where it left off, and its
+// parts are cleared away once it's done.
+func TestGirlifyResumes(t *testing.T) {
+	needTools(t)
+	root := filepath.Join(t.TempDir(), "man")
+	page := roff("big", "1", "a big page")
+	for i := 0; i < 6; i++ {
+		page += fmt.Sprintf(".SH SECTION%d\n%s\n", i, strings.Repeat("words and more words ", 20))
+	}
+	write(t, filepath.Join(root, "man1", "big.1"), []byte(page))
+	s, _ := repo.Open(t.TempDir())
+	ctx := context.Background()
+	Paths(ctx, s, []string{root}, Options{Quiet: true, Log: io.Discard})
+	parts := t.TempDir()
+	b := &flaky{}
+	o := GirlifyOptions{Backend: b, LLM: llm.Options{ChunkSize: 400}, Jobs: 2, PartsDir: parts, Quiet: true, Log: io.Discard}
+	if st, _ := Girlify(ctx, s, o); st.Failed != 1 {
+		t.Fatalf("first run: %+v", st)
+	}
+	first := b.calls.Load()
+	if first < 2 {
+		t.Fatalf("only %d parts converted before the failure", first)
+	}
+	st, err := Girlify(ctx, s, o)
+	if err != nil || st.Converted != 1 {
+		t.Fatalf("second run: %+v, %v", st, err)
+	}
+	l, _, _ := s.Listing("big", "1")
+	man, _ := s.Variant(l.Current, repo.VariantMan)
+	n := len(llm.Split(man.Text(), 400))
+	if total := int(b.calls.Load()); total != n {
+		t.Errorf("%d requests for %d parts", total, n)
+	}
+	var left []string
+	filepath.WalkDir(parts, func(path string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			left = append(left, path)
+		}
+		return nil
+	})
+	if len(left) != 0 {
+		t.Errorf("parts left behind: %v", left)
+	}
+}
