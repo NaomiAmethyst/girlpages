@@ -359,6 +359,9 @@ button.pill:disabled { cursor: progress; opacity: 0.8; }
 .letter .sub { font-size: 0.6em; color: var(--muted); font-weight: normal; }
 .listing.virtual { overflow-anchor: none; }
 .listing.virtual .letter.cont { display: none; }
-.listing .edge-bottom:not(:empty) { text-align: center; color: var(--muted); padding: 1rem; }
-.listing .edge-top { text-align: center; }
+.listing .edge { text-align: center; }
+.listing .edge-msg { margin: 0; color: var(--muted); }
+.listing .edge-msg:not(:empty) { padding: 1rem; }
+/* display rules would otherwise show what's hidden */
+.pager[hidden], .pill[hidden] { display: none; }
 .listing .earlier { margin: 0.5rem auto; }

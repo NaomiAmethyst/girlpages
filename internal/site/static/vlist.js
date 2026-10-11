@@ -98,10 +98,13 @@ export class VirtualList {
       for (;;) {
         if (nearScreen(this.bottom) && this.last() < this.count) {
           const n = this.last() + 1;
+          this.say(this.bottom, "💅 loading more…");
           this.bottom.before(this.make(n, await this.get(n)));
         } else if (this.upward && nearScreen(this.top) && this.first() > 1) {
           const n = this.first() - 1;
+          this.say(this.top, "💅 loading earlier ones…");
           const c = this.make(n, await this.get(n));
+          this.say(this.top, "");
           // Keep what's on screen where it is.
           const y = scrollY;
           this.top.after(c);
@@ -110,12 +113,18 @@ export class VirtualList {
           break;
         }
       }
-      this.bottom.textContent = "";
+      this.say(this.bottom, "");
     } catch (e) {
-      this.bottom.textContent = e instanceof TypeError ? "📵 you're offline, so that's all for now" : `💔 ${e.message}`;
+      this.say(this.top, "");
+      this.say(this.bottom, e instanceof TypeError ? "📵 you're offline, so that's all for now" : `💔 ${e.message}`);
     } finally {
       this.busy = false;
     }
+  }
+
+  // say shows a message at an end of the list ("" for none).
+  say(edge, text) {
+    edge.querySelector(".edge-msg").textContent = text;
   }
 
   // empty drops a far-off chunk's contents, keeping its height.
@@ -173,6 +182,10 @@ export class VirtualList {
 function edge(which) {
   const e = document.createElement("div");
   e.className = "edge edge-" + which;
+  const msg = document.createElement("p");
+  msg.className = "edge-msg";
+  msg.setAttribute("role", "status");
+  e.append(msg);
   return e;
 }
 
