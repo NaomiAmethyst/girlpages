@@ -8,6 +8,7 @@
 import { repoCache } from "./girlpages.js";
 
 const PREFIX_WEIGHT = 0.5;
+const PREFIX_CAP = 100; // as in search.go
 const FUZZY_WEIGHT = 0.3;
 const MAX_PREFIX_WORDS = 50;
 const MAX_FUZZY_WORDS = 5;
@@ -193,7 +194,7 @@ export class Searcher {
     const exact = await this.postings(t);
     for (const [id, sc] of exact) addBest(out, id, sc);
     for (const w of await this.prefixWords(t)) {
-      for (const [id, sc] of await this.postings(w)) addBest(out, id, sc * PREFIX_WEIGHT);
+      for (const [id, sc] of await this.postings(w)) addBest(out, id, Math.min(sc, PREFIX_CAP) * PREFIX_WEIGHT);
     }
     if (!exact.length) {
       for (const w of await this.fuzzyWords(t)) {

@@ -35,7 +35,11 @@ type Searcher struct {
 
 // Weights for words found other than exactly.
 const (
-	prefixWeight   = 0.5
+	prefixWeight = 0.5
+	// prefixCap is the most a word a query word is only the start of can
+	// score, before prefixWeight: as much as a word of the name. Otherwise
+	// "files" would find filesystems(5) by its whole name first.
+	prefixCap      = 100
 	fuzzyWeight    = 0.3
 	maxPrefixWords = 50
 	maxFuzzyWords  = 5
@@ -194,7 +198,7 @@ func (s *Searcher) term(ctx context.Context, t string) (map[int]float64, error) 
 			return nil, err
 		}
 		for _, p := range ps {
-			addBest(out, p[0], float64(p[1])*prefixWeight)
+			addBest(out, p[0], float64(min(p[1], prefixCap))*prefixWeight)
 		}
 	}
 	if len(exact) == 0 {

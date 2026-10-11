@@ -26,8 +26,8 @@ import (
 const (
 	scoreName     = 1000 // the whole page name, plus scoreSection
 	scoreSection  = 25   // per place earlier in man's section order
-	scoreNamePart = 200  // a word in the name
-	scoreDesc     = 40   // a word in the description
+	scoreNamePart = 100  // a word in the name
+	scoreDesc     = 60   // a word in the description
 	scoreBodyMax  = 20   // a word in the page, by how often
 )
 
