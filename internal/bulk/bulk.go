@@ -26,6 +26,8 @@ import (
 // Options controls a bulk run.
 type Options struct {
 	Sections []string
+	// Names limits the run to pages with these names.
+	Names []string
 	// Update only refreshes pages that are already cached, unless a full
 	// bulk run has completed before, in which case new pages are converted
 	// too. It is what the package-manager hooks and timers run.
@@ -104,7 +106,7 @@ func Run(ctx context.Context, o Options, caches cache.Set, b llm.Backend, log io
 		}
 	}
 
-	full := len(o.Sections) == 0 && o.Limit == 0
+	full := len(o.Sections) == 0 && len(o.Names) == 0 && o.Limit == 0
 	pending := map[string]bool{}
 	if o.Batch != nil && !o.DryRun {
 		// Whatever earlier runs sent off may be back by now.
@@ -407,6 +409,19 @@ func pagesFor(ctx context.Context, o Options, dir cache.Dir) ([]manpage.Page, er
 		if err != nil {
 			return nil, err
 		}
+	}
+	if len(o.Names) > 0 {
+		want := map[string]bool{}
+		for _, n := range o.Names {
+			want[n] = true
+		}
+		kept := pages[:0]
+		for _, p := range pages {
+			if want[p.Name] {
+				kept = append(kept, p)
+			}
+		}
+		pages = kept
 	}
 	if o.Limit > 0 && len(pages) > o.Limit {
 		pages = pages[:o.Limit]

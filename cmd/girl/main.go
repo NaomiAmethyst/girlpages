@@ -183,7 +183,8 @@ bulk options:
 repository options:
       --import=SOURCE     cache every installed page the repository (a URL or
                           directory) has, without asking a model; takes
-                          sections like --bulk, and -j, --limit, -n, -q
+                          sections or page names, and -j, --limit, --force
+                          (fetch again, replacing what's cached), -n, -q
       --export=DIR        write every up-to-date cached page, with the package
                           it came from, into a repository in DIR/repo, ready
                           to import or serve (girlrepo -d DIR publish makes
@@ -374,13 +375,15 @@ func runServe(ctx context.Context, f flags, g *core.Girl) int {
 // runImport fills the cache from a repository: a bulk run that only
 // fetches.
 func runImport(ctx context.Context, f flags, cfg *config.Config, g *core.Girl, mo manpage.Options, rest []string) int {
+	// Sections like --bulk, and page names too.
 	sections := splitList(f.sections)
+	var names []string
 	for _, a := range rest {
-		if !manpage.IsSection(a) {
-			fmt.Fprintf(os.Stderr, "girl: --import takes sections, not %q\n", a)
-			return exitUsage
+		if manpage.IsSection(a) {
+			sections = append(sections, a)
+		} else {
+			names = append(names, a)
 		}
-		sections = append(sections, a)
 	}
 	c, err := repo.Find(ctx, f.importSrc, cfg.Repo.Timeout.Duration, "girlpages/"+getVersion())
 	if err != nil {
@@ -393,6 +396,7 @@ func runImport(ctx context.Context, f flags, cfg *config.Config, g *core.Girl, m
 	mo.Sections = ""
 	_, err = bulk.Run(ctx, bulk.Options{
 		Sections:  sections,
+		Names:     names,
 		Force:     f.force,
 		DryRun:    f.dryRun,
 		Quiet:     f.quiet,

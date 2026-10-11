@@ -328,3 +328,22 @@ func TestReprompt(t *testing.T) {
 		}
 	}
 }
+
+func TestNames(t *testing.T) {
+	if _, err := exec.LookPath("man"); err != nil {
+		t.Skip("man not installed")
+	}
+	mp := t.TempDir()
+	write(t, filepath.Join(mp, "man1", "foo.1"), page("foo", "1", "does foo"))
+	write(t, filepath.Join(mp, "man1", "bar.1"), page("bar", "1", "does bar"))
+	dir := cache.Dir(t.TempDir())
+	b := &fake{}
+	st, err := Run(context.Background(), Options{Quiet: true, Names: []string{"bar"}, Man: manpage.Options{ManPath: mp}},
+		cache.Set{dir}, b, io.Discard)
+	if err != nil || st.Pages != 1 || st.Converted != 1 {
+		t.Fatalf("%+v, %v", st, err)
+	}
+	if _, err := os.Stat(dir.MarkerPath()); err == nil {
+		t.Error("a run for some pages isn't a full run")
+	}
+}

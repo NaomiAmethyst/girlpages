@@ -675,6 +675,23 @@ func Girlify(ctx context.Context, s *repo.Store, o GirlifyOptions) (GirlifyStats
 			w.pages = append(w.pages, p.Pointer)
 		}
 	}
+	// Aliases share the version's variant files, so every page with a
+	// version being converted needs its listing updated, named or not.
+	for _, p := range pages {
+		for _, v := range p.Listing.Versions {
+			w := bySource[v.Source]
+			if w == nil {
+				continue
+			}
+			listed := false
+			for _, q := range w.pages {
+				listed = listed || q == p.Pointer
+			}
+			if !listed {
+				w.pages = append(w.pages, p.Pointer)
+			}
+		}
+	}
 	// Same order as man searches: commands first.
 	sort.SliceStable(order, func(i, j int) bool {
 		return sectionRank(bySource[order[i]].pages[0].Section) < sectionRank(bySource[order[j]].pages[0].Section)

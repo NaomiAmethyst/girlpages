@@ -556,3 +556,36 @@ func TestGirlifyReprompt(t *testing.T) {
 		t.Errorf("after reprompt: prompt %d", pv)
 	}
 }
+
+// Girlifying a page by name updates its aliases' listings too, as they
+// share its variant files.
+func TestGirlifyAlias(t *testing.T) {
+	needTools(t)
+	root := filepath.Join(t.TempDir(), "man")
+	write(t, filepath.Join(root, "man2", "brk.2"), []byte(roff("brk", "2", "change data segment size")))
+	if err := os.Symlink("brk.2", filepath.Join(root, "man2", "sbrk.2")); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := repo.Open(t.TempDir())
+	ctx := context.Background()
+	Paths(ctx, s, []string{root}, Options{Quiet: true, Log: io.Discard})
+	b := &fake{}
+	Girlify(ctx, s, GirlifyOptions{Backend: b, Quiet: true, Log: io.Discard})
+	if _, err := Girlify(ctx, s, GirlifyOptions{Backend: otherModel{b}, Force: true, Names: []string{"sbrk"}, Quiet: true, Log: io.Discard}); err != nil {
+		t.Fatal(err)
+	}
+	pages, _ := s.AllPages()
+	for _, p := range pages {
+		v := p.Current()
+		raw, err := s.ReadRaw(repo.ContentPath(v.Source, repo.VariantGirl))
+		if err != nil || repo.Hash(raw) != v.Variants[repo.VariantGirl].SHA256 {
+			t.Errorf("%s's listing doesn't match its girl variant", p.Pointer.Name)
+		}
+	}
+}
+
+// otherModel is the fake under another model name, so its conversions
+// differ from the fake's.
+type otherModel struct{ *fake }
+
+func (otherModel) Model() string { return "fake-2" }
