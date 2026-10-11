@@ -10,7 +10,8 @@
 // conversion with a single request without knowing anything else:
 //
 //	manifest.json                          sections and index manifests
-//	contents/ab/<source>/<variant>.json    one version of a page, as Variant
+//	contents/ab/<source>/variants.json     Contents: a version's variants
+//	contents/ab/<source>/<variant>-<sha>.json  one variant, as Variant
 //	page/name-<section>/<name>.json        Pointer to the page's Listing
 //	page/page-ab/<sha>.json                Listing: every version of a page
 //	section/<section>.json                 Pointer to the section's index
@@ -26,8 +27,8 @@
 //
 // Files whose names end in -<sha> or are named <sha>.json are named after
 // the SHA-256 of their own bytes, so they never change and can be cached
-// forever. The pointers and manifest.json are the only files that change in
-// place; contents files change only when a page is converted again.
+// forever. manifest.json, the pointers and variants.json files are the only
+// ones that change in place.
 package repo
 
 import (
@@ -130,14 +131,39 @@ type Version struct {
 	Version string `json:"version,omitempty"`
 }
 
-// VariantInfo describes a stored variant.
+// VariantInfo describes a stored variant: in a listing, its latest
+// generation.
 type VariantInfo struct {
+	// SHA256 names the variant's file (see VariantPath).
 	SHA256 string `json:"sha256"`
 	Size   int64  `json:"size"`
+	// Generation counts how many times the variant has been made for this
+	// version: 1 at first, more if it was made again (with a new prompt,
+	// say). The latest is the highest.
+	Generation int `json:"generation,omitempty"`
 	// PromptVersion is the prompt version its generator records, so
 	// outdated conversions can be found without reading them; 0 if it
 	// doesn't say.
 	PromptVersion int `json:"prompt_version,omitempty"`
+}
+
+// Contents is contents/ab/<source>/variants.json: every generation of every
+// variant of one page version.
+type Contents struct {
+	Format   int                      `json:"format"`
+	Source   string                   `json:"source"`
+	Variants map[string][]VariantInfo `json:"variants"`
+}
+
+// Latest is a variant's latest generation, or nil if there's none.
+func (c *Contents) Latest(variant string) *VariantInfo {
+	var best *VariantInfo
+	for i, g := range c.Variants[variant] {
+		if best == nil || g.Generation > best.Generation {
+			best = &c.Variants[variant][i]
+		}
+	}
+	return best
 }
 
 // InfoFor describes a variant stored as b.
@@ -373,7 +399,19 @@ type GramShard struct {
 
 func ManifestPath() string { return "manifest.json" }
 
-func ContentPath(source, variant string) string {
+// ContentsPath is the Contents file of a page version.
+func ContentsPath(source string) string {
+	return path.Join("contents", source[:2], source, "variants.json")
+}
+
+// VariantPath is a generation of a variant, named after its own hash.
+func VariantPath(source, variant, sha string) string {
+	return path.Join("contents", source[:2], source, variant+"-"+sha+".json")
+}
+
+// legacyVariantPath is where variants were kept before generations:
+// named after the variant alone, so changed in place.
+func legacyVariantPath(source, variant string) string {
 	return path.Join("contents", source[:2], source, variant+".json")
 }
 

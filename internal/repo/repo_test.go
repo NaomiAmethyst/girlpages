@@ -496,3 +496,91 @@ func TestClientEncodings(t *testing.T) {
 		t.Error(err)
 	}
 }
+
+// A repository from before generations: one file per variant, changed in
+// place. Refresh moves each into generation 1, and GC tidies up.
+func TestMigrateVariants(t *testing.T) {
+	s := testStore(t)
+	pages, _ := s.AllPages()
+	// Turn it back into the old layout.
+	for _, p := range pages {
+		for _, v := range p.Listing.Versions {
+			cs, _ := s.Contents(v.Source)
+			for variant := range v.Variants {
+				g := cs.Latest(variant)
+				b, _ := s.ReadRaw(VariantPath(v.Source, variant, g.SHA256))
+				WriteFile(filepath.Join(s.Dir, legacyVariantPath(v.Source, variant)), b)
+				os.Remove(filepath.Join(s.Dir, VariantPath(v.Source, variant, g.SHA256)))
+			}
+			os.Remove(filepath.Join(s.Dir, ContentsPath(v.Source)))
+		}
+		s.UpdateListing(p.Pointer.Name, p.Pointer.Section, func(l *Listing) error {
+			for i := range l.Versions {
+				for k, info := range l.Versions[i].Variants {
+					info.Generation = 0
+					l.Versions[i].Variants[k] = info
+				}
+			}
+			return nil
+		})
+	}
+	pages, _ = s.AllPages()
+	n, err := s.Refresh(pages)
+	if err != nil || n != len(pages) {
+		t.Fatalf("refreshed %d of %d: %v", n, len(pages), err)
+	}
+	pages, _ = s.AllPages()
+	for _, p := range pages {
+		v := p.Current()
+		for variant, info := range v.Variants {
+			got, err := s.Variant(v.Source, variant)
+			if err != nil || info.Generation != 1 || got.Variant != variant {
+				t.Fatalf("%s %s: %+v, %v", p.Pointer.Name, variant, info, err)
+			}
+		}
+	}
+	if _, err := s.Publish(pages); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GC(false); err != nil {
+		t.Fatal(err)
+	}
+	l, _, _ := s.Listing("ls", "1")
+	if _, err := os.Stat(filepath.Join(s.Dir, legacyVariantPath(l.Current, VariantGirl))); err == nil {
+		t.Error("GC should remove the old files")
+	}
+	if n, _ := s.Refresh(pages); n != 0 {
+		t.Errorf("a second refresh changed %d", n)
+	}
+	// A client reads it the new way.
+	if v, err := NewClient(s.Dir, time.Second).Variant(context.Background(), l.Current, VariantGirl); err != nil || !strings.Contains(v.Text(), "ls slays") {
+		t.Errorf("client: %v", err)
+	}
+}
+
+// Making a variant again adds a generation; the same again doesn't.
+func TestGenerations(t *testing.T) {
+	s := testStore(t)
+	l, _, _ := s.Listing("ls", "1")
+	g1, _ := s.Variant(l.Current, VariantGirl)
+	again, err := s.PutVariant(g1)
+	if err != nil || again.Generation != 1 {
+		t.Fatalf("same again: %+v, %v", again, err)
+	}
+	g2 := *g1
+	g2.Sections = []Section{{Heading: "NAME", Body: "ls, but newer\n"}}
+	info, err := s.PutVariant(&g2)
+	if err != nil || info.Generation != 2 {
+		t.Fatalf("new generation: %+v, %v", info, err)
+	}
+	if v, _ := s.Variant(l.Current, VariantGirl); !strings.Contains(v.Text(), "newer") {
+		t.Error("the latest generation should be read")
+	}
+	c := NewClient(s.Dir, time.Second)
+	if v, err := c.VariantAt(context.Background(), l.Current, VariantGirl, l.CurrentVersion().Variants[VariantGirl].SHA256); err != nil || !strings.Contains(v.Text(), "ls slays") {
+		t.Errorf("generation 1 by hash: %v", err)
+	}
+	if _, err := c.VariantAt(context.Background(), l.Current, VariantGirl, info.SHA256[:63]+"0"); err == nil {
+		t.Error("a hash that isn't there should fail")
+	}
+}

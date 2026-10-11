@@ -456,8 +456,13 @@ and the pointer files change in place and should be cached briefly.
 .B manifest.json
 The root: sections, page counts and the index manifests.
 .TP
-.BI contents/ ab / source / variant .json
-One version of a page.
+.BI contents/ ab / source /variants.json
+Every generation of every variant of one version of a page: each variant
+made again (with a new prompt, say) is a new generation, and the latest is
+the highest.
+.TP
+.BI contents/ ab / source / variant \- sha .json
+One generation of a variant, named after its own hash.
 .TP
 .BI page/name\- section / name .json
 Points at the page's listing.
@@ -566,6 +571,8 @@ Files named after their own hash: listings
 .RB ( repo/page/page\-*/ ),
 section indexes
 .RB ( repo/section/*\- sha .json ),
+variants
+.RB ( repo/contents/*/*/ variant \- sha .json ),
 and everything under
 .BR repo/index/ .
 .TP
@@ -573,20 +580,9 @@ and everything under
 .BR repo/manifest.json ,
 and the pointers into the rest
 .RB ( repo/page/name\-*/ ,
-.BR repo/section/ section .json ),
+.BR repo/section/ section .json ,
+.BR repo/contents/*/*/variants.json ),
 which change on every publish.
-.TP
-.B public, max-age=31536000
-Page contents
-.RB ( repo/contents/ ).
-These are named after their page version, not themselves, so girlifying a
-page again
-.RB ( girlify " " \-\-force " or " \-\-reprompt )
-changes them in place; after doing that on a published site, invalidate
-.B /repo/contents/*
-at the CDN, if there is one.
-Browsers check them again when a page is reloaded, as they aren't marked
-immutable.
 .TP
 .B no-cache
 .BR sw.js ,

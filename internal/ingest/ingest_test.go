@@ -577,9 +577,10 @@ func TestGirlifyAlias(t *testing.T) {
 	pages, _ := s.AllPages()
 	for _, p := range pages {
 		v := p.Current()
-		raw, err := s.ReadRaw(repo.ContentPath(v.Source, repo.VariantGirl))
-		if err != nil || repo.Hash(raw) != v.Variants[repo.VariantGirl].SHA256 {
-			t.Errorf("%s's listing doesn't match its girl variant", p.Pointer.Name)
+		cs, err := s.Contents(v.Source)
+		if err != nil || cs.Latest(repo.VariantGirl) == nil || *cs.Latest(repo.VariantGirl) != v.Variants[repo.VariantGirl] ||
+			cs.Latest(repo.VariantGirl).Generation != 2 {
+			t.Errorf("%s's listing doesn't match its girl variant's latest generation: %+v", p.Pointer.Name, v.Variants)
 		}
 	}
 }

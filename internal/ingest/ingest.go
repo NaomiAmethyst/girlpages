@@ -507,13 +507,17 @@ func run(ctx context.Context, s *repo.Store, cands []candidate, o Options) (Stat
 	return st, nil
 }
 
-// variantInfo hashes a stored variant.
+// variantInfo describes a stored variant's latest generation.
 func variantInfo(s *repo.Store, source, variant string) (repo.VariantInfo, error) {
-	b, err := os.ReadFile(filepath.Join(s.Dir, filepath.FromSlash(repo.ContentPath(source, variant))))
+	cs, err := s.Contents(source)
 	if err != nil {
 		return repo.VariantInfo{}, err
 	}
-	return repo.InfoFor(b), nil
+	g := cs.Latest(variant)
+	if g == nil {
+		return repo.VariantInfo{}, repo.ErrNotFound
+	}
+	return *g, nil
 }
 
 func addPackage(v *repo.Version, p repo.Package) {

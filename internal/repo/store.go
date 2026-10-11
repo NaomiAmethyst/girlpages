@@ -24,7 +24,8 @@ import (
 type Store struct {
 	Dir string
 
-	mu sync.Mutex // serialises listing updates within this process
+	mu  sync.Mutex // serialises listing updates within this process
+	vmu sync.Mutex // and variants.json updates
 }
 
 // Open opens (creating if needed) a repository directory.
@@ -226,11 +227,15 @@ func (l *Listing) derive() {
 	}
 }
 
-// Refresh rewrites listings whose derived fields are out of date (written
-// by an older girlrepo, say), and fills in prompt versions they don't
-// record, returning how many changed. The caller must hold Lock.
+// Refresh brings listings up to date with this version of girlrepo,
+// returning how many changed: variants still kept the old way (one file
+// per variant, changed in place) become generation 1 of the new, listings
+// record each variant's latest generation as variants.json has it, and
+// the fields derived from versions are worked out again. The caller must
+// hold Lock.
 func (s *Store) Refresh(pages []PageRef) (int, error) {
 	n := 0
+	contents := map[string]*Contents{}
 	for _, p := range pages {
 		want := *p.Listing
 		want.Versions = append([]Version(nil), p.Listing.Versions...)
@@ -239,23 +244,21 @@ func (s *Store) Refresh(pages []PageRef) (int, error) {
 		for i := range want.Versions {
 			same = same && want.Versions[i].Version == p.Listing.Versions[i].Version
 		}
-		// Prompt versions the listing doesn't know but the variant does.
-		prompts := map[string]map[string]int{}
+		latest := map[string]map[string]VariantInfo{}
 		for _, v := range p.Listing.Versions {
+			cs := contents[v.Source]
+			if cs == nil {
+				var err error
+				if cs, err = s.migrate(v.Source, v.Variants); err != nil {
+					return n, err
+				}
+				contents[v.Source] = cs
+			}
+			latest[v.Source] = map[string]VariantInfo{}
 			for variant, info := range v.Variants {
-				if info.PromptVersion != 0 || variant == VariantMan {
-					continue
-				}
-				b, err := s.ReadRaw(ContentPath(v.Source, variant))
-				if err != nil {
-					continue
-				}
-				if pv := InfoFor(b).PromptVersion; pv != 0 {
-					if prompts[v.Source] == nil {
-						prompts[v.Source] = map[string]int{}
-					}
-					prompts[v.Source][variant] = pv
-					same = false
+				if g := cs.Latest(variant); g != nil {
+					latest[v.Source][variant] = *g
+					same = same && *g == info
 				}
 			}
 		}
@@ -265,10 +268,9 @@ func (s *Store) Refresh(pages []PageRef) (int, error) {
 		err := s.UpdateListing(p.Pointer.Name, p.Pointer.Section, func(l *Listing) error {
 			for i := range l.Versions {
 				v := &l.Versions[i]
-				for variant, pv := range prompts[v.Source] {
-					if info, ok := v.Variants[variant]; ok && info.PromptVersion == 0 {
-						info.PromptVersion = pv
-						v.Variants[variant] = info
+				for variant, g := range latest[v.Source] {
+					if _, ok := v.Variants[variant]; ok {
+						v.Variants[variant] = g
 					}
 				}
 			}
@@ -282,10 +284,61 @@ func (s *Store) Refresh(pages []PageRef) (int, error) {
 	return n, nil
 }
 
-// Variant reads a stored variant.
+// migrate moves a version's variants still kept the old way, one file per
+// variant changed in place, into generation 1 of the new, returning its
+// Contents. The old files are left for GC.
+func (s *Store) migrate(source string, variants map[string]VariantInfo) (*Contents, error) {
+	cs, err := s.Contents(source)
+	if err != nil {
+		return nil, err
+	}
+	moved := false
+	for variant := range variants {
+		if cs.Latest(variant) != nil || !ValidVariant(variant) {
+			continue
+		}
+		b, err := s.ReadRaw(legacyVariantPath(source, variant))
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if _, err := s.PutVariantRaw(source, variant, b); err != nil {
+			return nil, fmt.Errorf("%s/%s: %w", source, variant, err)
+		}
+		moved = true
+	}
+	if moved {
+		return s.Contents(source)
+	}
+	return cs, nil
+}
+
+// Contents reads a page version's Contents, or returns an empty one.
+func (s *Store) Contents(source string) (*Contents, error) {
+	c := &Contents{Format: Format, Source: source, Variants: map[string][]VariantInfo{}}
+	if err := s.Read(ContentsPath(source), c); err != nil && !errors.Is(err, ErrNotFound) {
+		return nil, err
+	}
+	if c.Variants == nil {
+		c.Variants = map[string][]VariantInfo{}
+	}
+	return c, nil
+}
+
+// Variant reads the latest generation of a stored variant.
 func (s *Store) Variant(source, variant string) (*Variant, error) {
+	c, err := s.Contents(source)
+	if err != nil {
+		return nil, err
+	}
+	g := c.Latest(variant)
+	if g == nil {
+		return nil, fmt.Errorf("%s/%s: %w", source, variant, ErrNotFound)
+	}
 	var v Variant
-	if err := s.Read(ContentPath(source, variant), &v); err != nil {
+	if err := s.Read(VariantPath(source, variant, g.SHA256), &v); err != nil {
 		return nil, err
 	}
 	return &v, nil
@@ -293,18 +346,63 @@ func (s *Store) Variant(source, variant string) (*Variant, error) {
 
 // HasVariant reports whether a variant is stored.
 func (s *Store) HasVariant(source, variant string) bool {
-	_, err := os.Stat(s.abs(ContentPath(source, variant)))
-	return err == nil
+	c, err := s.Contents(source)
+	return err == nil && c.Latest(variant) != nil
 }
 
-// PutVariant stores a variant.
+// PutVariant stores a variant as its latest generation (unless it's the
+// same as the latest already), returning what it's stored as.
 func (s *Store) PutVariant(v *Variant) (VariantInfo, error) {
-	sha, size, err := s.Write(ContentPath(v.Source, v.Variant), v)
-	info := VariantInfo{SHA256: sha, Size: size}
-	if v.Generator != nil {
-		info.PromptVersion = v.Generator.PromptVersion
+	b, err := Encode(v)
+	if err != nil {
+		return VariantInfo{}, err
 	}
-	return info, err
+	return s.putVariant(v.Source, v.Variant, b)
+}
+
+// PutVariantRaw stores a variant's file as it is (one from another
+// repository, say), after checking it is the variant it should be.
+func (s *Store) PutVariantRaw(source, variant string, b []byte) (VariantInfo, error) {
+	var v Variant
+	if err := json.Unmarshal(b, &v); err != nil {
+		return VariantInfo{}, err
+	}
+	if v.Source != source || v.Variant != variant {
+		return VariantInfo{}, fmt.Errorf("that's %s/%s, not %s/%s", v.Source, v.Variant, source, variant)
+	}
+	return s.putVariant(source, variant, b)
+}
+
+func (s *Store) putVariant(source, variant string, b []byte) (VariantInfo, error) {
+	if !ValidHash(source) || !ValidVariant(variant) {
+		return VariantInfo{}, fmt.Errorf("bad variant %s/%s", source, variant)
+	}
+	info := InfoFor(b)
+	p := s.abs(VariantPath(source, variant, info.SHA256))
+	if _, err := os.Stat(p); err != nil {
+		if err := WriteFile(p, b); err != nil {
+			return VariantInfo{}, err
+		}
+	}
+	s.vmu.Lock()
+	defer s.vmu.Unlock()
+	c, err := s.Contents(source)
+	if err != nil {
+		return VariantInfo{}, err
+	}
+	latest := c.Latest(variant)
+	if latest != nil && latest.SHA256 == info.SHA256 {
+		return *latest, nil
+	}
+	info.Generation = 1
+	if latest != nil {
+		info.Generation = latest.Generation + 1
+	}
+	c.Variants[variant] = append(c.Variants[variant], info)
+	if _, _, err := s.Write(ContentsPath(source), c); err != nil {
+		return VariantInfo{}, err
+	}
+	return info, nil
 }
 
 // Pages calls fn for every page pointer, in no particular order.

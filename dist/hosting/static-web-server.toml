@@ -39,19 +39,12 @@ source = "/sw.js"
 [advanced.headers.headers]
 Cache-Control = "no-cache"
 
-# manifest.json and the pointers into the rest: they change on every publish.
+# manifest.json and the pointers into the rest (name and section pointers,
+# contents' variants.json): they change on every publish.
 [[advanced.headers]]
 source = "/repo/**"
 [advanced.headers.headers]
 Cache-Control = "public, max-age=300"
-
-# Page contents change only if a page is girlified again, which is rare
-# enough to handle by hand (invalidate /repo/contents/* at a CDN). Not
-# immutable, so a browser reload still checks.
-[[advanced.headers]]
-source = "/repo/contents/**"
-[advanced.headers.headers]
-Cache-Control = "public, max-age=31536000"
 
 # Files named after their own hash never change.
 [[advanced.headers]]
@@ -60,7 +53,7 @@ source = "/repo/{page/page-*,index}/**"
 Cache-Control = "public, max-age=31536000, immutable"
 
 [[advanced.headers]]
-source = "/repo/section/*-*.json"
+source = "/repo/{section/*-*.json,contents/*/*/*-*.json}"
 [advanced.headers.headers]
 Cache-Control = "public, max-age=31536000, immutable"
 

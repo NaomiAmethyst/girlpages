@@ -54,7 +54,9 @@ async function listing(name, sec) {
   const p = await cache.get(`page/name-${enc(sec)}/${enc(name)}.json`);
   return cache.get(`page/page-${p.sha256.slice(0, 2)}/${p.sha256}.json`);
 }
-const variant = (source, v) => cache.get(`contents/${source.slice(0, 2)}/${source}/${v}.json`);
+// A variant is named after its own hash (the listing gives it), so it's
+// cached forever.
+const variant = (source, v, sha) => cache.get(`contents/${source.slice(0, 2)}/${source}/${v}-${sha}.json`);
 const sectionIndex = (e) => cache.get(`section/${enc(e.section)}-${e.sha256}.json`);
 
 // variantText reassembles a variant, as Variant.Text does in Go.
@@ -182,7 +184,7 @@ async function pageView(name, sec, v, which, src) {
   const has = (k) => ver.variants && ver.variants[k];
   const variants = Object.keys(ver.variants || {}).filter(k => /^[a-z][a-z0-9-]{0,31}$/.test(k)).sort(variantOrder);
   if (!which || !has(which)) which = variants[0] || "man";
-  const doc = await variant(ver.source, which);
+  const doc = await variant(ver.source, which, ver.variants[which].sha256);
   const title = ver.title || `${name.toUpperCase()}(${sec})`;
   const latest = ver.source === l.current;
   const suffix = which === "girl" ? "" : which === "man" ? " · original" : " · " + which;

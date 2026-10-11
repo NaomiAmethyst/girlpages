@@ -674,7 +674,10 @@ func TestHandler(t *testing.T) {
 	}
 	s, _ := repo.Open(filepath.Join(out, "repo"))
 	m, _ := s.Manifest()
+	ls, _, _ := s.Listing("ls", "1")
 	for path, want := range map[string]string{
+		"/repo/" + repo.ContentsPath(ls.Current): CachePointer,
+		"/repo/" + repo.VariantPath(ls.Current, repo.VariantGirl, ls.CurrentVersion().Variants[repo.VariantGirl].SHA256): CacheImmutable,
 		"/repo/manifest.json": CachePointer,
 		"/repo/" + repo.SectionIndexPath("1", m.Sections[0].SHA256): CacheImmutable,
 		"/repo/" + repo.NamePath("ls", "1"):                         CachePointer,

@@ -107,7 +107,8 @@ func TestImport(t *testing.T) {
 	publish(t, b)
 	// Tamper with a file after publishing: its hash no longer matches.
 	lb := listing(t, b, "bad", "8")
-	os.WriteFile(filepath.Join(b.Dir, ContentPath(lb.Current, VariantGirl)), []byte(`{"evil":true}`), 0o644)
+	evil := lb.CurrentVersion().Variants[VariantGirl].SHA256
+	os.WriteFile(filepath.Join(b.Dir, VariantPath(lb.Current, VariantGirl, evil)), []byte(`{"evil":true}`), 0o644)
 
 	srv := httptest.NewServer(http.FileServer(http.Dir(b.Dir)))
 	defer srv.Close()
@@ -165,7 +166,7 @@ func TestImport(t *testing.T) {
 	for _, p := range pages {
 		for _, ver := range p.Listing.Versions {
 			for variant, info := range ver.Variants {
-				raw, err := a.ReadRaw(ContentPath(ver.Source, variant))
+				raw, err := a.ReadRaw(VariantPath(ver.Source, variant, info.SHA256))
 				if err != nil || Hash(raw) != info.SHA256 {
 					t.Errorf("%s(%s) %s: listed %s, stored %v", p.Pointer.Name, p.Pointer.Section, variant, info.SHA256[:8], err)
 				}
@@ -184,12 +185,20 @@ func TestImport(t *testing.T) {
 	if err != nil || st.Replaced != 1 {
 		t.Fatalf("prefer remote: %+v, %v", st, err)
 	}
+	// Theirs is a second generation; ours is still there as the first.
+	cs, _ := a.Contents(srcs["cat"])
+	gens := cs.Variants[VariantGirl]
+	if len(gens) != 2 || cs.Latest(VariantGirl).Generation != 2 {
+		t.Fatalf("cat's generations: %+v", gens)
+	}
 	for _, alias := range []string{"cat", "dog"} {
 		l := listing(t, a, alias, "1")
 		g, _ := a.Variant(srcs["cat"], VariantGirl)
-		raw, _ := a.ReadRaw(ContentPath(srcs["cat"], VariantGirl))
-		if !strings.Contains(g.Text(), "their cat") || l.Find(srcs["cat"]).Variants[VariantGirl].SHA256 != Hash(raw) {
+		if !strings.Contains(g.Text(), "their cat") || l.Find(srcs["cat"]).Variants[VariantGirl] != *cs.Latest(VariantGirl) {
 			t.Errorf("%s should point at their conversion", alias)
 		}
+	}
+	if err := a.Read(VariantPath(srcs["cat"], VariantGirl, gens[0].SHA256), new(Variant)); err != nil {
+		t.Errorf("generation 1 should still be readable: %v", err)
 	}
 }

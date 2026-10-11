@@ -155,7 +155,7 @@ func TestBulkFetch(t *testing.T) {
 	if _, _, err := fetch(ctx, bar); !errors.Is(err, repo.ErrNotFound) {
 		t.Errorf("bar: %v", err)
 	}
-	if n := contents.Load(); n != 1 {
-		t.Errorf("%d content requests, want 1 (just foo's)", n)
+	if n := contents.Load(); n != 2 {
+		t.Errorf("%d content requests, want 2 (foo's variants.json and its girl variant)", n)
 	}
 }

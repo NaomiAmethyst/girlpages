@@ -142,13 +142,40 @@ func escapePath(rel string) string {
 	return strings.Join(parts, "/")
 }
 
-// Variant fetches one variant of a page version.
+// Variant fetches the latest generation of one variant of a page version:
+// its variants.json, then the file that names, checked against its hash.
 func (c *Client) Variant(ctx context.Context, source, variant string) (*Variant, error) {
 	if !ValidHash(source) {
 		return nil, fmt.Errorf("bad source hash %q", source)
 	}
+	if !ValidVariant(variant) {
+		return nil, fmt.Errorf("bad variant name %q", variant)
+	}
+	var cs Contents
+	if err := c.Get(ctx, ContentsPath(source), &cs); err != nil {
+		return nil, err
+	}
+	g := cs.Latest(variant)
+	if g == nil {
+		return nil, fmt.Errorf("%s/%s: %w", source, variant, ErrNotFound)
+	}
+	return c.VariantAt(ctx, source, variant, g.SHA256)
+}
+
+// VariantAt fetches a particular generation of a variant, by its hash.
+func (c *Client) VariantAt(ctx context.Context, source, variant, sha string) (*Variant, error) {
+	if !ValidHash(source) || !ValidHash(sha) || !ValidVariant(variant) {
+		return nil, fmt.Errorf("bad variant %s/%s/%s", source, variant, sha)
+	}
+	raw, err := c.Raw(ctx, VariantPath(source, variant, sha))
+	if err != nil {
+		return nil, err
+	}
+	if Hash(raw) != sha {
+		return nil, fmt.Errorf("repo sent something else for %s/%s", source, variant)
+	}
 	var v Variant
-	if err := c.Get(ctx, ContentPath(source, variant), &v); err != nil {
+	if err := json.Unmarshal(raw, &v); err != nil {
 		return nil, err
 	}
 	if v.Source != source || v.Variant != variant {

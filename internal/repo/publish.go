@@ -305,6 +305,7 @@ func (s *Store) GC(dryRun bool) (GCStats, error) {
 			live[ShardPath(kind, r.SHA256)] = true
 		}
 	}
+	seenSource := map[string]bool{}
 	err = s.Pages(func(p Pointer) error {
 		live[NamePath(p.Name, p.Section)] = true
 		live[ListingPath(p.SHA256)] = true
@@ -313,8 +314,20 @@ func (s *Store) GC(dryRun bool) (GCStats, error) {
 			return err
 		}
 		for _, v := range l.Versions {
-			for variant := range v.Variants {
-				live[ContentPath(v.Source, variant)] = true
+			if seenSource[v.Source] {
+				continue
+			}
+			seenSource[v.Source] = true
+			// Every generation stays, as clients may ask for any.
+			live[ContentsPath(v.Source)] = true
+			cs, err := s.Contents(v.Source)
+			if err != nil {
+				return err
+			}
+			for variant, gens := range cs.Variants {
+				for _, g := range gens {
+					live[VariantPath(v.Source, variant, g.SHA256)] = true
+				}
 			}
 		}
 		return nil

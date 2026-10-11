@@ -307,41 +307,41 @@ func (s *Store) fetchListing(ctx context.Context, c *Client, sha string) (*Listi
 }
 
 // importVariant makes sure this repository has a variant, fetching it if
-// need be. It returns what's stored here afterwards, whether it was added,
-// and whether the two differed.
+// need be (as a new generation here, if this repository has another). It
+// returns what's stored here afterwards, whether it was added, and whether
+// the two differed.
 func (s *Store) importVariant(ctx context.Context, c *Client, source, variant string, remote VariantInfo, o ImportOptions) (VariantInfo, bool, bool, error) {
-	rel := ContentPath(source, variant)
-	have, err := s.ReadRaw(rel)
-	switch {
-	case err == nil && Hash(have) == remote.SHA256:
-		return remote, false, false, nil
-	case err == nil && !o.PreferRemote:
-		return InfoFor(have), false, true, nil
-	case err != nil && !errors.Is(err, ErrNotFound):
+	cs, err := s.Contents(source)
+	if err != nil {
 		return VariantInfo{}, false, false, err
 	}
-	conflict := err == nil
+	have := cs.Latest(variant)
+	switch {
+	case have != nil && have.SHA256 == remote.SHA256:
+		return *have, false, false, nil
+	case have != nil && !o.PreferRemote:
+		return *have, false, true, nil
+	}
+	conflict := have != nil
 	if o.DryRun {
 		return remote, !conflict, conflict, nil
 	}
+	if !ValidHash(remote.SHA256) {
+		return VariantInfo{}, false, false, fmt.Errorf("bad variant hash %q", remote.SHA256)
+	}
+	rel := VariantPath(source, variant, remote.SHA256)
 	raw, err := c.Raw(ctx, rel)
 	if err != nil {
 		return VariantInfo{}, false, false, err
 	}
 	if Hash(raw) != remote.SHA256 {
-		return VariantInfo{}, false, false, fmt.Errorf("%s doesn't match the hash its listing gives", rel)
+		return VariantInfo{}, false, false, fmt.Errorf("%s doesn't match its hash", rel)
 	}
-	var v Variant
-	if err := json.Unmarshal(raw, &v); err != nil {
+	info, err := s.PutVariantRaw(source, variant, raw)
+	if err != nil {
 		return VariantInfo{}, false, false, fmt.Errorf("%s: %w", rel, err)
 	}
-	if v.Source != source || v.Variant != variant {
-		return VariantInfo{}, false, false, fmt.Errorf("%s claims to be %s/%s", rel, v.Source, v.Variant)
-	}
-	if err := s.WriteRaw(rel, raw); err != nil {
-		return VariantInfo{}, false, false, err
-	}
-	return InfoFor(raw), !conflict, conflict, nil
+	return info, !conflict, conflict, nil
 }
 
 func hasPackage(ps []Package, p Package) bool {
