@@ -8,6 +8,7 @@ package ingest
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -487,11 +488,19 @@ type GirlifyOptions struct {
 	DryRun bool
 	Quiet  bool
 	Log    io.Writer
+	// Batch, if set, sends pages off in batches instead of one at a time,
+	// first collecting any that earlier runs sent.
+	Batch *llm.Batcher
+	// NoWait leaves batches running for a later run to collect.
+	NoWait bool
 }
 
 // GirlifyStats summarises a Girlify run.
 type GirlifyStats struct {
 	Converted, FromCache, Failed, Remaining int
+	// Batched pages were sent off in batches still running; Pending ones
+	// were already in one sent earlier.
+	Batched, Pending int
 }
 
 // Girlify adds girl variants to versions that don't have one.
@@ -505,10 +514,21 @@ func Girlify(ctx context.Context, s *repo.Store, o GirlifyOptions) (GirlifyStats
 			fmt.Fprintf(o.Log, format, a...)
 		}
 	}
+	pending := map[string]bool{}
+	if o.Batch != nil && !o.DryRun {
+		if err := collectGirl(ctx, s, o, false, &st, logf); err != nil {
+			return st, err
+		}
+		var err error
+		if pending, err = o.Batch.Pending(); err != nil {
+			return st, err
+		}
+	}
 	pages, err := s.AllPages()
 	if err != nil {
 		return st, err
 	}
+	counted := map[string]bool{}
 	names := map[string]bool{}
 	for _, n := range o.Names {
 		names[n] = true
@@ -532,6 +552,13 @@ func Girlify(ctx context.Context, s *repo.Store, o GirlifyOptions) (GirlifyStats
 		}
 		for _, v := range vs {
 			if _, ok := v.Variants[repo.VariantGirl]; ok && !o.Force {
+				continue
+			}
+			if pending[v.Source] && !o.Force {
+				if !counted[v.Source] {
+					counted[v.Source] = true
+					st.Pending++
+				}
 				continue
 			}
 			w := bySource[v.Source]
@@ -565,6 +592,45 @@ func Girlify(ctx context.Context, s *repo.Store, o GirlifyOptions) (GirlifyStats
 	if len(order) == 0 {
 		return st, nil
 	}
+	if o.Batch != nil {
+		jobs := make([]llm.BatchJob, 0, len(order))
+		made := cacheMakers(o.Cache)
+		for _, src := range order {
+			w := bySource[src]
+			man, err := s.Variant(src, repo.VariantMan)
+			if err != nil {
+				return st, err
+			}
+			text := man.Text()
+			if markup, ok := o.Cache.Object(cache.Hash(text)); ok && !o.Force {
+				g := made.generator(cache.Hash(text), time.Now().UTC().Truncate(time.Second))
+				if err := putGirl(s, src, man.Title, markup, g, w.pages); err != nil {
+					return st, err
+				}
+				st.FromCache++
+				continue
+			}
+			meta, err := json.Marshal(w.pages)
+			if err != nil {
+				return st, err
+			}
+			jobs = append(jobs, llm.BatchJob{Key: src, Title: w.title, Text: text, Meta: meta})
+		}
+		if len(jobs) == 0 {
+			return st, nil
+		}
+		logf("💌 sending %d pages to %s in batches: about half price, back within a day\n", len(jobs), o.Batch.Client.Model)
+		if _, err := o.Batch.Submit(ctx, jobs); err != nil {
+			return st, err
+		}
+		if o.NoWait {
+			st.Batched = len(jobs)
+			logf("💤 not waiting; the next girlrepo girlify collects them\n")
+			return st, nil
+		}
+		logf("⏳ waiting for them (ctrl-c is fine: they keep going, and the next girlify collects them)\n")
+		return st, collectGirl(ctx, s, o, true, &st, logf)
+	}
 	if o.Backend == nil {
 		return st, errors.New("no model to girlify with")
 	}
@@ -584,23 +650,7 @@ func Girlify(ctx context.Context, s *repo.Store, o GirlifyOptions) (GirlifyStats
 			for w := range queue {
 				start := time.Now()
 				fromCache, err := girlifyOne(ctx, s, o, made, w.source, w.title, func(info repo.VariantInfo) error {
-					unlock, err := s.Lock()
-					if err != nil {
-						return err
-					}
-					defer unlock()
-					for _, p := range w.pages {
-						err := s.UpdateListing(p.Name, p.Section, func(l *repo.Listing) error {
-							if v := l.Find(w.source); v != nil {
-								v.Variants[repo.VariantGirl] = info
-							}
-							return nil
-						})
-						if err != nil {
-							return err
-						}
-					}
-					return nil
+					return recordGirl(s, w.source, w.pages, info)
 				})
 				n := done.Add(1)
 				mu.Lock()
@@ -661,6 +711,81 @@ func girlifyOne(ctx context.Context, s *repo.Store, o GirlifyOptions, made maker
 		return fromCache, err
 	}
 	return fromCache, record(info)
+}
+
+// recordGirl notes a version's new girl variant in the listings of every
+// page that has it.
+func recordGirl(s *repo.Store, source string, pages []repo.Pointer, info repo.VariantInfo) error {
+	unlock, err := s.Lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	for _, p := range pages {
+		err := s.UpdateListing(p.Name, p.Section, func(l *repo.Listing) error {
+			if v := l.Find(source); v != nil {
+				v.Variants[repo.VariantGirl] = info
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// putGirl stores a girl variant and records it.
+func putGirl(s *repo.Store, source, title, markup string, g *repo.Generator, pages []repo.Pointer) error {
+	info, err := s.PutVariant(repo.GirlVariant(source, title, markup, g))
+	if err != nil {
+		return err
+	}
+	return recordGirl(s, source, pages, info)
+}
+
+// collectGirl stores what finished batches sent back.
+func collectGirl(ctx context.Context, s *repo.Store, o GirlifyOptions, wait bool, st *GirlifyStats, logf func(string, ...any)) error {
+	var mu sync.Mutex
+	cs, err := o.Batch.Collect(ctx, wait, func(j llm.SavedJob) (string, bool) {
+		man, err := s.Variant(j.Key, repo.VariantMan)
+		if err != nil {
+			return "", false
+		}
+		return man.Text(), true
+	}, func(r llm.Result) {
+		err := r.Err
+		if err == nil {
+			var pages []repo.Pointer
+			_ = json.Unmarshal(r.Job.Meta, &pages)
+			var man *repo.Variant
+			if man, err = s.Variant(r.Job.Key, repo.VariantMan); err == nil {
+				g := &repo.Generator{Backend: "openai", Model: r.Model, PromptVersion: llm.PromptVersion,
+					Generated: time.Now().UTC().Truncate(time.Second)}
+				err = putGirl(s, r.Job.Key, man.Title, r.Markup, g, pages)
+			}
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if err != nil {
+			st.Failed++
+			fmt.Fprintf(o.Log, "💔 %s: %v (it'll go in the next batch)\n", r.Job.Title, err)
+			return
+		}
+		st.Converted++
+		logf("💖 %s (from a batch)\n", r.Job.Title)
+	})
+	if cs.Finished > 0 {
+		logf("📬 %d finished batches: %d pages girlified", cs.Finished, cs.Pages)
+		if cs.Cost > 0 {
+			logf(", costing $%.4f", cs.Cost)
+		}
+		logf("\n")
+	}
+	if cs.Running > 0 && !wait {
+		logf("⏳ %d batches still running\n", cs.Running)
+	}
+	return err
 }
 
 // sectionRank orders sections the way man searches them.

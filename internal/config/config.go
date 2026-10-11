@@ -82,6 +82,12 @@ type OpenAIConfig struct {
 	MaxTokens   int               `toml:"max_tokens"`
 	Timeout     Duration          `toml:"timeout"`
 	Headers     map[string]string `toml:"headers"`
+	// BatchURL is an OpenRouter batch endpoint, such as
+	// https://openrouter.ai/api/v1/batches. When set, bulk runs send their
+	// pages as batches: slower, about half the price.
+	BatchURL string `toml:"batch_url"`
+	// BatchPoll is how often to check on a batch while waiting for it.
+	BatchPoll Duration `toml:"batch_poll"`
 }
 
 type ClaudeConfig struct {
@@ -106,8 +112,9 @@ func Defaults() Config {
 		Jobs:      4,
 		ChunkSize: 12000,
 		OpenAI: OpenAIConfig{
-			BaseURL: DefaultOpenAIBaseURL,
-			Timeout: Duration{10 * time.Minute},
+			BaseURL:   DefaultOpenAIBaseURL,
+			Timeout:   Duration{10 * time.Minute},
+			BatchPoll: Duration{time.Minute},
 		},
 		Claude: ClaudeConfig{
 			Command: "claude",
@@ -198,6 +205,7 @@ func (c *Config) applyEnv() error {
 	str(&c.OpenAI.BaseURL, "GIRLPAGES_OPENAI_BASE_URL", "OPENAI_BASE_URL")
 	str(&c.OpenAI.APIKey, "GIRLPAGES_OPENAI_API_KEY", "OPENAI_API_KEY")
 	str(&c.OpenAI.Model, "GIRLPAGES_OPENAI_MODEL")
+	str(&c.OpenAI.BatchURL, "GIRLPAGES_OPENAI_BATCH_URL")
 	str(&c.Claude.Command, "GIRLPAGES_CLAUDE_COMMAND")
 	str(&c.Claude.Model, "GIRLPAGES_CLAUDE_MODEL")
 	str(&c.Repo.URL, "GIRLPAGES_REPO")

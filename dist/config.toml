@@ -47,6 +47,12 @@
 #temperature = 0.9
 #max_tokens = 16000
 #timeout = "10m"
+# An OpenRouter batch endpoint. When set, girl --bulk and girlrepo girlify
+# send pages as batches: about half the price, back within a day. Runs save
+# what they sent, and the next run collects it (--no-wait doesn't wait; the
+# hooks and timer use that). Single pages and --serve stay live.
+#batch_url = "https://openrouter.ai/api/v1/batches"
+#batch_poll = "1m"
 
 #[openai.headers]
 #"HTTP-Referer" = "https://github.com/NaomiAmethyst/girlpages"

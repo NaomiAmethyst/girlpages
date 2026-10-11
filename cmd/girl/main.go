@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -51,6 +52,7 @@ type flags struct {
 	sections, manPath, locale, pager, configFile  string
 	help, version                                 bool
 	bulk, update, force, dryRun, prune, quiet     bool
+	noWait, noBatch                               bool
 	jobs, limit                                   int
 	refresh, cachedOnly, raw, doctor, html, serve bool
 	color, backend, model, listen, repo           string
@@ -81,6 +83,8 @@ func newFlagSet(f *flags) *pflag.FlagSet {
 	fs.BoolVar(&f.force, "force", false, "")
 	fs.BoolVarP(&f.dryRun, "dry-run", "n", false, "")
 	fs.BoolVar(&f.prune, "prune", false, "")
+	fs.BoolVar(&f.noWait, "no-wait", false, "")
+	fs.BoolVar(&f.noBatch, "no-batch", false, "")
 	fs.BoolVarP(&f.quiet, "quiet", "q", false, "")
 	fs.IntVarP(&f.jobs, "jobs", "j", 0, "")
 	fs.IntVar(&f.limit, "limit", 0, "")
@@ -156,6 +160,10 @@ bulk options:
                           new pages too (this is what the hooks run)
       --force             reconvert pages even if they're up to date
       --prune             drop cache entries for pages that no longer exist
+      --no-batch          convert one page at a time even if openai.batch_url
+                          is set
+      --no-wait           send batches off and return; the next run collects
+                          them
   -n, --dry-run           list what would be converted, convert nothing
   -j, --jobs=N            LLM requests at once (default from config, 4)
       --limit=N           stop after the first N pages
@@ -366,6 +374,14 @@ func runBulk(ctx context.Context, f flags, cfg *config.Config, g *core.Girl, mo 
 			return markup, gen.Model, nil
 		}
 	}
+	var batcher *llm.Batcher
+	if !f.noBatch {
+		var err error
+		if batcher, err = core.NewBatcher(cfg, bulk.BatchDir(g.Caches.Writable()), b); err != nil {
+			fmt.Fprintf(os.Stderr, "girl: %v\n", err)
+			return exitFailed
+		}
+	}
 	mo.Sections = ""
 	_, err := bulk.Run(ctx, bulk.Options{
 		Sections: sections,
@@ -379,6 +395,8 @@ func runBulk(ctx context.Context, f flags, cfg *config.Config, g *core.Girl, mo 
 		Man:      mo,
 		LLM:      llm.Options{ChunkSize: cfg.ChunkSize, ExtraInstructions: cfg.ExtraInstructions},
 		Fetch:    fetch,
+		Batch:    batcher,
+		NoWait:   f.noWait,
 	}, g.Caches, b, os.Stderr)
 	switch {
 	case errors.Is(err, bulk.ErrLocked):
@@ -471,7 +489,19 @@ func doctor(ctx context.Context, cfg *config.Config, g *core.Girl) int {
 			}
 		}
 	}
-	fmt.Printf("jobs %d, chunk size %d\n\n", cfg.Jobs, cfg.ChunkSize)
+	fmt.Printf("jobs %d, chunk size %d\n", cfg.Jobs, cfg.ChunkSize)
+	if cfg.OpenAI.BatchURL != "" {
+		fmt.Printf("batches: %s (for --bulk)", cfg.OpenAI.BatchURL)
+		if _, err := core.NewBatcher(cfg, "", nil); err != nil {
+			fmt.Printf(" 💔 %v", err)
+		}
+		files, _ := filepath.Glob(filepath.Join(bulk.BatchDir(caches.Writable()), "*.json"))
+		if len(files) > 0 {
+			fmt.Printf(", %d sent and not collected yet", len(files))
+		}
+		fmt.Println()
+	}
+	fmt.Println()
 	switch {
 	case g.Repo == nil:
 		fmt.Print("repo: none (set [repo] url to fetch ready-made pages)\n\n")

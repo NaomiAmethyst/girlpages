@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/NaomiAmethyst/girlpages/internal/cache"
+	"github.com/NaomiAmethyst/girlpages/internal/llm"
+	"github.com/NaomiAmethyst/girlpages/internal/llm/llmtest"
 	"github.com/NaomiAmethyst/girlpages/internal/manpage"
 	"github.com/NaomiAmethyst/girlpages/internal/repo"
 )
@@ -199,5 +201,55 @@ func TestFetchFromRepo(t *testing.T) {
 	st, err = Run(context.Background(), o, cache.Set{dir}, b, io.Discard)
 	if err != nil || st.Fresh != 1 || st.Converted != 1 || b.calls.Load() != 1 {
 		t.Fatalf("with a model: %+v, %v", st, err)
+	}
+}
+
+func TestBatch(t *testing.T) {
+	if _, err := exec.LookPath("man"); err != nil {
+		t.Skip("man not installed")
+	}
+	srv := llmtest.NewBatchServer()
+	defer srv.Close()
+	srv.Reply = llmtest.EchoOptions("batched")
+	mp := t.TempDir()
+	write(t, filepath.Join(mp, "man1", "foo.1"), page("foo", "1", "does foo"))
+	write(t, filepath.Join(mp, "man8", "baz.8"), page("baz", "8", "does baz"))
+	if err := os.Symlink("foo.1", filepath.Join(mp, "man1", "foo-alias.1")); err != nil {
+		t.Fatal(err)
+	}
+	dir := cache.Dir(t.TempDir())
+	caches := cache.Set{dir}
+	o := Options{Jobs: 2, Quiet: true, Man: manpage.Options{ManPath: mp}, NoWait: true,
+		Batch: &llm.Batcher{Client: &llm.BatchClient{URL: srv.BatchURL(), Model: "cheap-model"},
+			Dir: BatchDir(dir), Poll: 10 * time.Millisecond, Options: llm.Options{ChunkSize: 12000}}}
+	ctx := context.Background()
+
+	st, err := Run(ctx, o, caches, nil, io.Discard)
+	if err != nil || st.Batched != 3 || st.Converted != 0 || srv.Batches() != 1 || srv.Requests() != 2 {
+		t.Fatalf("first run: %+v, %v, %d batches", st, err, srv.Batches())
+	}
+	// Still running: nothing is sent twice.
+	st, err = Run(ctx, o, caches, nil, io.Discard)
+	if err != nil || st.Pending != 3 || st.Batched != 0 || srv.Batches() != 1 {
+		t.Fatalf("second run: %+v, %v, %d batches", st, err, srv.Batches())
+	}
+	// Done now: collected into the cache.
+	st, err = Run(ctx, o, caches, nil, io.Discard)
+	if err != nil || st.Converted != 3 || st.Pending != 0 || srv.Batches() != 1 {
+		t.Fatalf("third run: %+v, %v", st, err)
+	}
+	markup, e, fresh := caches.Lookup(filepath.Join(mp, "man1", "foo-alias.1"))
+	if !strings.Contains(markup, "batched") || !fresh || e.Backend != "openai" || e.Model != "cheap-model" || e.Title != "FOO(1)" {
+		t.Fatalf("alias: %q %+v", markup, e)
+	}
+	// A new page, waiting this time.
+	write(t, filepath.Join(mp, "man1", "new.1"), page("new", "1", "is new"))
+	o.NoWait = false
+	st, err = Run(ctx, o, caches, nil, io.Discard)
+	if err != nil || st.Converted != 1 || st.Fresh != 3 || srv.Batches() != 2 {
+		t.Fatalf("waiting run: %+v, %v", st, err)
+	}
+	if files, _ := filepath.Glob(filepath.Join(BatchDir(dir), "*")); len(files) != 0 {
+		t.Errorf("batches left behind: %v", files)
 	}
 }

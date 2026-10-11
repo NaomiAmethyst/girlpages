@@ -14,7 +14,7 @@ fi
 
 # No systemd: run detached. girl takes a lock, so overlapping runs are fine.
 if [ -x '@BINDIR@/girl' ]; then
-	nohup '@BINDIR@/girl' --bulk --update --prune --quiet \
+	nohup '@BINDIR@/girl' --bulk --update --prune --no-wait --quiet \
 		>>/var/log/girlpages.log 2>&1 </dev/null &
 fi
 exit 0

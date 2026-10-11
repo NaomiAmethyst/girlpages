@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"github.com/NaomiAmethyst/girlpages/internal/cache"
+	"github.com/NaomiAmethyst/girlpages/internal/llm"
+	"github.com/NaomiAmethyst/girlpages/internal/llm/llmtest"
 	"github.com/NaomiAmethyst/girlpages/internal/manpage"
 	"github.com/NaomiAmethyst/girlpages/internal/repo"
 )
@@ -310,4 +312,45 @@ func renderText(ctx context.Context, path string) (string, error) {
 		return "", err
 	}
 	return manpage.SourceText(ctx, src, filepath.Base(path), manpage.Options{})
+}
+
+func TestGirlifyBatch(t *testing.T) {
+	needTools(t)
+	srv := llmtest.NewBatchServer()
+	defer srv.Close()
+	srv.Reply = llmtest.EchoOptions("batched")
+	root := filepath.Join(t.TempDir(), "man")
+	write(t, filepath.Join(root, "man1", "foo.1"), []byte(roff("foo", "1", "does foo")))
+	write(t, filepath.Join(root, "man1", "bar.1"), []byte(roff("bar", "1", "does bar")))
+	s, err := repo.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := Paths(ctx, s, []string{root}, Options{Quiet: true, Log: io.Discard}); err != nil {
+		t.Fatal(err)
+	}
+	o := GirlifyOptions{Quiet: true, Log: io.Discard, NoWait: true,
+		Batch: &llm.Batcher{Client: &llm.BatchClient{URL: srv.BatchURL(), Model: "cheap-model"},
+			Dir: t.TempDir(), Poll: 10 * time.Millisecond}}
+	st, err := Girlify(ctx, s, o)
+	if err != nil || st.Batched != 2 || srv.Batches() != 1 {
+		t.Fatalf("first: %+v, %v", st, err)
+	}
+	st, err = Girlify(ctx, s, o) // still running
+	if err != nil || st.Pending != 2 || srv.Batches() != 1 {
+		t.Fatalf("second: %+v, %v", st, err)
+	}
+	st, err = Girlify(ctx, s, o)
+	if err != nil || st.Converted != 2 || srv.Batches() != 1 {
+		t.Fatalf("third: %+v, %v", st, err)
+	}
+	l, _, _ := s.Listing("foo", "1")
+	if _, ok := l.CurrentVersion().Variants[repo.VariantGirl]; !ok {
+		t.Fatal("foo's listing has no girl variant")
+	}
+	g, err := s.Variant(l.Current, repo.VariantGirl)
+	if err != nil || !strings.Contains(g.Text(), "batched") || g.Generator.Model != "cheap-model" || g.Title != "FOO(1)" {
+		t.Fatalf("foo: %+v, %v", g, err)
+	}
 }

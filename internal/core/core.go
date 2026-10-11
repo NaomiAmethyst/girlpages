@@ -249,6 +249,36 @@ func NewBackend(cfg *config.Config) (llm.Backend, error) {
 	}
 }
 
+// NewBatcher makes a Batcher for bulk runs if a batch endpoint is
+// configured, keeping its state in dir. It returns nil if batching isn't
+// set up. live, if not nil, redoes parts a batch got wrong.
+func NewBatcher(cfg *config.Config, dir string, live llm.Backend) (*llm.Batcher, error) {
+	if strings.TrimSpace(cfg.OpenAI.BatchURL) == "" {
+		return nil, nil
+	}
+	if name, err := cfg.ResolveBackend(); err != nil {
+		return nil, err
+	} else if name != config.BackendOpenAI {
+		return nil, fmt.Errorf("openai.batch_url is set, but the backend is %s; batches need the openai backend", name)
+	}
+	key, err := cfg.OpenAIKey()
+	if err != nil {
+		return nil, err
+	}
+	return &llm.Batcher{
+		Client: &llm.BatchClient{
+			URL: cfg.OpenAI.BatchURL, APIKey: key, Headers: cfg.OpenAI.Headers, Model: cfg.OpenAI.Model,
+			Temperature: cfg.OpenAI.Temperature, MaxTokens: cfg.OpenAI.MaxTokens,
+			Client: &http.Client{Timeout: cfg.OpenAI.Timeout.Duration}, Retries: 3,
+		},
+		Dir:     dir,
+		Options: llm.Options{ChunkSize: cfg.ChunkSize, ExtraInstructions: cfg.ExtraInstructions},
+		Live:    live,
+		Jobs:    cfg.Jobs,
+		Poll:    cfg.OpenAI.BatchPoll.Duration,
+	}, nil
+}
+
 // CacheSet builds the cache list from the config.
 func CacheSet(cfg *config.Config) cache.Set {
 	var s cache.Set

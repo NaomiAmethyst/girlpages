@@ -174,6 +174,12 @@ model = "qwen3:32b"
 url = ""   # a girlpages repository to try first
 ```
 
+Converting thousands of pages? With OpenRouter, set
+`batch_url = "https://openrouter.ai/api/v1/batches"` under `[openai]` and
+`girl --bulk` (and `girlrepo girlify`) send pages as batches instead: about
+half the price, back within a day. Runs save what they sent, so Ctrl-C is
+fine and `--no-wait` just sends them off; the next run collects them.
+
 `girl --doctor` shows what it's actually using. Everything is documented in
 `dist/config.toml` and in `girl girl`. Want a different vibe? Set
 `extra_instructions`.

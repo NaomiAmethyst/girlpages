@@ -41,6 +41,12 @@ type Options struct {
 	// Fetch, if set, is tried before the model: it returns a page's
 	// conversion from a girlpages repository, with what made it.
 	Fetch func(ctx context.Context, p manpage.Page) (markup, model string, err error)
+	// Batch, if set, converts pages in batches instead of one at a time.
+	// Batches submitted by earlier runs are collected first.
+	Batch *llm.Batcher
+	// NoWait leaves submitted batches running instead of waiting for them;
+	// a later run collects them.
+	NoWait bool
 }
 
 // Stats summarises a run.
@@ -48,6 +54,9 @@ type Stats struct {
 	Pages, Fresh, Linked, Converted, Failed, Pruned, Removed int
 	// Fetched pages came ready-made from a repository.
 	Fetched int
+	// Batched pages were sent off in a batch; Pending ones were already in
+	// a batch that hasn't finished.
+	Batched, Pending int
 	// Skipped pages couldn't be rendered by man at all (usually a broken
 	// .so link in a package); they aren't counted as failures.
 	Skipped int
@@ -88,6 +97,16 @@ func Run(ctx context.Context, o Options, caches cache.Set, b llm.Backend, log io
 	}
 
 	full := len(o.Sections) == 0 && o.Limit == 0
+	pending := map[string]bool{}
+	if o.Batch != nil && !o.DryRun {
+		// Whatever earlier runs sent off may be back by now.
+		if err := collect(ctx, o, dir, false, &st, logf, log); err != nil {
+			return st, err
+		}
+		if pending, err = o.Batch.Pending(); err != nil {
+			return st, err
+		}
+	}
 	pages, err := pagesFor(ctx, o, dir)
 	if err != nil {
 		return st, err
@@ -146,6 +165,11 @@ func Run(ctx context.Context, o Options, caches cache.Set, b llm.Backend, log io
 					continue
 				}
 				mu.Lock()
+				if pending[hash] && !o.Force {
+					st.Pending++
+					mu.Unlock()
+					continue
+				}
 				if j, ok := byHash[hash]; ok {
 					j.pages = append(j.pages, p)
 				} else {
@@ -178,9 +202,20 @@ func Run(ctx context.Context, o Options, caches cache.Set, b llm.Backend, log io
 			}
 			logf("\n")
 		}
-		logf("%d pages: %d up to date, %d linked to existing conversions, %d unrenderable, %d to convert (%d unique)\n",
+		logf("%d pages: %d up to date, %d linked to existing conversions, %d unrenderable, %d to convert (%d unique)",
 			st.Pages, st.Fresh, st.Linked, st.Skipped, countPages(byHash), len(order))
+		if o.Batch != nil {
+			logf(", in a batch")
+		}
+		logf("\n")
 		return st, nil
+	}
+
+	if o.Batch != nil {
+		if err := runBatch(ctx, o, dir, byHash, order, &st, logf, log); err != nil {
+			return st, err
+		}
+		order = nil
 	}
 
 	if len(order) > 0 {
@@ -288,6 +323,9 @@ func Run(ctx context.Context, o Options, caches cache.Set, b llm.Backend, log io
 		st.Pages, st.Fresh, st.Linked, st.Converted)
 	if o.Fetch != nil {
 		logf("%d from the repo, ", st.Fetched)
+	}
+	if o.Batch != nil {
+		logf("%d in batches still running, ", st.Pending+st.Batched)
 	}
 	logf("%d skipped, %d failed", st.Skipped, st.Failed)
 	if o.Prune && full {

@@ -7,7 +7,7 @@ After=network-online.target
 [Service]
 Type=oneshot
 User=root
-ExecStart=@BINDIR@/girl --bulk --update --prune --quiet
+ExecStart=@BINDIR@/girl --bulk --update --prune --no-wait --quiet
 # The claude CLI is often installed per-user under ~/.local/bin.
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/root/.local/bin
 Nice=19

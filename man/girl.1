@@ -168,6 +168,16 @@ The default is
 .BR localhost:1989 .
 .SS "Bulk options"
 .TP
+.B \-\-no\-batch
+Convert one page at a time even if
+.B openai.batch_url
+is set.
+.TP
+.B \-\-no\-wait
+Send batches off and return without waiting for them; the next
+.B \-\-bulk
+run collects them.
+.TP
 .B \-\-bulk
 Convert every page in the manual path (the top-level
 .BI man N
@@ -246,6 +256,35 @@ if the command is on
 otherwise
 .B openai
 if an API key is configured.
+.SS "batches"
+With
+.B openai.batch_url
+set to an OpenRouter batch endpoint
+.RB ( https://openrouter.ai/api/v1/batches ),
+.B \-\-bulk
+sends every page that needs converting in batches (split to stay under the
+size limit) rather than one request at a time: about half the price, and back
+within a day.
+Batches are saved in the cache's
+.B batches
+directory as they're sent.
+Unless
+.B \-\-no\-wait
+is given, the run waits, checking every
+.B openai.batch_poll
+.RB ( 1m );
+interrupting it is safe, as every
+.B \-\-bulk
+run starts by collecting whatever has finished and doesn't send pages that are
+still out.
+A page that changed in the meantime is sent again.
+Replies get the same completeness check as live ones, and any part that failed
+or dropped options is redone live.
+The package-manager hooks and timer pass
+.BR \-\-no\-wait ,
+so the daily run collects what the last one sent.
+Anthropic's own batch API is a different protocol and isn't supported, but
+Claude models work through OpenRouter.
 .SH "WEB SERVER"
 .B girl \-\-serve
 lists every page in the manual path by section, with descriptions from the
@@ -333,6 +372,8 @@ api_key_file = ""
 temperature = 0.9
 max_tokens = 16000
 timeout = "10m"
+batch_url = ""           # an OpenRouter batch endpoint, for \-\-bulk
+batch_poll = "1m"
 
 [openai.headers]
 "X\-Example" = "value"
@@ -451,6 +492,10 @@ Override the per-backend settings.
 .B GIRLPAGES_REPO
 Overrides
 .BR repo.url .
+.TP
+.B GIRLPAGES_OPENAI_BATCH_URL
+Overrides
+.BR openai.batch_url .
 .TP
 .BR XDG_CONFIG_HOME ", " XDG_CACHE_HOME
 Locate the user configuration file and cache.

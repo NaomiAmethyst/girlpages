@@ -4,7 +4,7 @@ Documentation=man:girl(1)
 
 [Service]
 Type=oneshot
-ExecStart=@BINDIR@/girl --bulk --update --prune --quiet
+ExecStart=@BINDIR@/girl --bulk --update --prune --no-wait --quiet
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 Nice=19
 IOSchedulingClass=idle

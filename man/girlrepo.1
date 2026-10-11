@@ -170,6 +170,23 @@ Only these sections.
 .B \-\-all\-versions
 Convert old versions too.
 .TP
+.B \-\-no\-batch
+Convert one page at a time even if
+.B openai.batch_url
+is set.
+With it set, pages go in OpenRouter batches as for
+.BR "girl \-\-bulk" ;
+see
+.BR girl (1).
+What was sent is saved in
+.BR ~/.cache/girlpages/girlrepo\-batches/ ,
+and the next
+.B girlify
+collects whatever has finished.
+.TP
+.B \-\-no\-wait
+Send batches off and return without waiting.
+.TP
 .B \-\-force
 Convert again, even pages that already have a
 .B girl

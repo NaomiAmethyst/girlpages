@@ -214,6 +214,8 @@ func (a *app) girlify(ctx context.Context, args []string) error {
 	force := fs.Bool("force", false, "girlify again even if already done")
 	dry := fs.BoolP("dry-run", "n", false, "say what would be girlified")
 	noCache := fs.Bool("no-cache", false, "don't take conversions from girl's cache")
+	noBatch := fs.Bool("no-batch", false, "convert one page at a time even if openai.batch_url is set")
+	noWait := fs.Bool("no-wait", false, "send batches off and return; the next girlify collects them")
 	quiet := fs.BoolP("quiet", "q", false, "only report problems")
 	if err := parse(fs, args); err != nil {
 		return err
@@ -241,6 +243,12 @@ func (a *app) girlify(ctx context.Context, args []string) error {
 			return err
 		}
 	}
+	if !*noBatch {
+		if o.Batch, err = core.NewBatcher(a.cfg, batchDir(s.Dir), o.Backend); err != nil {
+			return err
+		}
+		o.NoWait = *noWait
+	}
 	if a.cfg.ExtraInstructions != "" {
 		fmt.Fprintln(os.Stderr, "girlrepo: heads up, your extra_instructions will shape every page in the repo")
 	}
@@ -251,6 +259,9 @@ func (a *app) girlify(ctx context.Context, args []string) error {
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "💅 girlified %d pages, %d from the local cache, %d failed", st.Converted, st.FromCache, st.Failed)
+	if n := st.Batched + st.Pending; n > 0 {
+		fmt.Fprintf(os.Stderr, ", %d in batches still running", n)
+	}
 	if st.Remaining > 0 {
 		fmt.Fprintf(os.Stderr, ", %d left for next time", st.Remaining)
 	}
@@ -456,6 +467,16 @@ func (a *app) status(_ context.Context, args []string) error {
 		fmt.Println("published:  never")
 	}
 	return nil
+}
+
+// batchDir is where girlify keeps track of the batches it sent for a
+// repository: in the user's cache, so it never gets published.
+func batchDir(repoDir string) string {
+	abs, err := filepath.Abs(repoDir)
+	if err != nil {
+		abs = repoDir
+	}
+	return filepath.Join(config.UserCacheDir(), "girlrepo-batches", repo.Hash([]byte(abs))[:16])
 }
 
 func humanBytes(n int64) string {

@@ -33,10 +33,40 @@ type Options struct {
 	Progress func(done, total int)
 }
 
-// Convert rewrites a whole page, splitting it into chunks if it is long.
-func Convert(ctx context.Context, b Backend, title, text string, o Options) (string, error) {
+// Part is one request in a conversion: a chunk of the page and the prompts
+// that ask for it to be rewritten.
+type Part struct {
+	System, User string
+	// Source is the chunk of the original page.
+	Source string
+}
+
+// Plan works out the requests needed to convert a page. It depends only on
+// its arguments, so a page planned again gives the same parts.
+func Plan(title, text string, o Options) []Part {
 	chunks := Split(text, o.ChunkSize)
 	system := SystemPrompt(o.ExtraInstructions)
+	parts := make([]Part, len(chunks))
+	var prev []string
+	for i, c := range chunks {
+		parts[i] = Part{System: system, User: UserPrompt(title, i+1, len(chunks), prev, c), Source: c}
+		prev = append(prev, Headings(c)...)
+	}
+	return parts
+}
+
+// Join assembles converted parts into the page.
+func Join(outs []string) string {
+	return strings.Join(outs, "\n\n") + "\n"
+}
+
+// Convert rewrites a whole page, splitting it into chunks if it is long.
+func Convert(ctx context.Context, b Backend, title, text string, o Options) (string, error) {
+	parts := Plan(title, text, o)
+	chunks := make([]string, len(parts))
+	for i, p := range parts {
+		chunks[i] = p.Source
+	}
 	results := make([]string, len(chunks))
 	errs := make([]error, len(chunks))
 	par := o.Parallel
@@ -63,11 +93,7 @@ func Convert(ctx context.Context, b Backend, title, text string, o Options) (str
 				return
 			}
 			defer func() { <-sem }()
-			var prev []string
-			for _, c := range chunks[:i] {
-				prev = append(prev, Headings(c)...)
-			}
-			out, err := convertChunk(ctx, b, system, UserPrompt(title, i+1, len(chunks), prev, chunks[i]), chunks[i])
+			out, err := ConvertPart(ctx, b, parts[i])
 			if err != nil {
 				errs[i] = err
 				cancel()
@@ -97,30 +123,36 @@ func Convert(ctx context.Context, b Backend, title, text string, o Options) (str
 		}
 		return "", errs[failed]
 	}
-	return strings.Join(results, "\n\n") + "\n", nil
+	return Join(results), nil
 }
 
-func convertChunk(ctx context.Context, b Backend, system, user, source string) (string, error) {
-	out, err := b.Complete(ctx, system, user)
+// ConvertPart converts one part, retrying once if options went missing.
+func ConvertPart(ctx context.Context, b Backend, p Part) (string, error) {
+	reply, err := b.Complete(ctx, p.System, p.User)
 	if err != nil {
 		return "", err
 	}
-	out = Clean(out)
+	return FinishPart(ctx, b, p, reply)
+}
+
+// FinishPart checks a part's reply (from any source, such as a batch) and,
+// if it dropped options and b isn't nil, asks b once more pointing at
+// exactly what went missing, keeping whichever attempt dropped less.
+func FinishPart(ctx context.Context, b Backend, p Part, reply string) (string, error) {
+	out := Clean(reply)
 	if out == "" {
-		return "", fmt.Errorf("%s returned an empty reply", b.Name())
+		return "", errors.New("the model returned an empty reply")
 	}
-	missing := MissingOptions(source, out)
-	if len(missing) == 0 {
+	missing := MissingOptions(p.Source, out)
+	if len(missing) == 0 || b == nil {
 		return out, nil
 	}
-	// One retry, pointing at exactly what went missing; keep whichever
-	// attempt dropped less.
-	retry, err := b.Complete(ctx, system, RetryPrompt(user, missing))
+	retry, err := b.Complete(ctx, p.System, RetryPrompt(p.User, missing))
 	if err != nil {
 		return out, nil
 	}
 	retry = Clean(retry)
-	if retry != "" && len(MissingOptions(source, retry)) < len(missing) {
+	if retry != "" && len(MissingOptions(p.Source, retry)) < len(missing) {
 		return retry, nil
 	}
 	return out, nil
