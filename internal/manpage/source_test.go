@@ -6,6 +6,7 @@ package manpage
 import (
 	"bytes"
 	"compress/gzip"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -138,5 +139,44 @@ func TestSourceIn(t *testing.T) {
 	// Without jails, as for the system's own pages, anything goes.
 	if _, err := Source(filepath.Join(man, "man1", "link.1"), nil); err != nil {
 		t.Error(err)
+	}
+}
+
+// Source keeps every byte but .so request lines, which become what they
+// include; this is what other tools must reproduce (doc/repo-format.md).
+func TestSourceBytes(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "man")
+	writeFile(t, filepath.Join(root, "man7", "inc.7"), []byte("included\n"))
+	writeFile(t, filepath.Join(root, "man7", "nonl.7"), []byte("no newline"))
+	writeFile(t, filepath.Join(root, "man7", "empty.7"), nil)
+	cases := []struct{ in, want string }{
+		// CRLF kept, even though .so appears in the text.
+		{"libfoo.so is a library\r\n.TH X 1\r\n", "libfoo.so is a library\r\n.TH X 1\r\n"},
+		// A CRLF request line is still a request.
+		{"a\r\n.so man7/inc.7\r\nb\r\n", "a\r\nincluded\nb\r\n"},
+		// A request without a final newline gets none added.
+		{"a\n.so man7/nonl.7", "a\nno newline"},
+		// One with a newline gets one, if what it includes lacks it.
+		{".so man7/nonl.7\nb\n", "no newline\nb\n"},
+		// Including nothing leaves just the newline.
+		{"a\n.so man7/empty.7\nb\n", "a\n\nb\n"},
+		// Spacing allowed in a request.
+		{". so   man7/inc.7  \n", "included\n"},
+		// Not requests: trailing words, other macros, indented.
+		{".so man7/inc.7 extra\n.sop x\n .so man7/inc.7\n", ".so man7/inc.7 extra\n.sop x\n .so man7/inc.7\n"},
+	}
+	for i, c := range cases {
+		p := filepath.Join(root, "man1", fmt.Sprintf("case%d.1", i))
+		writeFile(t, p, []byte(c.in))
+		got, err := Source(p, nil)
+		if err != nil {
+			if c.want != "" && !strings.Contains(c.in, "extra") {
+				t.Errorf("case %d: %v", i, err)
+			}
+			continue
+		}
+		if string(got) != c.want {
+			t.Errorf("case %d: %q, want %q", i, got, c.want)
+		}
 	}
 }

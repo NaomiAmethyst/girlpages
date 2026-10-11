@@ -84,7 +84,11 @@ func (r *resolver) allowed(path string) error {
 	return fmt.Errorf("%s: leads outside the package, to %s", path, real)
 }
 
-var soRE = regexp.MustCompile(`^\.[ \t]*so[ \t]+(\S+)[ \t]*$`)
+var (
+	soRE = regexp.MustCompile(`^\.[ \t]*so[ \t]+(\S+)[ \t]*$`)
+	// soAnyRE finds files that might have a request, to skip the rest.
+	soAnyRE = regexp.MustCompile(`(?m)^\.[ \t]*so[ \t]`)
+)
 
 const maxSoDepth = 8
 
@@ -93,41 +97,40 @@ func (r *resolver) expand(path string, depth int) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !bytes.Contains(raw, []byte(".so")) {
-		return raw, nil
+	if !soAnyRE.Match(raw) {
+		return raw, nil // no requests: the common case, and quick
 	}
+	// Every byte is kept except .so request lines, which are replaced by
+	// what they include. This is the definition other tools reproduce, so
+	// keep it exactly: see doc/repo-format.md.
 	var out bytes.Buffer
-	sc := bufio.NewScanner(bytes.NewReader(raw))
-	sc.Buffer(make([]byte, 64*1024), 16*1024*1024)
-	for sc.Scan() {
-		line := sc.Bytes()
-		if m := soRE.FindSubmatch(line); m != nil {
-			if depth >= maxSoDepth {
-				return nil, fmt.Errorf("%s: .so nested too deeply", path)
-			}
-			target, err := r.find(string(m[1]), path)
-			if err != nil {
-				return nil, err
-			}
-			inc, err := r.expand(target, depth+1)
-			if err != nil {
-				return nil, err
-			}
-			out.Write(inc)
-			if len(inc) > 0 && inc[len(inc)-1] != '\n' {
-				out.WriteByte('\n')
-			}
+	for rest := raw; len(rest) > 0; {
+		line := rest
+		if i := bytes.IndexByte(rest, '\n'); i >= 0 {
+			line = rest[:i+1]
+		}
+		rest = rest[len(line):]
+		content := bytes.TrimSuffix(bytes.TrimSuffix(line, []byte("\n")), []byte("\r"))
+		m := soRE.FindSubmatch(content)
+		if m == nil {
+			out.Write(line)
 			continue
 		}
-		out.Write(line)
-		out.WriteByte('\n')
-	}
-	if err := sc.Err(); err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
-	}
-	if len(raw) > 0 && raw[len(raw)-1] != '\n' {
-		// Keep a file without a final newline byte-for-byte the same.
-		out.Truncate(out.Len() - 1)
+		if depth >= maxSoDepth {
+			return nil, fmt.Errorf("%s: .so nested too deeply", path)
+		}
+		target, err := r.find(string(m[1]), path)
+		if err != nil {
+			return nil, err
+		}
+		inc, err := r.expand(target, depth+1)
+		if err != nil {
+			return nil, err
+		}
+		out.Write(inc)
+		if bytes.HasSuffix(line, []byte("\n")) && !bytes.HasSuffix(inc, []byte("\n")) {
+			out.WriteByte('\n')
+		}
 	}
 	return out.Bytes(), nil
 }
