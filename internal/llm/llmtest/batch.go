@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Naomi Persephone Amethyst <naomi@amethyst.name>
 
-// Package llmtest has a fake OpenRouter batch API for tests.
+// Package llmtest has fake OpenRouter and Anthropic batch APIs for tests.
 package llmtest
 
 import (
@@ -28,8 +28,22 @@ type BatchServer struct {
 	batches map[string]*fakeBatch
 	// Submitted records each submission's raw body.
 	Submitted []string
-	// Auth records the Authorization headers seen.
+	// Auth records the Authorization (or, for Anthropic, x-api-key)
+	// headers seen.
 	Auth []string
+}
+
+// anthropicItem is a request as Anthropic's API takes it.
+type anthropicItem struct {
+	CustomID string `json:"custom_id"`
+	Params   struct {
+		Model     string `json:"model"`
+		MaxTokens int    `json:"max_tokens"`
+		System    string `json:"system"`
+		Messages  []struct {
+			Role, Content string
+		} `json:"messages"`
+	} `json:"params"`
 }
 
 type fakeBatch struct {
@@ -43,6 +57,7 @@ type fakeBatch struct {
 			} `json:"messages"`
 		} `json:"body"`
 	}
+	areqs []anthropicItem
 	polls int
 }
 
@@ -53,14 +68,22 @@ func NewBatchServer() *BatchServer {
 	return s
 }
 
-// BatchURL is the endpoint to configure.
+// BatchURL is the OpenRouter endpoint to configure.
 func (s *BatchServer) BatchURL() string { return s.URL + "/api/v1/batches" }
+
+// AnthropicURL is the Anthropic endpoint to configure.
+func (s *BatchServer) AnthropicURL() string { return s.URL + "/v1/messages/batches" }
 
 func (s *BatchServer) serve(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.Auth = append(s.Auth, r.Header.Get("Authorization"))
 	w.Header().Set("Content-Type", "application/json")
+	if strings.HasPrefix(r.URL.Path, "/v1/messages/batches") {
+		s.Auth = append(s.Auth, r.Header.Get("x-api-key"))
+		s.anthropic(w, r)
+		return
+	}
+	s.Auth = append(s.Auth, r.Header.Get("Authorization"))
 	switch {
 	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/batches":
 		raw, _ := io.ReadAll(r.Body)
@@ -140,7 +163,7 @@ func (s *BatchServer) Requests() int {
 	defer s.mu.Unlock()
 	n := 0
 	for _, b := range s.batches {
-		n += len(b.reqs)
+		n += len(b.reqs) + len(b.areqs)
 	}
 	return n
 }
@@ -157,4 +180,97 @@ func EchoOptions(prefix string) func(string) (string, string) {
 		}
 		return "# ✨ NAME ✨\n\n" + prefix + " " + strings.Join(opts, " "), ""
 	}
+}
+
+func (s *BatchServer) anthropic(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("anthropic-version") == "" {
+		http.Error(w, `{"type":"error","error":{"type":"invalid_request_error","message":"anthropic-version header is required"}}`, http.StatusBadRequest)
+		return
+	}
+	path := strings.TrimPrefix(r.URL.Path, "/v1/messages/batches")
+	switch {
+	case r.Method == http.MethodPost && path == "":
+		raw, _ := io.ReadAll(r.Body)
+		s.Submitted = append(s.Submitted, string(raw))
+		var sub struct {
+			Requests []anthropicItem `json:"requests"`
+		}
+		if err := json.Unmarshal(raw, &sub); err != nil || len(sub.Requests) == 0 {
+			http.Error(w, `{"type":"error","error":{"type":"invalid_request_error","message":"bad batch"}}`, http.StatusBadRequest)
+			return
+		}
+		b := &fakeBatch{}
+		for _, q := range sub.Requests {
+			if q.Params.Model == "" || q.Params.MaxTokens < 1 {
+				http.Error(w, `{"type":"error","error":{"type":"invalid_request_error","message":"model and max_tokens are required"}}`, http.StatusBadRequest)
+				return
+			}
+			b.model = q.Params.Model
+			b.areqs = append(b.areqs, q)
+		}
+		id := fmt.Sprintf("msgbatch_%d", len(s.batches)+1)
+		s.batches[id] = b
+		json.NewEncoder(w).Encode(s.anthropicObject(id, b))
+	case r.Method == http.MethodGet && strings.HasSuffix(path, "/results"):
+		b := s.batches[strings.TrimSuffix(strings.TrimPrefix(path, "/"), "/results")]
+		if b == nil || b.polls <= s.Polls {
+			http.Error(w, `{"type":"error","error":{"type":"not_found_error","message":"no results"}}`, http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/binary")
+		enc := json.NewEncoder(w)
+		for _, q := range b.areqs {
+			user := ""
+			for _, m := range q.Params.Messages {
+				if m.Role == "user" {
+					user = m.Content
+				}
+			}
+			reply, fail := s.Reply(user)
+			if fail != "" {
+				enc.Encode(map[string]any{"custom_id": q.CustomID, "result": map[string]any{"type": "errored",
+					"error": map[string]any{"type": "error", "error": map[string]string{"type": "api_error", "message": fail}}}})
+				continue
+			}
+			enc.Encode(map[string]any{"custom_id": q.CustomID, "result": map[string]any{"type": "succeeded",
+				"message": map[string]any{"type": "message", "role": "assistant", "model": q.Params.Model, "stop_reason": "end_turn",
+					"content": []map[string]string{{"type": "thinking", "thinking": "hmm"}, {"type": "text", "text": reply}}}}})
+		}
+	case r.Method == http.MethodGet:
+		id := strings.TrimPrefix(path, "/")
+		b := s.batches[id]
+		if b == nil {
+			http.Error(w, `{"type":"error","error":{"type":"not_found_error","message":"no such batch"}}`, http.StatusNotFound)
+			return
+		}
+		b.polls++
+		json.NewEncoder(w).Encode(s.anthropicObject(id, b))
+	default:
+		http.NotFound(w, nil)
+	}
+}
+
+func (s *BatchServer) anthropicObject(id string, b *fakeBatch) map[string]any {
+	counts := map[string]int{"processing": len(b.areqs), "succeeded": 0, "errored": 0, "canceled": 0, "expired": 0}
+	obj := map[string]any{"id": id, "type": "message_batch", "processing_status": "in_progress", "results_url": nil}
+	if b.polls > s.Polls {
+		counts["processing"] = 0
+		for _, q := range b.areqs {
+			user := ""
+			for _, m := range q.Params.Messages {
+				if m.Role == "user" {
+					user = m.Content
+				}
+			}
+			if _, fail := s.Reply(user); fail != "" {
+				counts["errored"]++
+			} else {
+				counts["succeeded"]++
+			}
+		}
+		obj["processing_status"] = "ended"
+		obj["results_url"] = s.URL + "/v1/messages/batches/" + id + "/results"
+	}
+	obj["request_counts"] = counts
+	return obj
 }

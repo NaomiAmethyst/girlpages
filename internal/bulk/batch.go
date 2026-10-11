@@ -157,7 +157,7 @@ func runBatch(ctx context.Context, o Options, dir cache.Dir, byHash map[string]*
 		pages += len(j.pages)
 	}
 	logf("💌 sending %d pages (%d unique) to %s in batches: about half price, back within a day\n",
-		pages, len(jobs), o.Batch.Client.Model)
+		pages, len(jobs), o.Batch.Client.ModelName())
 	if _, err := o.Batch.Submit(ctx, jobs); err != nil {
 		return err
 	}

@@ -214,7 +214,8 @@ func (a *app) girlify(ctx context.Context, args []string) error {
 	force := fs.Bool("force", false, "girlify again even if already done")
 	dry := fs.BoolP("dry-run", "n", false, "say what would be girlified")
 	noCache := fs.Bool("no-cache", false, "don't take conversions from girl's cache")
-	noBatch := fs.Bool("no-batch", false, "convert one page at a time even if openai.batch_url is set")
+	batch := fs.String("batch", "", "send pages in batches: openrouter, anthropic or none (default from the config)")
+	noBatch := fs.Bool("no-batch", false, "the same as --batch=none")
 	noWait := fs.Bool("no-wait", false, "send batches off and return; the next girlify collects them")
 	quiet := fs.BoolP("quiet", "q", false, "only report problems")
 	if err := parse(fs, args); err != nil {
@@ -238,17 +239,27 @@ func (a *app) girlify(ctx context.Context, args []string) error {
 	if !*noCache && !*force {
 		o.Cache = core.CacheSet(a.cfg)
 	}
+	if *noBatch {
+		a.cfg.Batch = config.BatchNone
+	} else if *batch != "" {
+		a.cfg.Batch = *batch
+	}
+	var backendErr error
 	if !*dry {
-		if o.Backend, err = core.NewBackend(a.cfg); err != nil {
-			return err
-		}
+		o.Backend, backendErr = core.NewBackend(a.cfg)
 	}
-	if !*noBatch {
-		if o.Batch, err = core.NewBatcher(a.cfg, batchDir(s.Dir), o.Backend); err != nil {
-			return err
-		}
-		o.NoWait = *noWait
+	if o.Batch, err = core.NewBatcher(a.cfg, batchDir(s.Dir), o.Backend); err != nil {
+		return err
 	}
+	if backendErr != nil {
+		if o.Batch == nil {
+			return backendErr
+		}
+		// Batches don't need it; it's only for redoing their failures.
+		fmt.Fprintf(os.Stderr, "girlrepo: %v; batch failures will wait for the next batch\n", backendErr)
+		o.Backend = nil
+	}
+	o.NoWait = *noWait
 	if a.cfg.ExtraInstructions != "" {
 		fmt.Fprintln(os.Stderr, "girlrepo: heads up, your extra_instructions will shape every page in the repo")
 	}

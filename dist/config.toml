@@ -22,6 +22,15 @@
 # Pager. Default: $GIRLPAGER, then $PAGER, then less.
 #pager = "less"
 
+# Batches: girl --bulk and girlrepo girlify can send pages as batches
+# instead of one request at a time: about half the price, back within a
+# day. "openrouter" uses [openai] below (its key, model and batch_url);
+# "anthropic" uses Anthropic's Message Batches API and [anthropic]. Runs save
+# what they sent, and the next run collects it (--no-wait doesn't wait; the
+# hooks and timer use that). Single pages and --serve stay live. Default:
+# openrouter if openai.batch_url is set, otherwise none.
+#batch = "anthropic"
+
 # Tune the vibe. Appended to the system prompt.
 #extra_instructions = "She's really into horses. Work in horse metaphors."
 
@@ -47,11 +56,10 @@
 #temperature = 0.9
 #max_tokens = 16000
 #timeout = "10m"
-# An OpenRouter batch endpoint. When set, girl --bulk and girlrepo girlify
-# send pages as batches: about half the price, back within a day. Runs save
-# what they sent, and the next run collects it (--no-wait doesn't wait; the
-# hooks and timer use that). Single pages and --serve stay live.
+# OpenRouter's batch endpoint, for batch = "openrouter" (setting it is
+# enough to turn that on). See batch, above.
 #batch_url = "https://openrouter.ai/api/v1/batches"
+# How often to check on a batch while waiting for it (either API).
 #batch_poll = "1m"
 
 #[openai.headers]
@@ -64,3 +72,14 @@
 # extra_instructions is set.
 #url = ""
 #timeout = "20s"
+
+[anthropic]
+# Anthropic's API, used for batch = "anthropic". This is separate from the
+# claude CLI: it needs an API key (or set ANTHROPIC_API_KEY).
+#api_key = ""
+#api_key_file = ""
+#model = "claude-haiku-5-5"
+# Per reply, thinking included.
+#max_tokens = 32000
+#batch_url = "https://api.anthropic.com/v1/messages/batches"
+#timeout = "10m"

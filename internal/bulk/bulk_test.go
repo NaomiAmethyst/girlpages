@@ -220,7 +220,7 @@ func TestBatch(t *testing.T) {
 	dir := cache.Dir(t.TempDir())
 	caches := cache.Set{dir}
 	o := Options{Jobs: 2, Quiet: true, Man: manpage.Options{ManPath: mp}, NoWait: true,
-		Batch: &llm.Batcher{Client: &llm.BatchClient{URL: srv.BatchURL(), Model: "cheap-model"},
+		Batch: &llm.Batcher{Client: &llm.OpenRouterBatch{URL: srv.BatchURL(), Model: "cheap-model"},
 			Dir: BatchDir(dir), Poll: 10 * time.Millisecond, Options: llm.Options{ChunkSize: 12000}}}
 	ctx := context.Background()
 

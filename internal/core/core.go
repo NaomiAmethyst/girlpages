@@ -249,28 +249,49 @@ func NewBackend(cfg *config.Config) (llm.Backend, error) {
 	}
 }
 
-// NewBatcher makes a Batcher for bulk runs if a batch endpoint is
-// configured, keeping its state in dir. It returns nil if batching isn't
-// set up. live, if not nil, redoes parts a batch got wrong.
+// NewBatcher makes a Batcher for bulk runs using the configured batch API,
+// keeping its state in dir. It returns nil if batching isn't set up. live,
+// if not nil, redoes parts a batch got wrong.
 func NewBatcher(cfg *config.Config, dir string, live llm.Backend) (*llm.Batcher, error) {
-	if strings.TrimSpace(cfg.OpenAI.BatchURL) == "" {
-		return nil, nil
-	}
-	if name, err := cfg.ResolveBackend(); err != nil {
-		return nil, err
-	} else if name != config.BackendOpenAI {
-		return nil, fmt.Errorf("openai.batch_url is set, but the backend is %s; batches need the openai backend", name)
-	}
-	key, err := cfg.OpenAIKey()
+	kind, err := cfg.ResolveBatch()
 	if err != nil {
 		return nil, err
 	}
-	return &llm.Batcher{
-		Client: &llm.BatchClient{
-			URL: cfg.OpenAI.BatchURL, APIKey: key, Headers: cfg.OpenAI.Headers, Model: cfg.OpenAI.Model,
+	var api llm.BatchAPI
+	switch kind {
+	case config.BatchNone:
+		return nil, nil
+	case config.BatchOpenRouter:
+		key, err := cfg.OpenAIKey()
+		if err != nil {
+			return nil, err
+		}
+		u := strings.TrimSpace(cfg.OpenAI.BatchURL)
+		if u == "" {
+			u = config.DefaultOpenRouterBatchURL
+		}
+		api = &llm.OpenRouterBatch{
+			URL: u, APIKey: key, Headers: cfg.OpenAI.Headers, Model: cfg.OpenAI.Model,
 			Temperature: cfg.OpenAI.Temperature, MaxTokens: cfg.OpenAI.MaxTokens,
 			Client: &http.Client{Timeout: cfg.OpenAI.Timeout.Duration}, Retries: 3,
-		},
+		}
+	case config.BatchAnthropic:
+		key, err := cfg.AnthropicKey()
+		if err != nil {
+			return nil, err
+		}
+		u := strings.TrimSpace(cfg.Anthropic.BatchURL)
+		if u == "" {
+			u = config.DefaultAnthropicBatchURL
+		}
+		api = &llm.AnthropicBatch{
+			URL: u, APIKey: key, Headers: cfg.Anthropic.Headers, Model: cfg.Anthropic.Model,
+			Temperature: cfg.Anthropic.Temperature, MaxTokens: cfg.Anthropic.MaxTokens,
+			Client: &http.Client{Timeout: cfg.Anthropic.Timeout.Duration}, Retries: 3,
+		}
+	}
+	return &llm.Batcher{
+		Client:  api,
 		Dir:     dir,
 		Options: llm.Options{ChunkSize: cfg.ChunkSize, ExtraInstructions: cfg.ExtraInstructions},
 		Live:    live,

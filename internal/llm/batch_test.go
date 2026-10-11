@@ -36,8 +36,19 @@ func page(name string, opts ...string) string {
 }
 
 func TestBatcher(t *testing.T) {
-	srv := llmtest.NewBatchServer()
-	defer srv.Close()
+	t.Run("openrouter", func(t *testing.T) {
+		srv := llmtest.NewBatchServer()
+		defer srv.Close()
+		testBatcher(t, srv, &OpenRouterBatch{URL: srv.BatchURL(), APIKey: "sk-test", Model: "anthropic/claude-haiku-5.5"}, "Bearer sk-test")
+	})
+	t.Run("anthropic", func(t *testing.T) {
+		srv := llmtest.NewBatchServer()
+		defer srv.Close()
+		testBatcher(t, srv, &AnthropicBatch{URL: srv.AnthropicURL(), APIKey: "sk-ant-test", Model: "claude-haiku-5-5"}, "sk-ant-test")
+	})
+}
+
+func testBatcher(t *testing.T, srv *llmtest.BatchServer, api BatchAPI, auth string) {
 	srv.Polls = 1
 	// "bar" comes back without its options; "baz" fails outright.
 	srv.Reply = func(user string) (string, string) {
@@ -52,7 +63,7 @@ func TestBatcher(t *testing.T) {
 	live := &liveFake{}
 	dir := t.TempDir()
 	b := &Batcher{
-		Client:      &BatchClient{URL: srv.BatchURL(), APIKey: "sk-test", Model: "anthropic/claude-haiku-5.5"},
+		Client:      api,
 		Dir:         dir,
 		Options:     Options{ChunkSize: 200},
 		Live:        live,
@@ -84,13 +95,17 @@ func TestBatcher(t *testing.T) {
 		t.Fatalf("the long page should be in parts, got %d", parts)
 	}
 	raw := srv.Submitted[0]
-	if !(strings.Index(raw, `"endpoint"`) < strings.Index(raw, `"requests"`) && strings.Index(raw, `"model"`) < strings.Index(raw, `"requests"`)) {
-		t.Errorf("endpoint and model must come before requests: %.200s", raw)
+	if api.Kind() == "openrouter" {
+		if !(strings.Index(raw, `"endpoint"`) < strings.Index(raw, `"requests"`) && strings.Index(raw, `"model"`) < strings.Index(raw, `"requests"`)) {
+			t.Errorf("endpoint and model must come before requests: %.200s", raw)
+		}
+		if strings.Count(raw, `"model"`) != 1 || strings.Contains(raw, `"stream"`) {
+			t.Errorf("requests should inherit the batch's model: %.300s", raw)
+		}
+	} else if !strings.Contains(raw, `"max_tokens":32000`) || !strings.Contains(raw, `"system":`) {
+		t.Errorf("anthropic requests need max_tokens and a system prompt: %.300s", raw)
 	}
-	if strings.Count(raw, `"model"`) != 1 || strings.Contains(raw, `"stream"`) {
-		t.Errorf("requests should inherit the batch's model: %.300s", raw)
-	}
-	if srv.Auth[0] != "Bearer sk-test" {
+	if srv.Auth[0] != auth {
 		t.Errorf("auth = %q", srv.Auth[0])
 	}
 	pending, err := b.Pending()
@@ -120,10 +135,11 @@ func TestBatcher(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cs.Running != 0 || cs.Changed != 1 || cs.Pages != 4 || cs.Cost == 0 {
+	if cs.Running != 0 || cs.Changed != 1 || cs.Pages != 4 || (cs.Cost == 0) != (api.Kind() == "anthropic") {
 		t.Errorf("collect: %+v", cs)
 	}
-	if r := got["foo"]; r.Err != nil || !strings.Contains(r.Markup, "batched") || !strings.Contains(r.Markup, "--all") || r.Model != "anthropic/claude-haiku-5.5" {
+	if r := got["foo"]; r.Err != nil || !strings.Contains(r.Markup, "batched") || !strings.Contains(r.Markup, "--all") ||
+		strings.Contains(r.Markup, "hmm") || r.Model != api.ModelName() {
 		t.Errorf("foo: %+v", r)
 	}
 	if r := got["long"]; r.Err != nil || strings.Count(r.Markup, "batched") < 2 {
@@ -161,7 +177,7 @@ func TestBatcher(t *testing.T) {
 func TestBatchErrors(t *testing.T) {
 	srv := llmtest.NewBatchServer()
 	defer srv.Close()
-	c := &BatchClient{URL: srv.BatchURL()}
+	c := &OpenRouterBatch{URL: srv.BatchURL()}
 	if _, err := c.Submit(context.Background(), nil); err == nil {
 		t.Error("no model should be an error")
 	}
@@ -175,5 +191,30 @@ func TestBatchErrors(t *testing.T) {
 	b := &Batcher{Client: c, Dir: dir}
 	if _, err := b.Submit(context.Background(), []BatchJob{{Key: "k", Title: "X(1)", Text: "x\n"}}); err == nil {
 		t.Error("expected an error")
+	}
+}
+
+// Batches saved by one API are left alone by another.
+func TestBatchOtherAPI(t *testing.T) {
+	srv := llmtest.NewBatchServer()
+	defer srv.Close()
+	srv.Reply = llmtest.EchoOptions("x")
+	dir := t.TempDir()
+	or := &Batcher{Client: &OpenRouterBatch{URL: srv.BatchURL(), Model: "m"}, Dir: dir, Poll: time.Millisecond}
+	if _, err := or.Submit(context.Background(), []BatchJob{{Key: "k", Title: "X(1)", Text: page("x", "-x")}}); err != nil {
+		t.Fatal(err)
+	}
+	var logged []string
+	an := &Batcher{Client: &AnthropicBatch{URL: srv.AnthropicURL(), Model: "m"}, Dir: dir, Poll: time.Millisecond,
+		Log: func(f string, a ...any) { logged = append(logged, f) }}
+	if p, _ := an.Pending(); len(p) != 0 {
+		t.Errorf("anthropic sees openrouter's batches: %v", p)
+	}
+	cs, err := an.Collect(context.Background(), true, func(SavedJob) (string, bool) { return "", false }, func(Result) {})
+	if err != nil || cs.Finished != 0 || len(logged) == 0 {
+		t.Errorf("collect: %+v, %v, %q", cs, err, logged)
+	}
+	if p, _ := or.Pending(); len(p) != 1 {
+		t.Error("openrouter's batch should still be there")
 	}
 }

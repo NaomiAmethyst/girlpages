@@ -81,3 +81,31 @@ func TestDefaultClaudeModel(t *testing.T) {
 		t.Errorf("default claude model = %q", m)
 	}
 }
+
+func TestResolveBatch(t *testing.T) {
+	cases := []struct {
+		batch, url, want string
+	}{
+		{"", "", BatchNone},
+		{"", "https://openrouter.ai/api/v1/batches", BatchOpenRouter},
+		{"anthropic", "https://openrouter.ai/api/v1/batches", BatchAnthropic},
+		{"none", "https://openrouter.ai/api/v1/batches", BatchNone},
+		{"OpenRouter", "", BatchOpenRouter},
+		{"bogus", "", ""},
+	}
+	for _, c := range cases {
+		cfg := Defaults()
+		cfg.Batch, cfg.OpenAI.BatchURL = c.batch, c.url
+		got, err := cfg.ResolveBatch()
+		if got != c.want || (err != nil) != (c.want == "") {
+			t.Errorf("batch %q, url %q: %q, %v", c.batch, c.url, got, err)
+		}
+	}
+	cfg := Defaults()
+	if _, err := cfg.AnthropicKey(); err == nil {
+		t.Error("no anthropic key should be an error")
+	}
+	if cfg.Anthropic.Model != "claude-haiku-5-5" || cfg.Anthropic.BatchURL != DefaultAnthropicBatchURL {
+		t.Errorf("anthropic defaults: %+v", cfg.Anthropic)
+	}
+}

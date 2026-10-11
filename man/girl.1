@@ -168,10 +168,19 @@ The default is
 .BR localhost:1989 .
 .SS "Bulk options"
 .TP
+.BR \-\-batch =\fIapi\fR
+Send pages in batches with
+.BR openrouter ,
+.BR anthropic ,
+or
+.B none
+(see
+.BR batches ),
+overriding the configuration.
+.TP
 .B \-\-no\-batch
-Convert one page at a time even if
-.B openai.batch_url
-is set.
+The same as
+.BR \-\-batch=none .
 .TP
 .B \-\-no\-wait
 Send batches off and return without waiting for them; the next
@@ -257,14 +266,27 @@ otherwise
 .B openai
 if an API key is configured.
 .SS "batches"
-With
-.B openai.batch_url
-set to an OpenRouter batch endpoint
-.RB ( https://openrouter.ai/api/v1/batches ),
 .B \-\-bulk
-sends every page that needs converting in batches (split to stay under the
-size limit) rather than one request at a time: about half the price, and back
-within a day.
+can send every page that needs converting in batches rather than one request
+at a time: about half the price, and back within a day.
+.B batch
+picks the API:
+.B openrouter
+uses OpenRouter's batch endpoint
+.RB ( openai.batch_url ,
+which defaults to
+.BR https://openrouter.ai/api/v1/batches ;
+setting it turns this on) with the
+.B [openai]
+key and model;
+.B anthropic
+uses Anthropic's Message Batches API with the
+.B [anthropic]
+settings, which need an Anthropic API key (the claude CLI's login isn't used);
+.B none
+turns batches off.
+Big runs are split to stay under each API's size limit.
+.PP
 Batches are saved in the cache's
 .B batches
 directory as they're sent.
@@ -277,14 +299,14 @@ interrupting it is safe, as every
 .B \-\-bulk
 run starts by collecting whatever has finished and doesn't send pages that are
 still out.
+Batches sent with one API are only collected while that API is configured.
 A page that changed in the meantime is sent again.
 Replies get the same completeness check as live ones, and any part that failed
-or dropped options is redone live.
+or dropped options is redone live, if the backend works; batches don't need
+it otherwise.
 The package-manager hooks and timer pass
 .BR \-\-no\-wait ,
 so the daily run collects what the last one sent.
-Anthropic's own batch API is a different protocol and isn't supported, but
-Claude models work through OpenRouter.
 .SH "WEB SERVER"
 .B girl \-\-serve
 lists every page in the manual path by section, with descriptions from the
@@ -356,6 +378,7 @@ jobs = 4                 # requests at once
 chunk_size = 12000       # bytes of text per request
 cache_dir = ""           # where to write conversions
 pager = ""
+batch = ""               # openrouter, anthropic or none, for \-\-bulk
 extra_instructions = ""  # appended to the prompt
 
 [claude]
@@ -377,6 +400,14 @@ batch_poll = "1m"
 
 [openai.headers]
 "X\-Example" = "value"
+
+[anthropic]
+api_key = ""             # or ANTHROPIC_API_KEY; for batch = "anthropic"
+api_key_file = ""
+model = "claude\-haiku\-5\-5"
+max_tokens = 32000
+batch_url = "https://api.anthropic.com/v1/messages/batches"
+timeout = "10m"
 
 [repo]
 url = ""                 # a girlpages repository, e.g. https://…/repo
@@ -496,6 +527,16 @@ Overrides
 .B GIRLPAGES_OPENAI_BATCH_URL
 Overrides
 .BR openai.batch_url .
+.TP
+.B GIRLPAGES_BATCH
+Overrides
+.BR batch .
+.TP
+.BR GIRLPAGES_ANTHROPIC_API_KEY ", " ANTHROPIC_API_KEY ", " GIRLPAGES_ANTHROPIC_MODEL
+Override
+.B anthropic.api_key
+and
+.BR anthropic.model .
 .TP
 .BR XDG_CONFIG_HOME ", " XDG_CACHE_HOME
 Locate the user configuration file and cache.

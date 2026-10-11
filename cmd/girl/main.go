@@ -55,7 +55,7 @@ type flags struct {
 	noWait, noBatch                               bool
 	jobs, limit                                   int
 	refresh, cachedOnly, raw, doctor, html, serve bool
-	color, backend, model, listen, repo           string
+	color, backend, model, listen, repo, batch    string
 }
 
 func newFlagSet(f *flags) *pflag.FlagSet {
@@ -85,6 +85,7 @@ func newFlagSet(f *flags) *pflag.FlagSet {
 	fs.BoolVar(&f.prune, "prune", false, "")
 	fs.BoolVar(&f.noWait, "no-wait", false, "")
 	fs.BoolVar(&f.noBatch, "no-batch", false, "")
+	fs.StringVar(&f.batch, "batch", "", "")
 	fs.BoolVarP(&f.quiet, "quiet", "q", false, "")
 	fs.IntVarP(&f.jobs, "jobs", "j", 0, "")
 	fs.IntVar(&f.limit, "limit", 0, "")
@@ -160,8 +161,9 @@ bulk options:
                           new pages too (this is what the hooks run)
       --force             reconvert pages even if they're up to date
       --prune             drop cache entries for pages that no longer exist
-      --no-batch          convert one page at a time even if openai.batch_url
-                          is set
+      --batch=API         send pages in batches: openrouter, anthropic or none
+                          (default from the config)
+      --no-batch          the same as --batch=none
       --no-wait           send batches off and return; the next run collects
                           them
   -n, --dry-run           list what would be converted, convert nothing
@@ -351,18 +353,34 @@ func runBulk(ctx context.Context, f flags, cfg *config.Config, g *core.Girl, mo 
 		}
 		sections = append(sections, a)
 	}
+	if f.noBatch {
+		cfg.Batch = config.BatchNone
+	} else if f.batch != "" {
+		cfg.Batch = f.batch
+	}
 	var b llm.Backend
+	var backendErr error
 	if !f.dryRun {
-		var err error
-		if b, err = core.NewBackend(cfg); err != nil {
-			if g.Repo == nil {
-				fmt.Fprintf(os.Stderr, "girl: %v\n", err)
-				return exitFailed
-			}
+		b, backendErr = core.NewBackend(cfg)
+	}
+	batcher, err := core.NewBatcher(cfg, bulk.BatchDir(g.Caches.Writable()), b)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "girl: %v\n", err)
+		return exitFailed
+	}
+	if backendErr != nil {
+		switch {
+		case batcher != nil:
+			// Batches don't need it; it's only for redoing their failures.
+			fmt.Fprintf(os.Stderr, "girl: %v; batch failures will wait for the next batch\n", backendErr)
+		case g.Repo != nil:
 			// Pages in the repo can still be had without a model.
-			fmt.Fprintf(os.Stderr, "girl: %v; only fetching from the repo\n", err)
-			b = nil
+			fmt.Fprintf(os.Stderr, "girl: %v; only fetching from the repo\n", backendErr)
+		default:
+			fmt.Fprintf(os.Stderr, "girl: %v\n", backendErr)
+			return exitFailed
 		}
+		b = nil
 	}
 	var fetch func(context.Context, manpage.Page) (string, string, error)
 	if g.Repo != nil && cfg.ExtraInstructions == "" {
@@ -374,16 +392,8 @@ func runBulk(ctx context.Context, f flags, cfg *config.Config, g *core.Girl, mo 
 			return markup, gen.Model, nil
 		}
 	}
-	var batcher *llm.Batcher
-	if !f.noBatch {
-		var err error
-		if batcher, err = core.NewBatcher(cfg, bulk.BatchDir(g.Caches.Writable()), b); err != nil {
-			fmt.Fprintf(os.Stderr, "girl: %v\n", err)
-			return exitFailed
-		}
-	}
 	mo.Sections = ""
-	_, err := bulk.Run(ctx, bulk.Options{
+	_, err = bulk.Run(ctx, bulk.Options{
 		Sections: sections,
 		Update:   f.update,
 		Force:    f.force,
@@ -490,10 +500,12 @@ func doctor(ctx context.Context, cfg *config.Config, g *core.Girl) int {
 		}
 	}
 	fmt.Printf("jobs %d, chunk size %d\n", cfg.Jobs, cfg.ChunkSize)
-	if cfg.OpenAI.BatchURL != "" {
-		fmt.Printf("batches: %s (for --bulk)", cfg.OpenAI.BatchURL)
-		if _, err := core.NewBatcher(cfg, "", nil); err != nil {
+	if kind, err := cfg.ResolveBatch(); err != nil || kind != config.BatchNone {
+		fmt.Printf("batches: %s (for --bulk)", kind)
+		if b, err := core.NewBatcher(cfg, "", nil); err != nil {
 			fmt.Printf(" 💔 %v", err)
+		} else {
+			fmt.Printf(", model %s", b.Client.ModelName())
 		}
 		files, _ := filepath.Glob(filepath.Join(bulk.BatchDir(caches.Writable()), "*.json"))
 		if len(files) > 0 {

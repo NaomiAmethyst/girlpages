@@ -331,7 +331,7 @@ func TestGirlifyBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	o := GirlifyOptions{Quiet: true, Log: io.Discard, NoWait: true,
-		Batch: &llm.Batcher{Client: &llm.BatchClient{URL: srv.BatchURL(), Model: "cheap-model"},
+		Batch: &llm.Batcher{Client: &llm.OpenRouterBatch{URL: srv.BatchURL(), Model: "cheap-model"},
 			Dir: t.TempDir(), Poll: 10 * time.Millisecond}}
 	st, err := Girlify(ctx, s, o)
 	if err != nil || st.Batched != 2 || srv.Batches() != 1 {
@@ -352,5 +352,39 @@ func TestGirlifyBatch(t *testing.T) {
 	g, err := s.Variant(l.Current, repo.VariantGirl)
 	if err != nil || !strings.Contains(g.Text(), "batched") || g.Generator.Model != "cheap-model" || g.Title != "FOO(1)" {
 		t.Fatalf("foo: %+v, %v", g, err)
+	}
+}
+
+// The current version is the one from the last path given, however the
+// workers happen to finish.
+func TestIngestCurrentIsLastPath(t *testing.T) {
+	needTools(t)
+	older := filepath.Join(t.TempDir(), "man")
+	newer := filepath.Join(t.TempDir(), "man")
+	for i := 0; i < 20; i++ { // enough pages for the workers to race
+		name := fmt.Sprintf("p%02d", i)
+		write(t, filepath.Join(older, "man1", name+".1"), []byte(roff(name, "1", "the old one")))
+		write(t, filepath.Join(newer, "man1", name+".1"), []byte(roff(name, "1", "the new one")))
+	}
+	ctx := context.Background()
+	for _, c := range []struct {
+		paths []string
+		want  string
+	}{{[]string{older, newer}, "the new one"}, {[]string{newer, older}, "the old one"}} {
+		for run := 0; run < 3; run++ {
+			s, err := repo.Open(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Paths(ctx, s, c.paths, Options{Jobs: 8, Quiet: true, Log: io.Discard}); err != nil {
+				t.Fatal(err)
+			}
+			pages, _ := s.AllPages()
+			for _, p := range pages {
+				if len(p.Listing.Versions) != 2 || p.Current().Description != c.want {
+					t.Fatalf("%v: %s has %d versions, current %q", c.paths, p.Pointer.Name, len(p.Listing.Versions), p.Current().Description)
+				}
+			}
+		}
 	}
 }

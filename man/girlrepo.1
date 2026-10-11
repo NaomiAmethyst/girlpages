@@ -99,6 +99,10 @@ everywhere it was found.
 A page whose source changed becomes a new version, and the current one unless
 .B \-\-keep\-current
 is given; old versions are kept.
+When one run finds different versions of the same page (the same name and
+section), the one from the last
+.I path
+given is current, so list older sources first.
 New versions are rendered with
 .BR man (1)
 to make their
@@ -170,11 +174,13 @@ Only these sections.
 .B \-\-all\-versions
 Convert old versions too.
 .TP
-.B \-\-no\-batch
-Convert one page at a time even if
-.B openai.batch_url
-is set.
-With it set, pages go in OpenRouter batches as for
+.BR \-\-batch =\fIapi\fR ", " \-\-no\-batch
+Send pages in batches with
+.BR openrouter " or " anthropic ,
+or not at all, overriding the
+.B batch
+setting.
+Batches work as for
 .BR "girl \-\-bulk" ;
 see
 .BR girl (1).

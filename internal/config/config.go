@@ -62,9 +62,15 @@ type Config struct {
 	ExtraInstructions string `toml:"extra_instructions"`
 	// Pager overrides $GIRLPAGER/$PAGER.
 	Pager string `toml:"pager"`
+	// Batch picks the batch API bulk runs use: "openrouter", "anthropic"
+	// or "none". Empty means openrouter if openai.batch_url is set, else
+	// none.
+	Batch string `toml:"batch"`
 
 	OpenAI OpenAIConfig `toml:"openai"`
 	Claude ClaudeConfig `toml:"claude"`
+	// Anthropic is Anthropic's API, used for its Message Batches API.
+	Anthropic AnthropicConfig `toml:"anthropic"`
 	// Repo is a published girlpages repository to fetch pages from before
 	// asking a model.
 	Repo RepoConfig `toml:"repo"`
@@ -97,6 +103,64 @@ type ClaudeConfig struct {
 	Timeout Duration `toml:"timeout"`
 }
 
+type AnthropicConfig struct {
+	APIKey     string `toml:"api_key"`
+	APIKeyFile string `toml:"api_key_file"`
+	Model      string `toml:"model"`
+	// MaxTokens caps each reply, thinking included.
+	MaxTokens   int               `toml:"max_tokens"`
+	Temperature *float64          `toml:"temperature"`
+	BatchURL    string            `toml:"batch_url"`
+	Headers     map[string]string `toml:"headers"`
+	Timeout     Duration          `toml:"timeout"`
+}
+
+// Batch APIs.
+const (
+	BatchNone       = "none"
+	BatchOpenRouter = "openrouter"
+	BatchAnthropic  = "anthropic"
+)
+
+const (
+	DefaultOpenRouterBatchURL = "https://openrouter.ai/api/v1/batches"
+	DefaultAnthropicBatchURL  = "https://api.anthropic.com/v1/messages/batches"
+)
+
+// ResolveBatch says which batch API bulk runs should use.
+func (c *Config) ResolveBatch() (string, error) {
+	switch strings.ToLower(strings.TrimSpace(c.Batch)) {
+	case "", "auto":
+		if strings.TrimSpace(c.OpenAI.BatchURL) != "" {
+			return BatchOpenRouter, nil
+		}
+		return BatchNone, nil
+	case BatchNone, "off", "no":
+		return BatchNone, nil
+	case BatchOpenRouter, "openai":
+		return BatchOpenRouter, nil
+	case BatchAnthropic, "claude":
+		return BatchAnthropic, nil
+	}
+	return "", fmt.Errorf("batch = %q: want openrouter, anthropic or none", c.Batch)
+}
+
+// AnthropicKey returns the Anthropic API key from the config or the file
+// it names.
+func (c *Config) AnthropicKey() (string, error) {
+	if c.Anthropic.APIKey != "" {
+		return c.Anthropic.APIKey, nil
+	}
+	if c.Anthropic.APIKeyFile == "" {
+		return "", errors.New("anthropic batches need an API key: set anthropic.api_key, anthropic.api_key_file or ANTHROPIC_API_KEY")
+	}
+	b, err := os.ReadFile(c.Anthropic.APIKeyFile)
+	if err != nil {
+		return "", fmt.Errorf("reading anthropic.api_key_file: %w", err)
+	}
+	return strings.TrimSpace(string(b)), nil
+}
+
 type RepoConfig struct {
 	// URL is where the repository is: an http(s) URL, a file:// URL or a
 	// directory. Empty means don't use one.
@@ -122,6 +186,12 @@ func Defaults() Config {
 			// keeps the details well; set model = "" for the CLI's default.
 			Model:   "haiku",
 			Timeout: Duration{15 * time.Minute},
+		},
+		Anthropic: AnthropicConfig{
+			Model:     "claude-haiku-5-5",
+			MaxTokens: 32000,
+			BatchURL:  DefaultAnthropicBatchURL,
+			Timeout:   Duration{10 * time.Minute},
 		},
 		Repo: RepoConfig{Timeout: Duration{20 * time.Second}},
 	}
@@ -206,6 +276,9 @@ func (c *Config) applyEnv() error {
 	str(&c.OpenAI.APIKey, "GIRLPAGES_OPENAI_API_KEY", "OPENAI_API_KEY")
 	str(&c.OpenAI.Model, "GIRLPAGES_OPENAI_MODEL")
 	str(&c.OpenAI.BatchURL, "GIRLPAGES_OPENAI_BATCH_URL")
+	str(&c.Batch, "GIRLPAGES_BATCH")
+	str(&c.Anthropic.APIKey, "GIRLPAGES_ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY")
+	str(&c.Anthropic.Model, "GIRLPAGES_ANTHROPIC_MODEL")
 	str(&c.Claude.Command, "GIRLPAGES_CLAUDE_COMMAND")
 	str(&c.Claude.Model, "GIRLPAGES_CLAUDE_MODEL")
 	str(&c.Repo.URL, "GIRLPAGES_REPO")

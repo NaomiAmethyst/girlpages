@@ -20,10 +20,24 @@ import (
 	"time"
 )
 
-// BatchClient talks to an OpenRouter batch endpoint
-// (https://openrouter.ai/api/v1/batches): many chat completions submitted
-// at once, answered within a day at about half the price.
-type BatchClient struct {
+// BatchAPI is a provider's batch API: many requests submitted at once,
+// answered within a day at about half the price.
+type BatchAPI interface {
+	// Kind names the API ("openrouter", "anthropic"); saved batches are
+	// only collected by a client of the same kind.
+	Kind() string
+	ModelName() string
+	Submit(ctx context.Context, reqs []BatchRequest) (*Batch, error)
+	// Get fetches a batch's status, and its results once it has completed.
+	Get(ctx context.Context, id string) (*Batch, error)
+	// Limits are how big a single batch may be.
+	Limits() (maxBytes, maxRequests int)
+}
+
+// OpenRouterBatch talks to OpenRouter's batch API
+// (https://openrouter.ai/api/v1/batches), which takes OpenAI-style chat
+// completions and returns results inline.
+type OpenRouterBatch struct {
 	URL         string
 	APIKey      string
 	Headers     map[string]string
@@ -53,6 +67,12 @@ type BatchResult struct {
 	Reply string
 	Err   error
 }
+
+func (c *OpenRouterBatch) Kind() string      { return "openrouter" }
+func (c *OpenRouterBatch) ModelName() string { return c.Model }
+
+// Limits: OpenRouter takes up to 200 MB; stay well under.
+func (c *OpenRouterBatch) Limits() (int, int) { return 100 << 20, 10000 }
 
 // Finished reports whether the batch is done, one way or another.
 func (b *Batch) Finished() bool {
@@ -118,7 +138,7 @@ type batchObject struct {
 func RequestSize(p Part) int { return len(p.System) + len(p.User) + 200 }
 
 // Submit sends requests as one batch.
-func (c *BatchClient) Submit(ctx context.Context, reqs []BatchRequest) (*Batch, error) {
+func (c *OpenRouterBatch) Submit(ctx context.Context, reqs []BatchRequest) (*Batch, error) {
 	if c.Model == "" {
 		return nil, errors.New("batches need a model: set openai.model in the config or GIRLPAGES_MODEL")
 	}
@@ -138,27 +158,34 @@ func (c *BatchClient) Submit(ctx context.Context, reqs []BatchRequest) (*Batch, 
 }
 
 // Get fetches a batch's status, and its results once it has completed.
-func (c *BatchClient) Get(ctx context.Context, id string) (*Batch, error) {
+func (c *OpenRouterBatch) Get(ctx context.Context, id string) (*Batch, error) {
 	return c.call(ctx, http.MethodGet, strings.TrimRight(c.URL, "/")+"/"+id, nil)
 }
 
-func (c *BatchClient) call(ctx context.Context, method, url string, body []byte) (*Batch, error) {
+func (c *OpenRouterBatch) call(ctx context.Context, method, url string, body []byte) (*Batch, error) {
 	client := c.Client
 	if client == nil {
 		client = http.DefaultClient
 	}
+	return retry(ctx, c.Retries, func() (*Batch, error) { return c.do(ctx, client, method, url, body) })
+}
+
+// retry calls fn until it succeeds, it fails in a way retrying won't fix,
+// or retries run out.
+func retry[T any](ctx context.Context, retries int, fn func() (T, error)) (T, error) {
+	var zero T
 	var lastErr error
-	for attempt := 0; attempt <= c.Retries; attempt++ {
+	for attempt := 0; attempt <= retries; attempt++ {
 		if attempt > 0 {
 			select {
 			case <-time.After(backoff(attempt, lastErr)):
 			case <-ctx.Done():
-				return nil, ctx.Err()
+				return zero, ctx.Err()
 			}
 		}
-		b, err := c.do(ctx, client, method, url, body)
+		v, err := fn()
 		if err == nil {
-			return b, nil
+			return v, nil
 		}
 		lastErr = err
 		var he *httpError
@@ -166,10 +193,10 @@ func (c *BatchClient) call(ctx context.Context, method, url string, body []byte)
 			break
 		}
 	}
-	return nil, lastErr
+	return zero, lastErr
 }
 
-func (c *BatchClient) do(ctx context.Context, client *http.Client, method, url string, body []byte) (*Batch, error) {
+func (c *OpenRouterBatch) do(ctx context.Context, client *http.Client, method, url string, body []byte) (*Batch, error) {
 	var rd io.Reader
 	if body != nil {
 		rd = bytes.NewReader(body)
@@ -277,8 +304,9 @@ type SavedJob struct {
 }
 
 type batchState struct {
+	// API is the BatchAPI's Kind; empty in older files, meaning openrouter.
+	API       string    `json:"api,omitempty"`
 	ID        string    `json:"id"`
-	URL       string    `json:"url"`
 	Model     string    `json:"model"`
 	Submitted time.Time `json:"submitted"`
 	// The planning options in force when it was submitted, so the parts
@@ -292,7 +320,7 @@ type batchState struct {
 // Batcher converts pages in batches, keeping track of submitted batches
 // in Dir so a later run can collect what an earlier one started.
 type Batcher struct {
-	Client  *BatchClient
+	Client  BatchAPI
 	Dir     string
 	Options Options
 	// Live, if set, redoes parts that failed or dropped options in a batch.
@@ -302,7 +330,8 @@ type Batcher struct {
 	Jobs int
 	// Poll is how long to wait between looks at an unfinished batch.
 	Poll time.Duration
-	// MaxBytes and MaxRequests split big submissions into several batches.
+	// MaxBytes and MaxRequests split big submissions into several batches;
+	// zero means the API's own limits.
 	MaxBytes, MaxRequests int
 	// Log, if set, gets progress messages.
 	Log func(format string, a ...any)
@@ -314,12 +343,15 @@ func (b *Batcher) logf(format string, a ...any) {
 	}
 }
 
+// saved reads the saved batches this Batcher's API can collect. Batches
+// sent to a different API (before the config changed) are left alone.
 func (b *Batcher) saved() ([]*batchState, error) {
 	files, err := filepath.Glob(filepath.Join(b.Dir, "*.json"))
 	if err != nil {
 		return nil, err
 	}
 	var out []*batchState
+	other := 0
 	for _, f := range files {
 		raw, err := os.ReadFile(f)
 		if err != nil {
@@ -329,7 +361,14 @@ func (b *Batcher) saved() ([]*batchState, error) {
 		if err := json.Unmarshal(raw, &st); err != nil {
 			return nil, fmt.Errorf("%s: %w", f, err)
 		}
+		if api := cmpOr(st.API, "openrouter"); api != b.Client.Kind() {
+			other++
+			continue
+		}
 		out = append(out, &st)
+	}
+	if other > 0 {
+		b.logf("🤷 %d batches were sent with another batch API; switch back to collect them, or delete them from %s\n", other, b.Dir)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Submitted.Before(out[j].Submitted) })
 	return out, nil
@@ -367,12 +406,12 @@ func (b *Batcher) Submit(ctx context.Context, jobs []BatchJob) (int, error) {
 	if err := os.MkdirAll(b.Dir, 0o755); err != nil {
 		return 0, err
 	}
-	maxBytes, maxReqs := b.MaxBytes, b.MaxRequests
-	if maxBytes <= 0 {
-		maxBytes = 100 << 20 // the limit is 200 MB
+	maxBytes, maxReqs := b.Client.Limits()
+	if b.MaxBytes > 0 {
+		maxBytes = b.MaxBytes
 	}
-	if maxReqs <= 0 {
-		maxReqs = 10000
+	if b.MaxRequests > 0 {
+		maxReqs = b.MaxRequests
 	}
 	sent := 0
 	var reqs []BatchRequest
@@ -422,7 +461,7 @@ func (b *Batcher) Submit(ctx context.Context, jobs []BatchJob) (int, error) {
 }
 
 func (b *Batcher) newState() *batchState {
-	return &batchState{URL: b.Client.URL, Model: b.Client.Model, ChunkSize: b.Options.ChunkSize,
+	return &batchState{API: b.Client.Kind(), Model: b.Client.ModelName(), ChunkSize: b.Options.ChunkSize,
 		ExtraInstructions: b.Options.ExtraInstructions, PromptVersion: PromptVersion}
 }
 
@@ -570,6 +609,13 @@ func (b *Batcher) finish(ctx context.Context, st *batchState, batch *Batch, text
 		}()
 	}
 	wg.Wait()
+}
+
+func cmpOr(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
 }
 
 func writeFile(path string, data []byte) error {
