@@ -120,3 +120,14 @@ func TestHeader(t *testing.T) {
 		t.Errorf("header = %q", lines[0])
 	}
 }
+
+func TestStripControls(t *testing.T) {
+	evil := "# hi\x1b]0;pwned\x07\n\nok \x1b[2Jbestie\u009b31m\ttab\r\n"
+	out := Render(evil, Options{Width: 80, Color: NoColor, Title: "X\x1b[1m(1)"})
+	if strings.ContainsAny(out, "\x1b\x07\r\u009b") {
+		t.Errorf("control characters got through: %q", out)
+	}
+	if !strings.Contains(out, "ok [2Jbestie31m") {
+		t.Errorf("text went missing: %q", out)
+	}
+}

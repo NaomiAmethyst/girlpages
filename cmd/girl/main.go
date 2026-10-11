@@ -278,7 +278,7 @@ func run(args []string) int {
 		title := core.DisplayTitle(p, r.Title)
 		switch {
 		case f.raw:
-			out.WriteString(r.Markup)
+			out.WriteString(render.StripControls(r.Markup))
 		case f.html:
 			docs = append(docs, web.DocPage{Page: p, Title: title, Markup: r.Markup, Entry: r.Entry, Stale: r.Stale})
 		default:

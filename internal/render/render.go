@@ -77,6 +77,32 @@ const (
 	ruleColor   = "lavender"
 )
 
+// StripControls removes control characters other than newlines and tabs,
+// so markup from a model or a repository can't drive the terminal with
+// escape sequences of its own.
+func StripControls(s string) string {
+	clean := true
+	for _, r := range s {
+		if isControl(r) {
+			clean = false
+			break
+		}
+	}
+	if clean {
+		return s
+	}
+	return strings.Map(func(r rune) rune {
+		if isControl(r) {
+			return -1
+		}
+		return r
+	}, s)
+}
+
+func isControl(r rune) bool {
+	return r < 0x20 && r != '\n' && r != '\t' || r >= 0x7f && r < 0xa0
+}
+
 // Options controls rendering.
 type Options struct {
 	Width int
@@ -104,6 +130,7 @@ type renderer struct {
 
 // Render lays out markup for the terminal.
 func Render(markup string, o Options) string {
+	o.Title, o.Footer = StripControls(o.Title), StripControls(o.Footer)
 	if o.Width < 20 {
 		o.Width = 20
 	}
@@ -115,7 +142,7 @@ func Render(markup string, o Options) string {
 		r.line(bodyIndent, []seg{{"(this page changed since it was girlified ~ run girl --refresh to update 🔄)", style{italic: true, color: "lavender"}}})
 		r.b.WriteString("\n")
 	}
-	blocks := parseBlocks(markup)
+	blocks := parseBlocks(StripControls(markup))
 	// Collapse leading/trailing blanks.
 	for len(blocks) > 0 && blocks[0].kind == bBlank {
 		blocks = blocks[1:]
