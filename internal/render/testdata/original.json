@@ -1,0 +1,34 @@
+{
+ "format": 1,
+ "variant": "man",
+ "source": "x",
+ "syntax": "text",
+ "header": "FROB(1)                      General Commands Manual                     FROB(1)",
+ "footer": "frob 1.0                          2026-01-01                            FROB(1)",
+ "sections": [
+  {
+   "heading": "",
+   "body": "\n"
+  },
+  {
+   "heading": "NAME",
+   "body": "       frob - frobnicate the bar\n\n"
+  },
+  {
+   "heading": "SYNOPSIS",
+   "body": "       frob [-a] [-l] [--color[=WHEN]] [file...]\n\n       frob --help\n\n"
+  },
+  {
+   "heading": "DESCRIPTION",
+   "body": "       The quick brown fox jumps over the lazy dog while the cat watches from\n       the window, wondering why anyone would bother jumping over a dog at all\n       when there are perfectly good ways around it, as described in frob(1)\n       and at https://example.org/frob for more.\n\n       Assume tab stops at each COLS instead of eight\n       May also be specified with the TABSIZE environment variable.\n\n       For example:\n\n              frob -a\n\n              {\n                  \"key\": [1, 2],\n              }\n\n   Subsection here\n       The quick brown fox jumps over the lazy dog while the cat watches from\n       the window, wondering why anyone would bother jumping over a dog at all\n       when there are perfectly good ways around it, as described in frob(1)\n       and at https://example.org/frob for more.\n\n"
+  },
+  {
+   "heading": "OPTIONS",
+   "body": "       -a, --all\n              Do not ignore entries starting with a dot, which are normally\n              hidden from view by default here.\n\n       -l     use a long listing format\n\n       --help Show help.\n\n       --color[=WHEN]\n              Colorize the output; WHEN can be always, auto or never, and\n              defaults to always when given alone.\n\n              A second paragraph of the same description, which should stay\n              inside the same definition rather than escape.\n\n                     $ frob --color=never\n\n"
+  },
+  {
+   "heading": "NOTES",
+   "body": "       \u2022      first point, which is long enough that it has to wrap onto the next line of\n              the page\n\n       \u2022      second point\n\n       1.     numbered one\n\n"
+  }
+ ]
+}

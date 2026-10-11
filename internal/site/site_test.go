@@ -700,3 +700,78 @@ func TestHandler(t *testing.T) {
 		t.Errorf("client through the handler: %v", err)
 	}
 }
+
+// TestOriginalJS checks that the browser reflows originals exactly as the
+// static site does.
+func TestOriginalJS(t *testing.T) {
+	type doc struct {
+		Header   string                   `json:"header"`
+		Footer   string                   `json:"footer"`
+		Sections []render.OriginalSection `json:"sections"`
+	}
+	b, err := os.ReadFile("../render/testdata/original.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		Header, Footer string
+		Sections       []struct{ Heading, Body string }
+	}
+	if err := json.Unmarshal(b, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	docs := []doc{{Header: fixture.Header, Footer: fixture.Footer}}
+	for _, s := range fixture.Sections {
+		docs[0].Sections = append(docs[0].Sections, render.OriginalSection{Heading: s.Heading, Body: s.Body})
+	}
+	docs = append(docs,
+		doc{Sections: []render.OriginalSection{{Heading: "SYNOPSIS", Body: ""}, {Heading: "É", Body: "       café-\n       au-lait\n"}}},
+		doc{Header: "A  B", Sections: []render.OriginalSection{{Body: "\t\tx\r\n   y\x07\n\n\n"}}},
+		doc{Sections: []render.OriginalSection{{Heading: "X", Body: "       [{\n           \"a\": 1\n       }]\n       -n with numbers\n"}}},
+		// Right at the fill width: one more column and it would be filled.
+		doc{Sections: []render.OriginalSection{{Heading: "X", Body: "       " + strings.Repeat("ab ", 22) + "a\n       word and more words\n"}}},
+	)
+	type result struct {
+		HTML string
+		TOC  []render.Heading
+	}
+	link := func(n, s string) string { return "/man/" + s + "/" + n + "/" }
+	var want []result
+	for _, d := range docs {
+		h, toc := render.OriginalHTML(d.Header, d.Footer, d.Sections, render.HTMLOptions{Link: link})
+		if toc == nil {
+			toc = []render.Heading{}
+		}
+		want = append(want, result{h, toc})
+	}
+	// The JS reads a variant's own field names.
+	var in []map[string]any
+	for _, d := range docs {
+		var ss []map[string]string
+		for _, s := range d.Sections {
+			ss = append(ss, map[string]string{"heading": s.Heading, "body": s.Body})
+		}
+		in = append(in, map[string]any{"header": d.Header, "footer": d.Footer, "sections": ss})
+	}
+	ds, _ := json.Marshal(in)
+	got := node(t, fmt.Sprintf(`
+const { renderOriginalHTML } = await import(%q);
+const out = [];
+for (const d of %s) {
+  const r = renderOriginalHTML(d, { link: (n, s) => "/man/" + s + "/" + n + "/" });
+  out.push({ HTML: r.html, TOC: r.toc.map(h => ({ ID: h.id, Text: h.text, Level: h.level })) });
+}
+console.log(JSON.stringify(out));`, staticFile(t, "render.js"), ds))
+	var js []result
+	if err := json.Unmarshal(got, &js); err != nil {
+		t.Fatalf("%v: %s", err, got)
+	}
+	for i := range want {
+		if js[i].TOC == nil {
+			js[i].TOC = []render.Heading{}
+		}
+		if js[i].HTML != want[i].HTML || fmt.Sprint(js[i].TOC) != fmt.Sprint(want[i].TOC) {
+			t.Errorf("doc %d differs:\n  go: %q %v\n  js: %q %v", i, want[i].HTML, want[i].TOC, js[i].HTML, js[i].TOC)
+		}
+	}
+}

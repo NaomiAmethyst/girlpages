@@ -10,10 +10,11 @@
 //   …&v=<source hash>                       a particular version
 //   …&variant=man                           another variant: man is the original;
 //                                           girl is the default, and there may be more
+//   …&mono=1                                the original as man prints it, not reflowed
 //   …&src=debian/trixie                     the version a source has, and links that stay in it
 
 import { repoCache } from "./girlpages.js";
-import { renderHTML, esc } from "./render.js";
+import { renderHTML, renderOriginalHTML, esc } from "./render.js";
 import { escapeName, segmentName } from "./search.js";
 
 const SECTIONS = {
@@ -170,7 +171,7 @@ async function sourceSection(src, key, sub) {
     sourceChips(m, src, key[0]) + chips + body + "</div>");
 }
 
-async function pageView(name, sec, v, which, src) {
+async function pageView(name, sec, v, which, src, mono) {
   let l;
   try {
     l = await listing(name, sec);
@@ -192,10 +193,13 @@ async function pageView(name, sec, v, which, src) {
   const here = (extra) => browse({ page: name, sec, v: ver.source === l.current ? "" : ver.source, src, ...extra });
 
   let body = "", toc = [];
+  const link = src ? (n, s) => browse({ page: n, sec: s, src }) : (n, s) => staticPage(n, s);
   if (doc.syntax === "girlpages-markup") {
-    const link = src ? (n, s) => browse({ page: n, sec: s, src }) : (n, s) => staticPage(n, s);
     ({ html: body, toc } = renderHTML(variantText(doc), { link }));
     body = `<div class="content">${body}</div>`;
+  } else if (!mono) {
+    ({ html: body, toc } = renderOriginalHTML(doc, { link }));
+    body = `<div class="content reflowed">${body}</div>`;
   } else {
     body = '<div class="original">' + (doc.header ? `<pre class="manhead">${esc(doc.header)}</pre>` : "") +
       doc.sections.map(s => (s.heading ? `<h2>${esc(s.heading)}</h2>` : "") + `<pre>${esc(s.body)}</pre>`).join("\n") +
@@ -209,6 +213,10 @@ async function pageView(name, sec, v, which, src) {
   if (variants.length > 1) {
     meta += variants.map(k => k === which ? `<span class="pill on">${esc(variantLabel(k))}</span>`
       : `<a class="pill" href="${esc(here({ variant: k === variants[0] ? "" : k }))}">${esc(variantLabel(k))}</a>`).join("");
+  }
+  if (doc.syntax !== "girlpages-markup") {
+    const href = here({ variant: which === variants[0] ? "" : which, mono: mono ? "" : "1" });
+    meta += `<a class="pill${mono ? " on" : ""}" href="${esc(href)}" title="as man prints it">⌨️ monospace</a>`;
   }
   const keys = sourceKeys(ver);
   const inLine = keys.length ? `<div class="meta in">📦 ${ver.version ? "version " + esc(ver.version) + ", " : ""}in ` +
@@ -242,7 +250,7 @@ async function main() {
   const q = new URLSearchParams(location.search);
   const page = q.get("page"), sec = q.get("sec"), src = q.get("src") || "", section = q.get("section");
   try {
-    if (page && sec) await pageView(page, sec, q.get("v"), q.get("variant"), src);
+    if (page && sec) await pageView(page, sec, q.get("v"), q.get("variant"), src, q.get("mono") === "1");
     else if (src && section) await sourceSection(src, section, q.get("sub") || "");
     else if (src) await sourceHome(src);
     else location.replace(base);

@@ -5,15 +5,14 @@
 <h1>{{.Title}}</h1>
 <div class="meta">
 {{if .Girlified}}{{if .Model}}<span>girlified by {{.Model}}{{if .Modified}} on <time datetime="{{.Modified}}">{{.Modified}}</time>{{end}} 💖</span>{{end}}
-<a class="pill" href="{{.BrowseURL}}&amp;variant=man">📜 original</a>{{end}}
+<span class="pill on">💅 girly</span><a class="pill" href="{{.BrowseURL}}&amp;variant=man">📜 original</a>{{end}}
 {{if gt .Versions 1}}<a class="pill" href="{{.BrowseURL}}#versions">🕰️ {{.Versions}} versions</a>{{end}}
 </div>
 {{if .In}}<div class="meta in">📦 {{if .Version}}version {{.Version}}, {{end}}in {{range $i, $c := .In}}{{if $i}}, {{end}}<a href="{{$c.URL}}">{{$c.Label}}</a>{{end}}</div>{{end}}
-{{if .Girlified}}<div class="content">
+{{if not .Girlified}}<div class="notice">💤 she hasn't gotten to this one yet, so here's the original for now.</div>
+{{end}}<div class="content{{if not .Girlified}} reflowed{{end}}">
 {{.Body}}
-</div>{{else}}<div class="notice">💤 she hasn't gotten to this one yet, so here's the original for now.</div>
-<div class="original">{{if .Header}}<pre class="manhead">{{.Header}}</pre>{{end}}{{range .Original}}{{if .Heading}}<h2>{{.Heading}}</h2>{{end}}<pre>{{.Body}}</pre>
-{{end}}{{if .Footer}}<pre class="manhead">{{.Footer}}</pre>{{end}}</div>{{end}}
+</div>
 {{if .Packages}}<div class="provenance"><details><summary>📦 where this page comes from</summary><ul>{{range .Packages}}<li>{{.}}</li>{{end}}</ul></details></div>{{end}}
 </article>
 {{if .TOC}}<nav class="toc card" aria-label="Contents"><h2>✨ contents</h2><ul>

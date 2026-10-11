@@ -326,6 +326,18 @@ ul.pages .done { flex: none; }
 .provenance ul { margin: 0.4rem 0 0.6rem; padding-left: 1.5rem; }
 .original h2 { font-size: 1.1rem; margin: 1.25rem 0 0.25rem; color: var(--accent); }
 .original pre.manhead { color: var(--muted); margin: 0.5rem 0; }
+/* an original reflowed, as a girly page is laid out */
+.reflowed p.manhead { color: var(--muted); font-style: italic; }
+.reflowed dl { margin: 0.6rem 0; }
+.reflowed dt {
+  font-family: ui-monospace, "Cascadia Code", "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
+  font-size: 0.92em; font-weight: 600; color: var(--accent-2); margin-top: 0.9rem; overflow-wrap: anywhere;
+}
+.reflowed dd { margin: 0.15rem 0 0 1.5rem; }
+.reflowed dd > :first-child, .reflowed li > :first-child { margin-top: 0; }
+.reflowed dd > :last-child, .reflowed li > :last-child { margin-bottom: 0; }
+.reflowed dd, .reflowed dt { overflow-wrap: anywhere; }
+@media (max-width: 40rem) { .reflowed dd { margin-left: 0.9rem; } }
 .chips.sources { justify-content: center; margin-top: 1.25rem; }
 .card .chips.sources { justify-content: flex-start; margin-top: 0; }
 .chips.sources .pill { font-size: 0.85rem; }

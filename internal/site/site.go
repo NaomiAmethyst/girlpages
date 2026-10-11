@@ -193,8 +193,6 @@ type pageView struct {
 	TOC             []render.Heading
 	Girlified       bool
 	Model, Modified string
-	Header, Footer  string
-	Original        []textSection
 	Packages        []string
 	// In lists the sources this version is in, each linking to the page as
 	// that source has it; Versions is how many versions there are.
@@ -202,8 +200,6 @@ type pageView struct {
 	Versions int
 	Version  string // upstream version number
 }
-
-type textSection struct{ Heading, Body string }
 
 func (b *builder) url(parts ...string) string {
 	u := b.o.Base
@@ -610,6 +606,14 @@ func (b *builder) pages(pages []repo.PageRef) error {
 	return errors.Join(errs...)
 }
 
+func originalSections(v *repo.Variant) []render.OriginalSection {
+	out := make([]render.OriginalSection, len(v.Sections))
+	for i, s := range v.Sections {
+		out[i] = render.OriginalSection{Heading: s.Heading, Body: s.Body}
+	}
+	return out
+}
+
 func (b *builder) page(p repo.PageRef) error {
 	name, sec := p.Pointer.Name, p.Pointer.Section
 	ver := p.Current()
@@ -632,10 +636,6 @@ func (b *builder) page(p repo.PageRef) error {
 	if err != nil {
 		return err
 	}
-	pv.Header, pv.Footer = man.Header, man.Footer
-	for _, s := range man.Sections {
-		pv.Original = append(pv.Original, textSection{Heading: s.Heading, Body: s.Body})
-	}
 	modified := ver.Added
 	if girlified(ver) {
 		girl, err := b.s.Variant(ver.Source, repo.VariantGirl)
@@ -653,6 +653,9 @@ func (b *builder) page(p repo.PageRef) error {
 				modified = g.Generated
 			}
 		}
+	} else {
+		body, toc := render.OriginalHTML(man.Header, man.Footer, originalSections(man), render.HTMLOptions{Link: b.link})
+		pv.Body, pv.TOC = template.HTML(body), toc // so does OriginalHTML
 	}
 	if !modified.IsZero() {
 		pv.Modified = modified.UTC().Format(time.DateOnly)
