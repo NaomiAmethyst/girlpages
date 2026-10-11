@@ -537,7 +537,8 @@ type GirlifyOptions struct {
 	// Limit stops after converting this many pages.
 	Limit    int
 	Sections []string
-	// Names restricts the run to these page names.
+	// Names restricts the run to these pages: a name for any section, or
+	// name(section) for one.
 	Names []string
 	// AllVersions converts every version, not just current ones.
 	AllVersions bool
@@ -641,7 +642,8 @@ func Girlify(ctx context.Context, s *repo.Store, o GirlifyOptions) (GirlifyStats
 	bySource := map[string]*work{}
 	var order []string
 	for _, p := range pages {
-		if len(names) > 0 && !names[p.Pointer.Name] {
+		// A name matches in any section; name(section) in that one.
+		if len(names) > 0 && !names[p.Pointer.Name] && !names[p.Pointer.Name+"("+p.Pointer.Section+")"] {
 			continue
 		}
 		if !manpage.SectionMatches(p.Pointer.Section, o.Sections) {
