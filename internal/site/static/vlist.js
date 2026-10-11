@@ -76,9 +76,38 @@ export class VirtualList {
   last() { const cs = this.chunks(); return cs.length ? +cs[cs.length - 1].dataset.chunk : 0; }
   chunk(n) { return this.el.querySelector(`:scope > .chunk[data-chunk="${n}"]`); }
 
+  // get is a chunk's HTML, loaded once however many ask at a time.
   async get(n) {
-    if (!this.html.has(n)) this.html.set(n, await this.loadHTML(n));
-    return this.html.get(n);
+    if (this.html.has(n)) return this.html.get(n);
+    if (!this.pending) this.pending = new Map();
+    if (!this.pending.has(n)) {
+      this.pending.set(n, this.loadHTML(n).then(html => {
+        this.html.set(n, html);
+        return html;
+      }).finally(() => this.pending.delete(n)));
+    }
+    return this.pending.get(n);
+  }
+
+  // prefetch loads every chunk's HTML (not into the page: only those near
+  // the screen go there), nearest first, a few at a time, so scrolling
+  // rarely has to wait. It stops if the network goes.
+  async prefetch(jobs = 2) {
+    const from = this.first() || 1;
+    const todo = Array.from({ length: this.count }, (_, i) => i + 1)
+      .filter(n => !this.html.has(n))
+      .sort((a, b) => Math.abs(a - from) - Math.abs(b - from) || a - b);
+    let stop = false;
+    const worker = async () => {
+      while (todo.length && !stop) {
+        try {
+          await this.get(todo.shift());
+        } catch (e) {
+          if (e instanceof TypeError) stop = true;
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: jobs }, worker));
   }
 
   make(n, html) {

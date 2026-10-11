@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Naomi Persephone Amethyst <naomi@amethyst.name>
 //
-// A static listing's pages, scrolled through as one: the pages before and
-// after this one load as they're neared (taken from their own static
-// HTML), the address follows the page on screen, and letters jump within
-// the list. Without JavaScript, the pager links them.
+// A static listing's pages, scrolled through as one: the other pages are
+// fetched (from their own static HTML) in the background and go into the
+// list as they're neared, the address follows the page on screen, and
+// letters jump within the list. Without JavaScript, the pager links them.
 
 import { VirtualList } from "./vlist.js";
 
@@ -38,4 +38,8 @@ if (listing && "IntersectionObserver" in globalThis && +listing.dataset.pages > 
     list.jump(pageOf(a.href), id).catch(() => { location.href = a.href; });
   });
   list.fill();
+  // The pages are small; it's the DOM that needs keeping down. So fetch
+  // them all now, while there's time.
+  const idle = globalThis.requestIdleCallback || ((f) => setTimeout(f, 200));
+  idle(() => list.prefetch());
 }
