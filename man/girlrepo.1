@@ -366,12 +366,17 @@ has been (otherwise the original), with canonical links, OpenGraph and Twitter
 card tags, JSON-LD (TechArticle and BreadcrumbList for pages, WebSite with a
 SearchAction for the home page, CollectionPage for listings) and a sitemap.
 Everything else happens in the browser, read straight from the repository by
-.BR /browse/ :
-originals, older versions, and browsing by where pages come from, a
-distribution
-.RB ( ?src=debian ),
+an app in the home page's hash:
+originals
+.RB ( #/1/ls/man ),
+older versions
+.RB ( #/1/ls/9.4 ,
+by upstream version or the start of a source hash),
+and browsing by where pages come from, a distribution
+.RB ( #/debian ),
 a release of one
-.RB ( ?src=debian/trixie )
+.RB ( #/debian/trixie/section/1 ,
+.BR #/debian/trixie/1/ls )
 or
 .B upstream
 for git repositories, each showing the version of every page that source
@@ -631,7 +636,7 @@ has converted, until their page is done.
 A page's current version on the website.
 .TP
 .IR dir /browse/
-The browser app for everything else.
+Sends links from earlier versions of the browser app to where it is now.
 .SH "EXIT STATUS"
 0 on success, 1 for a usage error, 2 if something failed, 130 if interrupted.
 .SH EXAMPLES

@@ -5,7 +5,7 @@
 // browser, fetching only the shards a query needs. This is the same
 // algorithm as Searcher in internal/repo/search.go; keep them in step.
 
-import { repoCache, escapeName } from "./girlpages.js";
+import { repoCache, escapeName, browseURL } from "./girlpages.js";
 
 export { escapeName };
 
@@ -300,7 +300,7 @@ async function page() {
       const li = document.createElement("li");
       const a = document.createElement("a");
       a.href = src
-        ? `${base}browse/?${new URLSearchParams({ page: h.name, sec: h.section, src })}`
+        ? browseURL(base, { page: h.name, sec: h.section, src })
         : `${base}man/${encodeURIComponent(segmentName(h.section))}/${encodeURIComponent(segmentName(h.name))}/`;
       const name = document.createElement("span");
       name.className = "name";

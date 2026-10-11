@@ -43,6 +43,27 @@ export function escapeName(s) {
   }
   return out;
 }
+// browseURL is a view in the browse app, which lives in the home page's
+// hash: #/[<source>/]<sec>/<name>[/<version>][/<variant>][/mono] for a page
+// (the latest version, or as a source has it, unless a version is given:
+// an upstream version number, or the start of a source hash), and
+// #/[<source>/]section/<key>[/<sec>] for a listing, where a source is a
+// distro or distro/release.
+export function browseURL(base, { src = "", section = "", sub = "", page = "", sec = "", version = "", variant = "", mono = false, at = "" } = {}) {
+  const segs = src ? src.split("/") : [];
+  if (page) {
+    segs.push(sec, page);
+    if (version) segs.push(version);
+    if (variant) segs.push(variant);
+    if (mono) segs.push("mono");
+    if (at) segs.push(at);
+  } else if (section) {
+    segs.push("section", section);
+    if (sub) segs.push(sub);
+  }
+  return base + "#/" + segs.map(encodeURIComponent).join("/");
+}
+
 // enc is how a name or section appears in a repository URL: escaped as a
 // file name, then percent-encoded, as the browse app writes paths.
 const enc = (s) => encodeURIComponent(escapeName(s));
@@ -148,6 +169,8 @@ export class RepoCache {
     this.now = now;
     this.meta = new Meta(PREFIX + "meta:" + this.repo, storage);
     this.onNewManifest = null; // set by watch()
+    this.stale = new Set(); // mutable files given from the store, not yet refreshed
+    this.inflight = new Map(); // refreshes under way, by path
   }
 
   // get returns the parsed JSON at path (relative to the repository).
@@ -164,22 +187,54 @@ export class RepoCache {
     return text;
   }
 
-  // mutable files come from the network when it's there (and quick, if
-  // there's a copy to fall back on), else the store.
-  async mutable(path) {
+  // mutable files come straight from the store if they're there, while
+  // they're refreshed in the background; otherwise from the network.
+  // fresh asks the network first (giving up quickly if there's a copy).
+  async mutable(path, { fresh = false } = {}) {
     const hit = await this.store.get(path);
-    const init = { cache: "no-cache" };
-    if (hit !== null && typeof AbortSignal !== "undefined" && AbortSignal.timeout) init.signal = AbortSignal.timeout(NETWORK_TIMEOUT);
-    let text;
+    if (hit !== null && !fresh) {
+      this.stale.add(path);
+      this.refresh(path).catch(() => {});
+      return hit;
+    }
     try {
-      text = await this.fetchText(this.repo + path, init);
+      return await this.fetchMutable(path, hit !== null);
     } catch (e) {
       if (hit !== null && e.status === undefined) return hit; // offline: use what we have
       throw e;
     }
+  }
+
+  async fetchMutable(path, quick) {
+    const init = { cache: "no-cache" };
+    if (quick && typeof AbortSignal !== "undefined" && AbortSignal.timeout) init.signal = AbortSignal.timeout(NETWORK_TIMEOUT);
+    const text = await this.fetchText(this.repo + path, init);
     await this.store.put(path, text);
+    this.stale.delete(path);
     if (path === "manifest.json") this.sawManifest(text);
     return text;
+  }
+
+  // refresh fetches a mutable file again, once at a time.
+  refresh(path) {
+    if (!this.inflight.has(path)) {
+      this.inflight.set(path, this.fetchMutable(path, false).finally(() => this.inflight.delete(path)));
+    }
+    return this.inflight.get(path);
+  }
+
+  // revalidate waits for every mutable file given from the store to be
+  // refreshed, reporting whether there were any: for when one of them led
+  // to a file that's since gone.
+  async revalidate() {
+    const paths = [...this.stale];
+    await Promise.all(paths.map(p => this.refresh(p).catch(() => {})));
+    return paths.length > 0;
+  }
+
+  // settled waits for refreshes under way.
+  async settled() {
+    await Promise.all([...this.inflight.values()].map(p => p.catch(() => {})));
   }
 
   // sawManifest notes a manifest fetched from the network and, if it's not
@@ -233,7 +288,7 @@ export class RepoCache {
   // which collects garbage if it's new.
   async check(force = false) {
     if (!force && this.now() - (this.meta.load().checked || 0) < CHECK_EVERY) return;
-    await this.mutable("manifest.json");
+    await this.mutable("manifest.json", { fresh: true });
   }
 
   // watch checks for new manifests now and then while the page is open,
@@ -255,7 +310,7 @@ export class RepoCache {
   // has. progress(done, total) is called as pages finish. It resolves to
   // {pages, failed}.
   async save(key, { src = "", progress = () => {} } = {}) {
-    const m = await this.get("manifest.json");
+    const m = JSON.parse(await this.mutable("manifest.json", { fresh: true }));
     const exact = key.length > 1;
     const entries = (m.sections || []).filter(e => exact ? e.section === key : e.section[0] === key[0]);
     const pages = [];
@@ -268,16 +323,7 @@ export class RepoCache {
     }
     let done = 0, failed = 0, next = 0;
     progress(0, pages.length);
-    const one = async (p) => {
-      await this.mutable(`page/name-${enc(p.sec)}/${enc(p.name)}.json`);
-      const l = await this.get(`page/page-${p.page.slice(0, 2)}/${p.page}.json`);
-      const source = p.source || l.current;
-      const ver = (l.versions || []).find(v => v.source === source);
-      if (!ver) return;
-      const vs = ver.variants || {};
-      const which = vs.girl ? "girl" : "man";
-      if (vs[which]) await this.get(`contents/${source.slice(0, 2)}/${source}/${which}-${vs[which].sha256}.json`);
-    };
+    const one = (p) => this.keepPage(p.name, p.sec, { page: p.page, source: p.source });
     const worker = async () => {
       while (next < pages.length) {
         const p = pages[next++];
@@ -297,10 +343,33 @@ export class RepoCache {
     return { pages: pages.length, failed };
   }
 
+  // keepPage fetches what's needed to read a page offline: its pointer,
+  // listing, and the girly variant of a version (the latest, unless source
+  // says), or the original where there's no girly one. page, the listing's
+  // hash, saves asking the pointer.
+  async keepPage(name, sec, { page = "", source = "" } = {}) {
+    const ptr = JSON.parse(await this.mutable(`page/name-${enc(sec)}/${enc(name)}.json`, { fresh: true }));
+    page = page || ptr.sha256;
+    const l = await this.get(`page/page-${page.slice(0, 2)}/${page}.json`);
+    source = source || l.current;
+    const ver = (l.versions || []).find(v => v.source === source);
+    if (!ver) return;
+    const vs = ver.variants || {};
+    const which = vs.girl ? "girl" : "man";
+    if (vs[which]) await this.get(`contents/${source.slice(0, 2)}/${source}/${which}-${vs[which].sha256}.json`);
+  }
+
+  // keepListing fetches the section indexes a section's listing needs.
+  async keepListing(key) {
+    const m = await this.get("manifest.json");
+    const entries = (m.sections || []).filter(e => key.length > 1 ? e.section === key : e.section[0] === key[0]);
+    await Promise.all(entries.map(e => this.get(`section/${enc(e.section)}-${e.sha256}.json`)));
+  }
+
   // saveSearch fetches the whole search index, so any search works offline.
   // progress(done, total) is called as files arrive.
   async saveSearch({ progress = () => {} } = {}) {
-    const m = await this.get("manifest.json");
+    const m = JSON.parse(await this.mutable("manifest.json", { fresh: true }));
     const ix = m.index || {};
     const files = [];
     for (const [kind, sha] of [["words", ix.words], ["grams", ix.grams], ["docs", ix.docs]]) {
@@ -403,6 +472,12 @@ function boot() {
   if (!repo) return;
   const cache = repoCache(repo);
   cache.watch();
+  // A static page read (or listing seen) is kept, so the browse app can
+  // show it offline.
+  const page = document.querySelector("[data-keep-page]");
+  if (page) idle(() => cache.keepPage(page.dataset.keepPage, page.dataset.keepSection).catch(() => {}));
+  const list = document.querySelector("button[data-save-section]");
+  if (list) idle(() => cache.keepListing(list.dataset.saveSection).catch(() => {}));
   if (typeof globalThis.caches !== "undefined") {
     for (const b of document.querySelectorAll("button[data-save-section], button[data-save-search]")) {
       b.hidden = false;

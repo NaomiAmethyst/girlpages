@@ -2,20 +2,23 @@
 // Copyright (C) 2026 Naomi Persephone Amethyst <naomi@amethyst.name>
 //
 // The browse app: everything the static site doesn't render itself, read
-// straight from the repository. /browse/ takes:
+// straight from the repository, in the home page's hash (see browseURL in
+// girlpages.js):
 //
-//   ?src=debian/trixie                      a source's home
-//   ?src=debian/trixie&section=1            its section 1 (&sub=1ssl for one subsection)
-//   ?home=1, ?section=1                     the same for everything (the latest of every
-//                                           page): where static pages go when offline
-//   ?page=ls&sec=1                          a page (its latest version)
-//   …&v=<source hash>                       a particular version
-//   …&variant=man                           another variant: man is the original;
-//                                           girl is the default, and there may be more
-//   …&mono=1                                the original as man prints it, not reflowed
-//   …&src=debian/trixie                     the version a source has, and links that stay in it
+//   #/debian/trixie                 a source's home
+//   #/section/3, #/section/3/3ssl   a section's listing, or a subsection's
+//   #/debian/section/1              …from one source
+//   #/1/ls                          a page (its latest version)
+//   #/debian/trixie/1/ls            the version a source has, with links that stay in it
+//   #/1/ls/9.4                      another version: an upstream version, or a source hash's start
+//   #/1/ls/man                      another variant: man is the original; girl is the default
+//   #/1/ls/9.4/man/mono             the original as man prints it, not reflowed
+//   …/versions                      scrolled to the list of versions
+//
+// It's also where static pages go when offline. /browse/?page=… (from
+// earlier versions) redirects here.
 
-import { repoCache, saveButton } from "./girlpages.js";
+import { repoCache, saveButton, browseURL } from "./girlpages.js";
 import { renderHTML, renderOriginalHTML, esc } from "./render.js";
 import { escapeName, segmentName } from "./search.js";
 
@@ -34,11 +37,7 @@ const enc = (s) => encodeURIComponent(escapeName(s));
 
 // Where things are.
 const staticPage = (name, sec) => `${base}man/${encodeURIComponent(segmentName(sec))}/${encodeURIComponent(segmentName(name))}/`;
-function browse(params) {
-  const q = new URLSearchParams();
-  for (const [k, v] of Object.entries(params)) if (v) q.set(k, v);
-  return `${base}browse/?${q}`;
-}
+const browse = (params) => browseURL(base, params);
 const sourceLabel = (key) => (key ? key.replace("/", " ") : "everything");
 
 // How variants are offered. Others (made with other prompts) get their name.
@@ -185,17 +184,41 @@ async function sourceSection(src, key, sub) {
   if (button) saveButton(button, cache, sub || key, src);
 }
 
-async function pageView(name, sec, v, which, src, mono) {
+// pageView shows a page; rest is what follows its name in the route:
+// [version] [variant] [mono] [versions].
+async function pageView(name, sec, rest, src) {
   let l;
   try {
     l = await listing(name, sec);
   } catch (e) {
     if (e instanceof TypeError) return oops(`you're offline, and ${name}(${sec}) isn't saved 📵`);
+    if (e.status !== 404) throw e;
     return oops(`there's no ${name}(${sec}) here 😭`);
   }
-  const ver = l.versions.find(x => x.source === v) ||
-    l.versions.find(x => x.source === (src && l.sources ? l.sources[src] : "")) ||
-    l.versions.find(x => x.source === l.current) || l.versions[0];
+  rest = [...rest];
+  const at = rest[rest.length - 1] === "versions" ? rest.pop() : "";
+  const mono = rest[rest.length - 1] === "mono" ? !!rest.pop() : false;
+  // Versions by preference: the latest, then this source's, then newest added.
+  const fallback = src && l.sources && l.sources[src] || l.current;
+  const versions = [...l.versions].sort((a, b) => (a.source === l.current) !== (b.source === l.current) ? (a.source === l.current ? -1 : 1)
+    : (a.source === fallback) !== (b.source === fallback) ? (a.source === fallback ? -1 : 1) : (b.added || "").localeCompare(a.added || ""));
+  const findVersion = (tok) => versions.find(x => x.version === tok || (tok.length >= 8 && /^[0-9a-f]+$/.test(tok) && x.source.startsWith(tok)));
+  // slug is how a version is named in a route: not at all if it's the one
+  // shown by default, else by its upstream version if that's unique.
+  const slug = (x) => x.source === fallback ? "" :
+    x.version && l.versions.filter(y => y.version === x.version).length === 1 ? x.version : x.source.slice(0, 12);
+  let ver = null, which = "";
+  if (rest.length >= 2) [ver, which] = [findVersion(rest[0]), rest[1]];
+  else if (rest.length === 1) {
+    ver = findVersion(rest[0]);
+    if (!ver) which = rest[0];
+  }
+  // One word that's neither a version nor a variant is a version that isn't here.
+  const isVariant = (k) => l.versions.some(x => x.variants && x.variants[k]);
+  if (!ver && (rest.length >= 2 || (rest.length === 1 && !isVariant(rest[0])))) {
+    return oops(`there's no version ${rest[0]} of ${name}(${sec}) here 🤔`);
+  }
+  ver = ver || versions.find(x => x.source === fallback) || versions[0];
   if (!ver) return oops("that page has no versions 🤔");
   const has = (k) => ver.variants && ver.variants[k];
   const variants = Object.keys(ver.variants || {}).filter(k => /^[a-z][a-z0-9-]{0,31}$/.test(k)).sort(variantOrder);
@@ -205,7 +228,7 @@ async function pageView(name, sec, v, which, src, mono) {
   const latest = ver.source === l.current;
   const suffix = which === "girl" ? "" : which === "man" ? " · original" : " · " + which;
   document.title = `${name}(${sec})${ver.description ? " — " + ver.description : ""}${suffix} · girlpages 💅`;
-  const here = (extra) => browse({ page: name, sec, v: ver.source === l.current ? "" : ver.source, src, ...extra });
+  const here = (extra) => browse({ page: name, sec, version: slug(ver), src, ...extra });
 
   let body = "", toc = [];
   const link = src ? (n, s) => browse({ page: n, sec: s, src }) : (n, s) => staticPage(n, s);
@@ -230,7 +253,7 @@ async function pageView(name, sec, v, which, src, mono) {
       : `<a class="pill" href="${esc(here({ variant: k === variants[0] ? "" : k }))}">${esc(variantLabel(k))}</a>`).join("");
   }
   if (doc.syntax !== "girlpages-markup") {
-    const href = here({ variant: which === variants[0] ? "" : which, mono: mono ? "" : "1" });
+    const href = here({ variant: which === variants[0] ? "" : which, mono: !mono });
     meta += `<a class="pill${mono ? " on" : ""}" href="${esc(href)}" title="as man prints it">⌨️ monospace</a>`;
   }
   const keys = sourceKeys(ver);
@@ -239,13 +262,12 @@ async function pageView(name, sec, v, which, src, mono) {
   let notice = "";
   if (!latest) notice += `<div class="notice">🕰️ this isn't the latest version of ${esc(name)}(${esc(sec)}). <a href="${esc(staticPage(name, sec))}">here's the latest</a>.</div>`;
   if (which === "man" && variants.length === 1) notice += `<div class="notice">💤 she hasn't gotten to this version yet, so here's the original.</div>`;
-  const versions = [...l.versions].sort((a, b) => (a.source === l.current ? -1 : b.source === l.current ? 1 : (b.added || "").localeCompare(a.added || "")));
   const vlist = versions.length > 1 ? `<div class="provenance" id="versions"><details open><summary>🕰️ ${versions.length} versions, and where they're from</summary><ul>` +
     versions.map(x => {
       const label = (x.version ? x.version + " · " : "") + (sourceLabels(x).join(", ") || "added " + (x.added || "").slice(0, 10)) +
         (x.source === l.current ? " (latest)" : "");
       return x.source === ver.source ? `<li><strong>${esc(label)}</strong> (this one)</li>`
-        : `<li><a href="${esc(browse({ page: name, sec, v: x.source === l.current ? "" : x.source, src }))}">${esc(label)}</a></li>`;
+        : `<li><a href="${esc(browse({ page: name, sec, version: slug(x), src }))}">${esc(label)}</a></li>`;
     }).join("") + "</ul></details></div>" : "";
   const crumbs = `<nav class="crumbs"><a href="${esc(base)}">home</a> › ` + (src
     ? `<a href="${esc(browse({ src }))}">${esc(sourceLabel(src))}</a> › <a href="${esc(browse({ src, section: sec[0], sub: sec.length > 1 ? sec : "" }))}">section ${esc(sec)}</a>`
@@ -254,24 +276,95 @@ async function pageView(name, sec, v, which, src, mono) {
     toc.map(t => `<li${t.level === 2 ? ' class="sub"' : ""}><a href="#${esc(t.id)}">${esc(t.text)}</a></li>`).join("") + "</ul></nav>" : "";
   h(`<div class="layout"><article class="card manpage">${crumbs}<h1>${esc(title)}${esc(suffix)}</h1>` +
     `<div class="meta">${meta}</div>${inLine}${notice}${body}${vlist}</article>${tocHTML}</div>`);
-  if (location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView();
+  if (at) document.getElementById(at)?.scrollIntoView();
 }
 
 function oops(msg) {
   h(`<div class="card waiting"><div class="spinner">😭</div><h1>${esc(msg)}</h1><p><a href="${esc(base)}">home</a> · <a href="${esc(base)}search/">search</a></p></div>`);
 }
 
-async function main() {
-  const q = new URLSearchParams(location.search);
-  const page = q.get("page"), sec = q.get("sec"), src = q.get("src") || "", section = q.get("section");
+// The page the app is on: the home page, whose static content it hides
+// while showing a route, or /browse/ (from earlier versions), which
+// redirects.
+const root = document.documentElement;
+const home = document.querySelector(".home-static");
+const homeTitle = document.title;
+
+// legacyRoute turns a /browse/?… query from earlier versions into a route.
+function legacyRoute(q) {
+  const src = q.get("src") || "";
+  if (q.get("page") && q.get("sec")) {
+    return browse({ page: q.get("page"), sec: q.get("sec"), src, version: (q.get("v") || "").slice(0, 12),
+      variant: q.get("variant") || (q.get("mono") ? "man" : ""), mono: q.get("mono") === "1" });
+  }
+  if (q.get("section")) return browse({ src, section: q.get("section"), sub: q.get("sub") || "" });
+  return browse({ src });
+}
+
+function showHome() {
+  root.classList.remove("routed");
+  app.hidden = true;
+  document.title = homeTitle;
+}
+
+async function route() {
+  const h = location.hash;
+  if (!h.startsWith("#/") || h === "#/") {
+    if (home) return showHome();
+    return sourceHome("");
+  }
+  root.classList.add("routed");
+  app.hidden = false;
+  let segs;
   try {
-    if (page && sec) await pageView(page, sec, q.get("v"), q.get("variant"), src, q.get("mono") === "1");
-    else if (section) await sourceSection(src, section, q.get("sub") || "");
-    else if (src || q.get("home")) await sourceHome(src);
-    else location.replace(base);
+    segs = h.slice(2).split("/").filter(x => x !== "").map(decodeURIComponent);
+  } catch {
+    return oops("that link's broken 🤔");
+  }
+  const m = await manifest();
+  const sources = m.sources || [];
+  let src = "";
+  if (segs.length && sources.some(s => s.distro === segs[0])) {
+    src = segs.shift();
+    if (segs.length && sources.some(s => s.distro === src && s.release === segs[0])) src += "/" + segs.shift();
+  }
+  if (!segs.length) return sourceHome(src);
+  if (segs[0] === "section") return segs[1] ? sourceSection(src, segs[1], segs[2] || "") : sourceHome(src);
+  if (segs.length < 2) return oops("there's nothing here 🤔");
+  return pageView(segs[1], segs[0], segs.slice(2), src);
+}
+
+// main shows the route. Files that change are shown from the cache while
+// they're refreshed, so if one turns out to be stale enough to point at
+// something since removed, it's refreshed and shown again.
+async function main() {
+  try {
+    await route();
   } catch (e) {
+    if (e.status === 404 && await cache.revalidate()) {
+      try {
+        return await route();
+      } catch (e2) {
+        e = e2;
+      }
+    }
     oops(e instanceof TypeError ? "you're offline, and this isn't saved yet 📵" : `something broke 💔 ${e.message}`);
   }
 }
 
-main();
+if (location.pathname !== base) {
+  location.replace(location.search ? legacyRoute(new URLSearchParams(location.search)) : base + location.hash);
+} else {
+  // Links within a page (contents, letters) scroll rather than route.
+  app.addEventListener("click", (e) => {
+    const a = e.target.closest("a[href^='#']");
+    if (!a || a.getAttribute("href").startsWith("#/")) return;
+    e.preventDefault();
+    document.getElementById(decodeURIComponent(a.getAttribute("href").slice(1)))?.scrollIntoView();
+  });
+  window.addEventListener("hashchange", () => {
+    window.scrollTo(0, 0);
+    main();
+  });
+  main();
+}

@@ -127,7 +127,7 @@ func TestBuild(t *testing.T) {
 		`href="/girlpages/static/style.css?v=test"`, `<link rel="canonical" href="https://example.test/girlpages/">`,
 		`<meta property="og:type" content="website">`, `"@type":"WebSite"`,
 		`"urlTemplate":"https://example.test/girlpages/search/?q={search_term_string}"`,
-		`href="/girlpages/browse/?src=debian%2Ftrixie"`} {
+		`href="/girlpages/#/debian/trixie"`, `<div id="app" data-repo="/girlpages/repo/"`} {
 		if !strings.Contains(home, want) {
 			t.Errorf("home page lacks %q", want)
 		}
@@ -139,9 +139,9 @@ func TestBuild(t *testing.T) {
 		`<meta property="og:image" content="https://example.test/girlpages/static/icon-512.png">`,
 		`<meta name="twitter:card" content="summary">`, `<meta property="article:modified_time"`,
 		`<code>ls</code> slays, see <a href="/girlpages/man/1/ls/">ls(1)</a> and nope(1)`, // only real pages are links
-		`href="/girlpages/browse/?page=ls&amp;sec=1&amp;variant=man"`, "girlified by fake-1",
-		`href="/girlpages/browse/?page=ls&amp;sec=1#versions"`, "2 versions", "version 10, in",
-		`href="/girlpages/browse/?page=ls&amp;sec=1&amp;src=debian%2Ftrixie"`} {
+		`href="/girlpages/#/1/ls/man"`, "girlified by fake-1",
+		`href="/girlpages/#/1/ls/versions"`, "2 versions", "version 10, in",
+		`href="/girlpages/#/debian/trixie/1/ls"`, `data-keep-page="ls" data-keep-section="1"`} {
 		if !strings.Contains(ls, want) {
 			t.Errorf("ls page lacks %q", want)
 		}
@@ -493,7 +493,9 @@ const names = async (c, q) => (await new Searcher(repo, c).search(q, 5)).map(h =
 out.first = await names(cache(), "list");
 out.firstFetches = fetched.length;
 fetched = [];
-out.again = await names(cache(), "list");
+const again = cache();
+out.again = await names(again, "list");
+await again.settled(); // the manifest is refreshed after
 out.againFetches = [...fetched];
 down = true;
 out.offline = await names(cache(), "list");
@@ -517,7 +519,17 @@ const body = await c1.get("contents/" + l.current.slice(0, 2) + "/" + l.current 
 out.offlinePage = body.variant + " " + body.title;
 down = false;
 
+// A page read is kept for offline.
+const keeper = cache();
+await keeper.keepPage("git-commit", "1");
+down = true;
+const kept = cache();
+const kp = await kept.get("page/name-1/git-commit.json");
+out.keptPage = (await kept.get("page/page-" + kp.sha256.slice(0, 2) + "/" + kp.sha256 + ".json")).name;
+down = false;
+
 // Republish; a check notices and collects garbage.
+const oldManifest = store.m.get("manifest.json");
 await fetch(repo.replace(/repo\/$/, "switch"));
 const c = cache();
 let collected;
@@ -528,6 +540,18 @@ out.kept = [...store.m.keys()];
 c.onNewManifest = () => { out.secondGC = true; };
 await c.check(true);
 out.after = await names(c, "added later");
+
+// Files that change are first given from the store, then refreshed;
+// revalidate makes sure of them.
+store.m.set("manifest.json", oldManifest);
+const swr = cache();
+const before = (await swr.get("manifest.json")).pages;
+await swr.settled();
+out.swr = [before, (await swr.get("manifest.json")).pages];
+store.m.set("manifest.json", oldManifest);
+const rv = cache();
+await rv.get("manifest.json");
+out.revalidated = [await rv.revalidate(), (await rv.get("manifest.json")).pages];
 out.savedAfter = (await c.get("manifest.json")).generated !== out.savedState.generated;
 
 // A small store: everything still works, and it stays within it.
@@ -545,6 +569,8 @@ console.log(JSON.stringify(out));
 		First, Again, Offline, After, Small []string
 		FirstFetches                        int
 		AgainFetches                        []string
+		KeptPage                            string
+		Swr, Revalidated                    []any
 		OfflineNew                          string
 		Saved                               struct{ Pages, Failed int }
 		Progress                            string
@@ -563,6 +589,14 @@ console.log(JSON.stringify(out));
 	}
 	if got.FirstFetches < 5 || !reflect.DeepEqual(got.AgainFetches, []string{"manifest.json"}) {
 		t.Errorf("fetched %d files at first, then %v (want only the manifest)", got.FirstFetches, got.AgainFetches)
+	}
+	if got.KeptPage != "git-commit" {
+		t.Errorf("a page kept for offline: %q", got.KeptPage)
+	}
+	m1, _ := repo.NewClient(filepath.Join(v1, "repo"), time.Second).Manifest(context.Background())
+	m2c, _ := repo.NewClient(filepath.Join(v2, "repo"), time.Second).Manifest(context.Background())
+	if fmt.Sprint(got.Swr) != fmt.Sprintf("[%d %d]", m1.Pages, m2c.Pages) || fmt.Sprint(got.Revalidated) != fmt.Sprintf("[true %d]", m2c.Pages) {
+		t.Errorf("stale manifest, then refreshed: %v; revalidated: %v", got.Swr, got.Revalidated)
 	}
 	if got.OfflineNew != "TypeError" {
 		t.Errorf("an uncached search offline gave %q", got.OfflineNew)
@@ -668,14 +702,14 @@ func TestSources(t *testing.T) {
 	}
 	// Static pages link into the browse app for sources.
 	page := read(t, filepath.Join(out, "man", "1", "ls", "index.html"))
-	if !strings.Contains(page, "version 9.7, in") || !strings.Contains(page, `href="/browse/?page=ls&amp;sec=1&amp;src=debian%2Ftrixie"`) {
+	if !strings.Contains(page, "version 9.7, in") || !strings.Contains(page, `href="/#/debian/trixie/1/ls"`) {
 		t.Error("ls page should say where it's from")
 	}
-	if tp := read(t, filepath.Join(out, "man", "8", "tool", "index.html")); !strings.Contains(tp, `src=upstream">upstream</a>`) {
+	if tp := read(t, filepath.Join(out, "man", "8", "tool", "index.html")); !strings.Contains(tp, `href="/#/upstream/8/tool">upstream</a>`) {
 		t.Error("git page should say it's upstream")
 	}
 	sec1 := read(t, filepath.Join(out, "section", "1", "index.html"))
-	if !strings.Contains(sec1, `href="/browse/?section=1&amp;src=arch%2Frolling"`) || strings.Contains(sec1, "src=upstream") {
+	if !strings.Contains(sec1, `href="/#/arch/rolling/section/1"`) || strings.Contains(sec1, "#/upstream") {
 		t.Error("section 1 should offer the sources that have pages in it, and only those")
 	}
 }

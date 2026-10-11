@@ -8,7 +8,7 @@
 // page, girlified if it has been, with canonical links, OpenGraph and
 // JSON-LD. Everything else (originals, older versions, browsing by
 // distribution or release, and search) is done in the browser by
-// /browse/ and /search/, straight from the repository. The site only reads
+// the home page's hash and /search/, straight from the repository. The site only reads
 // the repository, so anyone can build one from a published repository.
 package site
 
@@ -233,15 +233,18 @@ func (b *builder) sectionURL(sec string) string {
 	return b.url("section", sec)
 }
 
-// browseURL is a view in the browser app, from name, value pairs.
-func (b *builder) browseURL(params ...string) string {
-	q := url.Values{}
-	for i := 0; i+1 < len(params); i += 2 {
-		if params[i+1] != "" {
-			q.Set(params[i], params[i+1])
-		}
+// browseURL is a view in the browse app, which lives in the home page's
+// hash: #/[<source>/]<segments>, as browseURL in static/girlpages.js makes
+// them (<sec>/<name> for a page, section/<key> for a listing).
+func (b *builder) browseURL(src string, segs ...string) string {
+	var out []string
+	if src != "" {
+		segs = append(strings.Split(src, "/"), segs...)
 	}
-	return b.o.Base + "browse/?" + q.Encode()
+	for _, s := range segs {
+		out = append(out, url.PathEscape(s))
+	}
+	return b.o.Base + "#/" + strings.Join(out, "/")
 }
 
 // file maps a site URL path to the file that serves it.
@@ -417,7 +420,11 @@ func (b *builder) sourceChips(section string) []chip {
 		if src.Release != "" {
 			label = "· " + src.Release
 		}
-		cs = append(cs, chip{Label: label, URL: b.browseURL("src", src.Key(), "section", section)})
+		u := b.browseURL(src.Key())
+		if section != "" {
+			u = b.browseURL(src.Key(), "section", section)
+		}
+		cs = append(cs, chip{Label: label, URL: u})
 	}
 	return cs
 }
@@ -627,13 +634,13 @@ func (b *builder) page(p repo.PageRef) error {
 		title = strings.ToUpper(name) + "(" + sec + ")"
 	}
 	pv := &pageView{Name: name, Section: sec, Title: title, Description: ver.Description,
-		SectionURL: b.sectionURL(sec), URL: u, BrowseURL: b.browseURL("page", name, "sec", sec),
+		SectionURL: b.sectionURL(sec), URL: u, BrowseURL: b.browseURL("", sec, name),
 		Versions: len(p.Listing.Versions), Version: ver.Upstream()}
 	for _, pk := range ver.Packages {
 		pv.Packages = append(pv.Packages, pk.String())
 	}
 	for _, src := range sourcesIn(ver) {
-		pv.In = append(pv.In, chip{Label: src.Label(), URL: b.browseURL("page", name, "sec", sec, "src", src.Key())})
+		pv.In = append(pv.In, chip{Label: src.Label(), URL: b.browseURL(src.Key(), sec, name)})
 	}
 
 	man, err := b.s.Variant(ver.Source, repo.VariantMan)

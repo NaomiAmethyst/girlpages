@@ -31,7 +31,7 @@
 <meta name="theme-color" content="#ff3e9a" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#170d22" media="(prefers-color-scheme: dark)">
 <meta name="apple-mobile-web-app-title" content="girlpages">
-<script>try{var t=localStorage.getItem("girlpages-theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+<script>try{var t=localStorage.getItem("girlpages-theme");if(t)document.documentElement.dataset.theme=t}catch(e){}if(/^#\/./.test(location.hash))document.documentElement.classList.add("routed")</script>
 <link rel="stylesheet" href="{{.Base}}static/style.css?v={{.Version}}">
 </head>
 <body>

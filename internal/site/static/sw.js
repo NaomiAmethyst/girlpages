@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Naomi Persephone Amethyst <naomi@amethyst.name>
 //
 // girlpages service worker: keeps the app shell (the scripts, styles, and
-// the browse, search and offline pages) for offline use. Repository files
+// the home, search and offline pages) for offline use. Repository files
 // aren't touched here; the pages cache those themselves
 // (static/girlpages.js). Static pages aren't kept either: offline, they're
 // sent to the browse app, which renders the same thing from the cached
@@ -65,7 +65,7 @@ async function page(req, url) {
 
 // offlineView is the browse app's view of a static page, if it has one:
 // man/<sec>/<name>/ is a page, section/<key>/ and section/<key>/<sec>/ a
-// listing.
+// listing. The app lives in the home page, which the shell has.
 function offlineView(url) {
   let parts;
   try {
@@ -73,17 +73,11 @@ function offlineView(url) {
   } catch {
     return "";
   }
-  const q = new URLSearchParams();
-  if (parts[0] === "man" && parts.length === 3) {
-    q.set("page", parts[2]);
-    q.set("sec", parts[1]);
-  } else if (parts[0] === "section" && (parts.length === 2 || parts.length === 3)) {
-    q.set("section", parts[1]);
-    if (parts[2]) q.set("sub", parts[2]);
-  } else {
-    return "";
-  }
-  return `${BASE}browse/?${q}${url.hash}`;
+  let route;
+  if (parts[0] === "man" && parts.length === 3) route = [parts[1], parts[2]];
+  else if (parts[0] === "section" && (parts.length === 2 || parts.length === 3)) route = parts;
+  else return "";
+  return BASE + "#/" + route.map(encodeURIComponent).join("/");
 }
 
 // unsegment undoes site.SegmentName, which escapes names starting with a

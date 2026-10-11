@@ -1,12 +1,12 @@
 {{define "content"}}{{with .Page}}
 <div class="layout">
-<article class="card manpage">
+<article class="card manpage" data-keep-page="{{.Name}}" data-keep-section="{{.Section}}">
 <nav class="crumbs" aria-label="Breadcrumbs"><a href="{{$.Base}}">home</a> › <a href="{{.SectionURL}}">section {{.Section}}</a> › {{.Title}}</nav>
 <h1>{{.Title}}</h1>
 <div class="meta">
 {{if .Girlified}}{{if .Model}}<span>girlified by {{.Model}}{{if .Modified}} on <time datetime="{{.Modified}}">{{.Modified}}</time>{{end}} 💖</span>{{end}}
-<span class="pill on">💅 girly</span><a class="pill" href="{{.BrowseURL}}&amp;variant=man">📜 original</a>{{end}}
-{{if gt .Versions 1}}<a class="pill" href="{{.BrowseURL}}#versions">🕰️ {{.Versions}} versions</a>{{end}}
+<span class="pill on">💅 girly</span><a class="pill" href="{{.BrowseURL}}/man">📜 original</a>{{end}}
+{{if gt .Versions 1}}<a class="pill" href="{{.BrowseURL}}/versions">🕰️ {{.Versions}} versions</a>{{end}}
 </div>
 {{if .In}}<div class="meta in">📦 {{if .Version}}version {{.Version}}, {{end}}in {{range $i, $c := .In}}{{if $i}}, {{end}}<a href="{{$c.URL}}">{{$c.Label}}</a>{{end}}</div>{{end}}
 {{if not .Girlified}}<div class="notice">💤 she hasn't gotten to this one yet, so here's the original for now.</div>

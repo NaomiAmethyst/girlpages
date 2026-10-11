@@ -347,3 +347,7 @@ ul.pages .done { flex: none; }
 .pagehead .save { margin: 0.6rem 0 0; }
 button.pill { font: inherit; cursor: pointer; }
 button.pill:disabled { cursor: progress; opacity: 0.8; }
+
+/* the browse app, in the home page's hash */
+.routed .home-static { display: none; }
+.routed #app[hidden] { display: block; }
