@@ -74,6 +74,7 @@ func run(args []string) int {
 		if errors.Is(err, pflag.ErrHelp) {
 			return 0
 		}
+		fmt.Fprintf(os.Stderr, "girlrepo: %v\nTry 'girlrepo --help' 🫶\n", err)
 		return 1
 	}
 	if *showVersion {
@@ -153,6 +154,8 @@ func parse(fs *pflag.FlagSet, args []string) error {
 		if errors.Is(err, pflag.ErrHelp) {
 			return err
 		}
+		// pflag doesn't say what was wrong when it's told to carry on.
+		fmt.Fprintf(os.Stderr, "girlrepo %s: %v\nTry 'girlrepo %s --help' 🫶\n", fs.Name(), err, fs.Name())
 		return errUsage
 	}
 	return nil
