@@ -576,10 +576,17 @@ and the pointers into the rest
 .BR repo/section/ section .json ),
 which change on every publish.
 .TP
-.B public, max-age=86400
+.B public, max-age=31536000
 Page contents
-.RB ( repo/contents/ ),
-which change only when a page is girlified again.
+.RB ( repo/contents/ ).
+These are named after their page version, not themselves, so girlifying a
+page again
+.RB ( girlify " " \-\-force " or " \-\-reprompt )
+changes them in place; after doing that on a published site, invalidate
+.B /repo/contents/*
+at the CDN, if there is one.
+Browsers check them again when a page is reloaded, as they aren't marked
+immutable.
 .TP
 .B no-cache
 .BR sw.js ,

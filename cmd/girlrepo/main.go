@@ -535,6 +535,12 @@ func (a *app) girlify(ctx context.Context, args []string) error {
 		fmt.Fprintf(os.Stderr, ", %d left for next time", st.Remaining)
 	}
 	fmt.Fprintf(os.Stderr, " (%s)\n", time.Since(start).Round(time.Second))
+	if (*force || *reprompt) && st.Converted+st.FromCache > 0 {
+		if _, merr := s.Manifest(); merr == nil {
+			fmt.Fprintln(os.Stderr, "   heads up: those pages' contents changed in place on a published repository;\n"+
+				"   after the next publish, invalidate /repo/contents/* if a CDN caches it")
+		}
+	}
 	if err == nil && st.Failed > 0 {
 		return fmt.Errorf("%d pages failed", st.Failed)
 	}

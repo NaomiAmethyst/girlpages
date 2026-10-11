@@ -45,11 +45,13 @@ source = "/repo/**"
 [advanced.headers.headers]
 Cache-Control = "public, max-age=300"
 
-# Page contents change only when a page is girlified again.
+# Page contents change only if a page is girlified again, which is rare
+# enough to handle by hand (invalidate /repo/contents/* at a CDN). Not
+# immutable, so a browser reload still checks.
 [[advanced.headers]]
 source = "/repo/contents/**"
 [advanced.headers.headers]
-Cache-Control = "public, max-age=86400"
+Cache-Control = "public, max-age=31536000"
 
 # Files named after their own hash never change.
 [[advanced.headers]]

@@ -26,9 +26,12 @@ const (
 	// CachePointer is for manifest.json and the files that point into the
 	// immutable ones: they change whenever the repository is published.
 	CachePointer = "public, max-age=300"
-	// CacheContent is for page contents, which change only when a page is
-	// girlified again.
-	CacheContent = "public, max-age=86400"
+	// CacheContent is for page contents. They're named after their page
+	// version, not themselves, so they could change if a page were
+	// girlified again; but that's meant to be rare enough to fix by hand
+	// (a CDN invalidation), so they're kept a year. They're not marked
+	// immutable, so a browser reload still checks them.
+	CacheContent = "public, max-age=31536000"
 	// CacheSite is for the website's pages, scripts and styles.
 	CacheSite = "public, max-age=3600"
 	// CacheRevalidate is for the service worker, which browsers must
