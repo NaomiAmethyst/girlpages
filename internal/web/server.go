@@ -257,6 +257,9 @@ var sectionInfo = map[string][2]string{
 	"o": {"Old", "🕰️"},
 }
 
+// SectionName gives a section's description and emoji.
+func SectionName(key string) (string, string) { return sectionName(key) }
+
 func sectionName(key string) (string, string) {
 	if info, ok := sectionInfo[key[:1]]; ok {
 		return info[0], info[1]

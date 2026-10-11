@@ -16,6 +16,7 @@ import (
 
 	"github.com/NaomiAmethyst/girlpages/internal/cache"
 	"github.com/NaomiAmethyst/girlpages/internal/manpage"
+	"github.com/NaomiAmethyst/girlpages/internal/repo"
 )
 
 type fake struct{ calls atomic.Int32 }
@@ -164,5 +165,39 @@ func TestLock(t *testing.T) {
 		t.Errorf("relock: %v", err)
 	} else {
 		u()
+	}
+}
+
+func TestFetchFromRepo(t *testing.T) {
+	if _, err := exec.LookPath("man"); err != nil {
+		t.Skip("man not installed")
+	}
+	mp := t.TempDir()
+	write(t, filepath.Join(mp, "man1", "foo.1"), page("foo", "1", "does foo"))
+	write(t, filepath.Join(mp, "man1", "bar.1"), page("bar", "1", "does bar"))
+	dir := cache.Dir(t.TempDir())
+	var asked atomic.Int32
+	o := Options{Jobs: 2, Quiet: true, Man: manpage.Options{ManPath: mp},
+		Fetch: func(_ context.Context, p manpage.Page) (string, string, error) {
+			asked.Add(1)
+			if p.Name == "foo" {
+				return "# NAME\n\nfoo from the repo 💅\n", "repo-model", nil
+			}
+			return "", "", repo.ErrNotFound
+		}}
+	// No model at all: what's in the repo still gets cached.
+	st, err := Run(context.Background(), o, cache.Set{dir}, nil, io.Discard)
+	if err == nil || st.Fetched != 1 || st.Failed != 1 || asked.Load() != 2 {
+		t.Fatalf("no model: %+v, %v, asked %d", st, err, asked.Load())
+	}
+	markup, e, _ := cache.Set{dir}.Lookup(filepath.Join(mp, "man1", "foo.1"))
+	if !strings.Contains(markup, "from the repo") || e.Backend != "repo" || e.Model != "repo-model" {
+		t.Fatalf("foo: %q %+v", markup, e)
+	}
+	// With a model, the rest gets converted.
+	b := &fake{}
+	st, err = Run(context.Background(), o, cache.Set{dir}, b, io.Discard)
+	if err != nil || st.Fresh != 1 || st.Converted != 1 || b.calls.Load() != 1 {
+		t.Fatalf("with a model: %+v, %v", st, err)
 	}
 }

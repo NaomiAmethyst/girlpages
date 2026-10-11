@@ -51,14 +51,21 @@ ifeq ($(SYSTEMD),auto)
   SYSTEMD := $(if $(wildcard /run/systemd/system),yes,no)
 endif
 
-.PHONY: all build test check install install-user uninstall uninstall-user clean
+.PHONY: all build test check install install-user install-girlrepo uninstall uninstall-user clean
 
 all: build
 
-build: girl
+build: girl girlrepo
 
-girl: $(shell find cmd internal -name '*.go') go.mod go.sum
+SOURCES := $(shell find cmd internal -name '*.go' -o -name '*.html' -o -name '*.css' -o -name '*.js') go.mod go.sum
+
+girl: $(SOURCES)
 	$(GO) build -trimpath -ldflags '$(LDFLAGS)' -o $@ ./cmd/girl
+
+# girlrepo builds girlpages repositories and websites; it isn't installed
+# by default, as only people publishing a repository need it.
+girlrepo: $(SOURCES)
+	$(GO) build -trimpath -ldflags '$(LDFLAGS)' -o $@ ./cmd/girlrepo
 
 test:
 	$(GO) test ./...
@@ -66,6 +73,10 @@ test:
 check: test
 	$(GO) vet ./...
 	@test -z "$$(gofmt -l .)" || { gofmt -l .; echo 'run gofmt -w .'; exit 1; }
+
+install-girlrepo: girlrepo
+	install -Dm755 girlrepo '$(DESTDIR)$(BINDIR)/girlrepo'
+	install -Dm644 man/girlrepo.1 '$(DESTDIR)$(MANDIR)/man1/girlrepo.1'
 
 install: girl
 	install -Dm755 girl '$(DESTDIR)$(BINDIR)/girl'
@@ -125,6 +136,7 @@ endif
 uninstall:
 	-[ -z '$(DESTDIR)' ] && command -v systemctl >/dev/null && systemctl disable --now girlpages-update.timer
 	rm -f '$(DESTDIR)$(BINDIR)/girl' '$(DESTDIR)$(MANDIR)/man1/girl.1' \
+		'$(DESTDIR)$(BINDIR)/girlrepo' '$(DESTDIR)$(MANDIR)/man1/girlrepo.1' \
 		'$(DESTDIR)$(LIBEXECDIR)/girlpages-hook' \
 		'$(DESTDIR)$(SYSTEMDUNITDIR)/girlpages-update.service' \
 		'$(DESTDIR)$(SYSTEMDUNITDIR)/girlpages-update.timer' \
@@ -142,4 +154,4 @@ uninstall-user:
 	@echo 'Left $(USER_CONFIG_DIR)/girlpages and your cache in place.'
 
 clean:
-	rm -f girl
+	rm -f girl girlrepo

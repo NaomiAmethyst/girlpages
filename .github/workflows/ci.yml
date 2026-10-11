@@ -8,7 +8,8 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - run: sudo apt-get update && sudo apt-get install -y man-db
+      # node runs the browser search against the Go one; cpio unpacks test rpms.
+      - run: sudo apt-get update && sudo apt-get install -y man-db cpio nodejs
       - run: make check
       - run: make
-      - run: make install DESTDIR="$PWD/stage" HOOKS="apt pacman dnf" SYSTEMD=yes && find stage -type f
+      - run: make install install-girlrepo DESTDIR="$PWD/stage" HOOKS="apt pacman dnf" SYSTEMD=yes && find stage -type f

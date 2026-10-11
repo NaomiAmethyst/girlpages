@@ -20,6 +20,7 @@ import (
 	"github.com/NaomiAmethyst/girlpages/internal/config"
 	"github.com/NaomiAmethyst/girlpages/internal/llm"
 	"github.com/NaomiAmethyst/girlpages/internal/manpage"
+	"github.com/NaomiAmethyst/girlpages/internal/repo"
 )
 
 // Girl holds what's needed to fetch pages.
@@ -32,6 +33,8 @@ type Girl struct {
 	Limit int
 	// NewBackend builds the backend; it defaults to NewBackend.
 	NewBackend func(*config.Config) (llm.Backend, error)
+	// Repo, if set, is asked for pages before the model is.
+	Repo *repo.Client
 
 	mu      sync.Mutex
 	backend llm.Backend
@@ -120,6 +123,22 @@ func (g *Girl) Get(ctx context.Context, p manpage.Page, o GetOptions) (Result, e
 			return Result{Markup: markup, Title: title, Entry: entry}, nil
 		}
 	}
+	if !o.Refresh {
+		if markup, gen, err := g.FromRepo(ctx, p); err == nil {
+			entry.Backend, entry.Model = BackendRepo, gen.Model
+			if gen.PromptVersion != 0 {
+				entry.PromptVersion = gen.PromptVersion
+			}
+			if err := dir.PutObject(hash, markup); err != nil {
+				fmt.Fprintf(os.Stderr, "girl: couldn't save to cache: %v\n", err)
+			} else if err := entry.Stamp(); err == nil {
+				_ = dir.PutEntry(entry)
+			}
+			return Result{Markup: markup, Title: title, Entry: entry}, nil
+		} else if !errors.Is(err, repo.ErrNotFound) && !errors.Is(err, errNoRepo) {
+			fmt.Fprintf(os.Stderr, "girl: couldn't fetch from the repo: %v\n", err)
+		}
+	}
 	if o.CachedOnly {
 		return Result{}, ErrNotCached
 	}
@@ -149,6 +168,46 @@ func (g *Girl) Get(ctx context.Context, p manpage.Page, o GetOptions) (Result, e
 		}
 	}
 	return Result{Markup: markup, Title: title, Entry: entry}, nil
+}
+
+// BackendRepo is the backend recorded for pages fetched from a repository.
+const BackendRepo = "repo"
+
+var errNoRepo = errors.New("no repo configured")
+
+// FromRepo fetches a page's conversion from the repository, if there is
+// one. Pages are looked up by the hash of their roff source, so it only
+// finds conversions of exactly the version installed here. Custom
+// extra_instructions mean the repository's pages aren't wanted.
+func (g *Girl) FromRepo(ctx context.Context, p manpage.Page) (string, *repo.Generator, error) {
+	if g.Repo == nil || g.Cfg.ExtraInstructions != "" {
+		return "", nil, errNoRepo
+	}
+	src, err := manpage.SourceHash(p.Path, nil)
+	if err != nil {
+		return "", nil, err
+	}
+	v, err := g.Repo.Variant(ctx, src, repo.VariantGirl)
+	if err != nil {
+		return "", nil, err
+	}
+	gen := v.Generator
+	if gen == nil {
+		gen = &repo.Generator{}
+	}
+	return v.Text(), gen, nil
+}
+
+// NewRepo makes a client for the configured repository, or nil if there
+// isn't one.
+func NewRepo(cfg *config.Config, version string) *repo.Client {
+	u := strings.TrimSpace(cfg.Repo.URL)
+	if u == "" || u == "none" {
+		return nil
+	}
+	c := repo.NewClient(u, cfg.Repo.Timeout.Duration)
+	c.UserAgent = "girlpages/" + version
+	return c
 }
 
 // DisplayTitle is the page's own title if known, else NAME(SECTION).

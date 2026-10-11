@@ -1,0 +1,12 @@
+{{define "content"}}
+<div class="card" id="search" data-repo="{{.Base}}repo/" data-base="{{.Base}}">
+<div class="crumbs"><a href="{{.Base}}">home</a> › search</div>
+<div class="pagehead">
+<h1>🔎 search</h1>
+<p class="sub" id="search-status">type something up there, bestie</p>
+</div>
+<ul class="pages" id="search-results"></ul>
+<noscript><div class="empty">search needs JavaScript 😭 but every section is browsable from the <a href="{{.Base}}">home page</a>!</div></noscript>
+</div>
+<script type="module" src="{{.Base}}static/search.js?v={{.Version}}"></script>
+{{end}}

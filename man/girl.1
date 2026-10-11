@@ -109,7 +109,9 @@ Show the version.
 Convert the page again even if it is cached, replacing the cached copy.
 .TP
 .B \-\-cached\-only
-Never contact the model; fail for pages that are not cached.
+Never contact the model; fail for pages that are neither cached nor in the
+repository (see
+.BR REPOSITORIES ).
 .TP
 .B \-\-raw
 Print the stored markup instead of rendering it.
@@ -139,6 +141,12 @@ backend, overriding the configuration.
 .TP
 .BR \-\-model =\fImodel\fR
 Ask this model, overriding the configuration.
+.TP
+.BR \-\-repo =\fIurl\fR
+Fetch pages from this girlpages repository before asking the model,
+overriding the configuration;
+.B none
+switches the configured one off.
 .TP
 .B \-\-doctor
 Show which configuration files were read, which backend and model will be
@@ -273,6 +281,28 @@ so keep it on
 or use
 .B \-\-cached\-only
 when listening anywhere else.
+.SH REPOSITORIES
+A girlpages repository is a set of pages someone else has already girlified,
+published as static files by
+.BR girlrepo (1).
+With one configured, a page that isn't cached is looked for there before the
+model is asked, and cached like any other.
+Pages are found by the SHA-256 of their roff source (decompressed, with
+.B .so
+requests followed), so only a conversion of exactly the version installed
+here is used; anything else is converted as usual.
+Pages are fetched one at a time as they are read (and by
+.BR \-\-bulk ),
+so the repository learns which pages are read, but nothing else.
+.PP
+The repository isn't used with
+.BR \-\-refresh ,
+or when
+.B extra_instructions
+is set, since those ask for a page made just for you.
+.B \-\-bulk
+works without a model when a repository is configured, caching what the
+repository has.
 .SH CONFIGURATION
 Settings are read from the system configuration file, then the user
 configuration file (or the file given with
@@ -306,6 +336,10 @@ timeout = "10m"
 
 [openai.headers]
 "X\-Example" = "value"
+
+[repo]
+url = ""                 # a girlpages repository, e.g. https://…/repo
+timeout = "20s"
 .fi
 .RE
 .PP
@@ -414,6 +448,10 @@ Override
 .BR GIRLPAGES_OPENAI_MODEL ", " GIRLPAGES_CLAUDE_MODEL ", " GIRLPAGES_CLAUDE_COMMAND
 Override the per-backend settings.
 .TP
+.B GIRLPAGES_REPO
+Overrides
+.BR repo.url .
+.TP
 .BR XDG_CONFIG_HOME ", " XDG_CACHE_HOME
 Locate the user configuration file and cache.
 .SH FILES
@@ -473,6 +511,10 @@ as a web page.
 .B girl \-\-serve
 Browse the manual at
 .BR http://localhost:1989/ .
+.TP
+.B girl \-\-repo https://example.org/repo \-\-bulk
+Fill the cache with every page the repository has girlified, converting the
+rest.
 .SH BUGS
 The model can still get things wrong.
 When something matters, check the original with
@@ -493,4 +535,5 @@ There is NO WARRANTY, to the extent permitted by law.
 .BR apropos (1),
 .BR whatis (1),
 .BR mandb (8),
+.BR girlrepo (1),
 .BR claude (1)

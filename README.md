@@ -116,6 +116,43 @@ There's no login, so anyone who can reach it can spend your LLM budget: keep
 it on localhost (the default), or use `--cached-only` to only serve what's
 already converted (`sudo girl --bulk` first, say).
 
+## Repositories
+
+Someone already girlified the page you want? A girlpages repository is a pile
+of ready-made pages on a static web host, and `girl` can read from one before
+bothering a model:
+
+```toml
+[repo]
+url = "https://example.org/repo"
+```
+
+Pages are matched by the hash of their roff source, so you only ever get a
+conversion of exactly the version you have installed; anything else is
+converted as usual. With a repo set, `girl --bulk` works even with no model
+at all, caching everything the repo has.
+
+### Running one
+
+`girlrepo` (`make girlrepo`, documented in `girlrepo(1)`) builds them:
+
+```sh
+girlrepo ingest --distro debian --release trixie pool/*.deb   # or .pkg.tar.zst, .rpm, dirs
+girlrepo ingest --system                                      # or this machine, with its packages
+girlrepo girlify -j 8                                         # convert what isn't yet
+girlrepo publish --url https://example.org --gc               # index it and build the site
+girlrepo serve                                                # preview at localhost:1990
+```
+
+That leaves a directory to upload anywhere static: the repo in `repo/`, and
+a website around it with an HTML page per man page (so search engines can
+find them), section listings, old versions, which packages each page came
+from, and search. Search runs in the browser against a sharded index in the
+repo, fetching only the shards a query needs (typos and all: `grpe` finds
+`grep`). Each page version is stored once however many packages, distros or
+aliases share it, and everything but a few pointer files is content-addressed,
+so it caches forever and syncs cheaply. The format is in `girlrepo(1)`.
+
 ## Configure
 
 ```toml
@@ -128,6 +165,9 @@ model = "haiku"   # the default
 [openai]
 base_url = "http://localhost:11434/v1"   # Ollama, for example
 model = "qwen3:32b"
+
+[repo]
+url = ""   # a girlpages repository to try first
 ```
 
 `girl --doctor` shows what it's actually using. Everything is documented in
@@ -152,6 +192,7 @@ Plus:
 girl --refresh tar      # convert again
 girl --model opus tar   # with a different model
 girl --cached-only ls   # never call the LLM
+girl --repo URL ls      # try a girlpages repository first
 girl --raw ls           # the stored markup
 girl --doctor           # config, backend and cache status
 girl --html ls          # a standalone HTML page
@@ -168,7 +209,10 @@ make check   # tests, vet, gofmt
 Pages are stored as a small Markdown dialect with colour tags (`<pink>…</pink>`
 and friends, plus `<rainbow>`); `internal/render` turns that into ANSI or
 HTML, and `internal/web` is the server, templates and stylesheet. The prompt
-lives in `internal/llm/prompt.go`.
+lives in `internal/llm/prompt.go`. Repositories are `internal/repo` (format,
+store, client, search index), `internal/ingest` and `internal/site`; the
+browser search in `internal/site/static/search.js` must match
+`internal/repo/search.go`, which a test checks with node.
 
 ## License
 

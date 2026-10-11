@@ -65,6 +65,9 @@ type Config struct {
 
 	OpenAI OpenAIConfig `toml:"openai"`
 	Claude ClaudeConfig `toml:"claude"`
+	// Repo is a published girlpages repository to fetch pages from before
+	// asking a model.
+	Repo RepoConfig `toml:"repo"`
 
 	// Files lists the config files that were actually read.
 	Files []string `toml:"-"`
@@ -88,6 +91,13 @@ type ClaudeConfig struct {
 	Timeout Duration `toml:"timeout"`
 }
 
+type RepoConfig struct {
+	// URL is where the repository is: an http(s) URL, a file:// URL or a
+	// directory. Empty means don't use one.
+	URL     string   `toml:"url"`
+	Timeout Duration `toml:"timeout"`
+}
+
 const DefaultOpenAIBaseURL = "https://api.openai.com/v1"
 
 func Defaults() Config {
@@ -106,6 +116,7 @@ func Defaults() Config {
 			Model:   "haiku",
 			Timeout: Duration{15 * time.Minute},
 		},
+		Repo: RepoConfig{Timeout: Duration{20 * time.Second}},
 	}
 }
 
@@ -189,6 +200,7 @@ func (c *Config) applyEnv() error {
 	str(&c.OpenAI.Model, "GIRLPAGES_OPENAI_MODEL")
 	str(&c.Claude.Command, "GIRLPAGES_CLAUDE_COMMAND")
 	str(&c.Claude.Model, "GIRLPAGES_CLAUDE_MODEL")
+	str(&c.Repo.URL, "GIRLPAGES_REPO")
 	if v := os.Getenv("GIRLPAGES_JOBS"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1 {

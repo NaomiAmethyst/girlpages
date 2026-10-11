@@ -50,3 +50,11 @@
 
 #[openai.headers]
 #"HTTP-Referer" = "https://github.com/NaomiAmethyst/girlpages"
+
+[repo]
+# A girlpages repository (made with girlrepo) to fetch ready-made pages from
+# before asking a model: an https:// URL, a file:// URL or a directory. Only
+# pages whose source exactly matches yours are used. Not used when
+# extra_instructions is set.
+#url = ""
+#timeout = "20s"

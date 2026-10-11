@@ -234,9 +234,15 @@ func ManPath(ctx context.Context, o Options) ([]string, error) {
 	return dirs, nil
 }
 
+// SectionCount is how many places SectionRank has.
+const SectionCount = 13
+
 // sectionOrder is man-db's default search order; Enumerate sorts by it so
 // bulk runs do the most useful sections first.
 var sectionOrder = []string{"1", "n", "l", "8", "3", "0", "2", "5", "4", "9", "6", "7"}
+
+// SectionRank is where a section comes in man's search order.
+func SectionRank(sec string) int { return sectionRank(sec) }
 
 func sectionRank(sec string) int {
 	for i, s := range sectionOrder {

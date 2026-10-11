@@ -1,0 +1,18 @@
+{{define "content"}}
+<div class="card">
+<div class="crumbs"><a href="{{.Base}}">home</a> › {{.Heading}}</div>
+<div class="pagehead">
+<h1>{{.Heading}}</h1>
+<p class="sub">{{.Sub}}</p>
+</div>
+{{if .Chips}}<div class="chips">{{range .Chips}}<a class="pill{{if .On}} on{{end}}" href="{{.URL}}">{{.Label}}</a>{{end}}</div>{{end}}
+{{if .Letters}}<nav class="letters" aria-label="Jump to letter">{{range .Letters}}<a href="#letter-{{.}}">{{.}}</a>{{end}}</nav>{{end}}
+{{range .Groups}}
+<h2 class="letter" id="letter-{{.Letter}}">{{.Letter}}</h2>
+<ul class="pages">
+{{range .Items}}<li><a href="{{.URL}}"><span class="name">{{.Name}}</span><span class="sec">({{.Section}})</span></a><span class="desc">{{.Desc}}</span>{{if .Girlified}}<span class="done" title="girlified">✨</span>{{end}}</li>
+{{end}}</ul>
+{{else}}<div class="empty">nothing here, bestie 😭</div>
+{{end}}
+</div>
+{{end}}

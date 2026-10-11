@@ -20,6 +20,7 @@ import (
 	"github.com/NaomiAmethyst/girlpages/internal/cache"
 	"github.com/NaomiAmethyst/girlpages/internal/llm"
 	"github.com/NaomiAmethyst/girlpages/internal/manpage"
+	"github.com/NaomiAmethyst/girlpages/internal/repo"
 )
 
 // Options controls a bulk run.
@@ -37,11 +38,16 @@ type Options struct {
 	Limit  int
 	Man    manpage.Options
 	LLM    llm.Options
+	// Fetch, if set, is tried before the model: it returns a page's
+	// conversion from a girlpages repository, with what made it.
+	Fetch func(ctx context.Context, p manpage.Page) (markup, model string, err error)
 }
 
 // Stats summarises a run.
 type Stats struct {
 	Pages, Fresh, Linked, Converted, Failed, Pruned, Removed int
+	// Fetched pages came ready-made from a repository.
+	Fetched int
 	// Skipped pages couldn't be rendered by man at all (usually a broken
 	// .so link in a package); they aren't counted as failures.
 	Skipped int
@@ -130,7 +136,7 @@ func Run(ctx context.Context, o Options, caches cache.Set, b llm.Backend, log io
 				hash := cache.Hash(text)
 				if !o.Force && caches.HasObject(hash) {
 					if !o.DryRun {
-						if err := putEntry(dir, p, hash, manpage.HeaderTitle(text), nil); err != nil {
+						if err := putEntry(dir, p, hash, manpage.HeaderTitle(text), "", ""); err != nil {
 							fmt.Fprintf(log, "💔 %s: %v\n", p.Title(), err)
 						}
 					}
@@ -178,8 +184,15 @@ func Run(ctx context.Context, o Options, caches cache.Set, b llm.Backend, log io
 	}
 
 	if len(order) > 0 {
-		logf("💅 girlifying %d pages (%d unique) with %s%s, %d at a time\n",
-			countPages(byHash), len(order), b.Name(), modelSuffix(b), max(o.Jobs, 1))
+		with := "the repo"
+		if b != nil {
+			with = b.Name() + modelSuffix(b)
+			if o.Fetch != nil {
+				with = "the repo and " + with
+			}
+		}
+		logf("💅 girlifying %d pages (%d unique) with %s, %d at a time\n",
+			countPages(byHash), len(order), with, max(o.Jobs, 1))
 	}
 
 	// Pass 2: convert.
@@ -193,16 +206,35 @@ func Run(ctx context.Context, o Options, caches cache.Set, b llm.Backend, log io
 			defer wg.Done()
 			for j := range queue {
 				start := time.Now()
-				lo := o.LLM
-				lo.Parallel = 1
-				lo.Progress = nil
-				markup, err := llm.Convert(ctx, b, j.name(), j.text, lo)
+				var markup string
+				var err error
+				backend, model := "", ""
+				fetched := false
+				if o.Fetch != nil {
+					if markup, model, err = o.Fetch(ctx, j.pages[0]); err == nil {
+						fetched, backend = true, "repo"
+					} else if !errors.Is(err, repo.ErrNotFound) {
+						fmt.Fprintf(log, "girl: couldn't fetch %s from the repo: %v\n", j.name(), err)
+					}
+				}
+				switch {
+				case fetched:
+					err = nil
+				case b == nil:
+					err = errors.New("it isn't in the repo and there's no model to ask")
+				default:
+					lo := o.LLM
+					lo.Parallel = 1
+					lo.Progress = nil
+					markup, err = llm.Convert(ctx, b, j.name(), j.text, lo)
+					backend, model = b.Name(), b.Model()
+				}
 				if err == nil {
 					err = dir.PutObject(j.hash, markup)
 				}
 				if err == nil {
 					for _, p := range j.pages {
-						if perr := putEntry(dir, p, j.hash, j.title, b); perr != nil && err == nil {
+						if perr := putEntry(dir, p, j.hash, j.title, backend, model); perr != nil && err == nil {
 							err = perr
 						}
 					}
@@ -214,6 +246,9 @@ func Run(ctx context.Context, o Options, caches cache.Set, b llm.Backend, log io
 					if ctx.Err() == nil {
 						fmt.Fprintf(log, "[%*d/%d] 💔 %s: %v\n", width(total), n, total, j.pages[0].Title(), err)
 					}
+				} else if fetched {
+					st.Fetched += len(j.pages)
+					logf("[%*d/%d] 📦 %s (from the repo)\n", width(total), n, total, j.pages[0].Title())
 				} else {
 					st.Converted += len(j.pages)
 					logf("[%*d/%d] 💖 %s (%s)\n", width(total), n, total, j.pages[0].Title(), time.Since(start).Round(time.Second))
@@ -249,8 +284,12 @@ func Run(ctx context.Context, o Options, caches cache.Set, b llm.Backend, log io
 			f.Close()
 		}
 	}
-	logf("✨ done: %d pages, %d already cute, %d linked, %d girlified, %d skipped, %d failed",
-		st.Pages, st.Fresh, st.Linked, st.Converted, st.Skipped, st.Failed)
+	logf("✨ done: %d pages, %d already cute, %d linked, %d girlified, ",
+		st.Pages, st.Fresh, st.Linked, st.Converted)
+	if o.Fetch != nil {
+		logf("%d from the repo, ", st.Fetched)
+	}
+	logf("%d skipped, %d failed", st.Skipped, st.Failed)
 	if o.Prune && full {
 		logf(", %d stale entries and %d orphaned conversions pruned", st.Pruned, st.Removed)
 	}
@@ -295,7 +334,10 @@ func pagesFor(ctx context.Context, o Options, dir cache.Dir) ([]manpage.Page, er
 	return pages, nil
 }
 
-func putEntry(dir cache.Dir, p manpage.Page, hash, title string, b llm.Backend) error {
+// putEntry records that p converts to hash. backend and model say what
+// made the conversion; empty means it already existed, so keep what an
+// earlier entry said.
+func putEntry(dir cache.Dir, p manpage.Page, hash, title, backend, model string) error {
 	e := &cache.Entry{
 		Source:        p.Path,
 		Name:          p.Name,
@@ -305,8 +347,8 @@ func putEntry(dir cache.Dir, p manpage.Page, hash, title string, b llm.Backend) 
 		PromptVersion: llm.PromptVersion,
 		Generated:     time.Now().UTC().Truncate(time.Second),
 	}
-	if b != nil {
-		e.Backend, e.Model = b.Name(), b.Model()
+	if backend != "" {
+		e.Backend, e.Model = backend, model
 	} else if old, _ := dir.Entry(p.Path); old != nil && old.Hash == hash {
 		e.Backend, e.Model, e.PromptVersion, e.Generated = old.Backend, old.Model, old.PromptVersion, old.Generated
 	}

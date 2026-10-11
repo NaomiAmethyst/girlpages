@@ -24,6 +24,9 @@ var templateFS embed.FS
 //go:embed static/style.css
 var styleCSS string
 
+// StyleCSS is the stylesheet, shared with the static site.
+func StyleCSS() string { return styleCSS }
+
 var templates = map[string]*template.Template{}
 
 var funcs = template.FuncMap{"pages": pages}

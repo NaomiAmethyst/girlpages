@@ -53,7 +53,7 @@ type flags struct {
 	bulk, update, force, dryRun, prune, quiet     bool
 	jobs, limit                                   int
 	refresh, cachedOnly, raw, doctor, html, serve bool
-	color, backend, model, listen                 string
+	color, backend, model, listen, repo           string
 }
 
 func newFlagSet(f *flags) *pflag.FlagSet {
@@ -94,6 +94,7 @@ func newFlagSet(f *flags) *pflag.FlagSet {
 	fs.StringVar(&f.color, "color", "auto", "")
 	fs.StringVar(&f.backend, "backend", "", "")
 	fs.StringVar(&f.model, "model", "", "")
+	fs.StringVar(&f.repo, "repo", "", "")
 
 	// man spells a few of these more than one way.
 	fs.SetNormalizeFunc(func(_ *pflag.FlagSet, name string) pflag.NormalizedName {
@@ -134,12 +135,14 @@ man options:
 
 girl options:
       --refresh           re-girlify the page even if it's cached
-      --cached-only       never call the LLM; only show cached pages
+      --cached-only       never call the LLM; only show cached (or repo) pages
       --raw               print the stored markup instead of rendering it
       --html              write the page as a standalone HTML document
       --color=WHEN        auto, always or never (default auto; NO_COLOR works)
       --backend=NAME      auto, openai or claude
       --model=MODEL       model to ask
+      --repo=URL          fetch pages from this girlpages repository before
+                          asking the model ("none" to skip the configured one)
       --doctor            show config, backend and cache status
 
 web options:
@@ -196,20 +199,23 @@ func run(args []string) int {
 	if f.jobs > 0 {
 		cfg.Jobs = f.jobs
 	}
+	if f.repo != "" {
+		cfg.Repo.URL = f.repo
+	}
 	if f.pager != "" {
 		cfg.Pager = f.pager
 	}
 	mo := manpage.Options{ManPath: f.manPath, Locale: f.locale, Sections: f.sections, All: f.all}
-	g := &core.Girl{Cfg: &cfg, Caches: core.CacheSet(&cfg), Man: mo}
+	g := &core.Girl{Cfg: &cfg, Caches: core.CacheSet(&cfg), Man: mo, Repo: core.NewRepo(&cfg, getVersion())}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	if f.doctor {
-		return doctor(&cfg, g.Caches)
+		return doctor(ctx, &cfg, g)
 	}
 	if f.bulk || f.update {
-		return runBulk(ctx, f, &cfg, g.Caches, mo, rest)
+		return runBulk(ctx, f, &cfg, g, mo, rest)
 	}
 	if f.serve {
 		return runServe(ctx, f, g)
@@ -327,7 +333,7 @@ func runServe(ctx context.Context, f flags, g *core.Girl) int {
 	return exitOK
 }
 
-func runBulk(ctx context.Context, f flags, cfg *config.Config, caches cache.Set, mo manpage.Options, rest []string) int {
+func runBulk(ctx context.Context, f flags, cfg *config.Config, g *core.Girl, mo manpage.Options, rest []string) int {
 	sections := splitList(f.sections)
 	// "girl --bulk 1 8" is a friendlier spelling of -s 1,8.
 	for _, a := range rest {
@@ -341,8 +347,23 @@ func runBulk(ctx context.Context, f flags, cfg *config.Config, caches cache.Set,
 	if !f.dryRun {
 		var err error
 		if b, err = core.NewBackend(cfg); err != nil {
-			fmt.Fprintf(os.Stderr, "girl: %v\n", err)
-			return exitFailed
+			if g.Repo == nil {
+				fmt.Fprintf(os.Stderr, "girl: %v\n", err)
+				return exitFailed
+			}
+			// Pages in the repo can still be had without a model.
+			fmt.Fprintf(os.Stderr, "girl: %v; only fetching from the repo\n", err)
+			b = nil
+		}
+	}
+	var fetch func(context.Context, manpage.Page) (string, string, error)
+	if g.Repo != nil && cfg.ExtraInstructions == "" {
+		fetch = func(ctx context.Context, p manpage.Page) (string, string, error) {
+			markup, gen, err := g.FromRepo(ctx, p)
+			if err != nil {
+				return "", "", err
+			}
+			return markup, gen.Model, nil
 		}
 	}
 	mo.Sections = ""
@@ -357,7 +378,8 @@ func runBulk(ctx context.Context, f flags, cfg *config.Config, caches cache.Set,
 		Limit:    f.limit,
 		Man:      mo,
 		LLM:      llm.Options{ChunkSize: cfg.ChunkSize, ExtraInstructions: cfg.ExtraInstructions},
-	}, caches, b, os.Stderr)
+		Fetch:    fetch,
+	}, g.Caches, b, os.Stderr)
 	switch {
 	case errors.Is(err, bulk.ErrLocked):
 		if !f.quiet {
@@ -408,7 +430,8 @@ func execMan(f flags, rest []string) int {
 	return exitFailed
 }
 
-func doctor(cfg *config.Config, caches cache.Set) int {
+func doctor(ctx context.Context, cfg *config.Config, g *core.Girl) int {
+	caches := g.Caches
 	fmt.Printf("girl (girlpages) %s ✨\n\n", getVersion())
 	fmt.Println("config files:")
 	for _, p := range []string{config.SystemConfigPath(), config.UserConfigPath()} {
@@ -449,6 +472,24 @@ func doctor(cfg *config.Config, caches cache.Set) int {
 		}
 	}
 	fmt.Printf("jobs %d, chunk size %d\n\n", cfg.Jobs, cfg.ChunkSize)
+	switch {
+	case g.Repo == nil:
+		fmt.Print("repo: none (set [repo] url to fetch ready-made pages)\n\n")
+	default:
+		fmt.Printf("repo: %s\n", g.Repo.Base)
+		rctx, cancel := context.WithTimeout(ctx, cfg.Repo.Timeout.Duration)
+		m, err := g.Repo.Manifest(rctx)
+		cancel()
+		if err != nil {
+			fmt.Printf("  💔 %v\n", err)
+		} else {
+			fmt.Printf("  %d pages, %d girlified, published %s ✓\n", m.Pages, m.Girlified, m.Generated.Local().Format(time.DateOnly))
+		}
+		if cfg.ExtraInstructions != "" {
+			fmt.Println("  (not used: you have extra_instructions, so pages are made just for you)")
+		}
+		fmt.Println()
+	}
 	fmt.Println("caches:")
 	for i, d := range caches {
 		pages, objects := 0, map[string]bool{}

@@ -1,0 +1,331 @@
+.\" SPDX-License-Identifier: GPL-3.0-or-later
+.\" Copyright (C) 2026 Naomi Persephone Amethyst <naomi@amethyst.name>
+.TH GIRLREPO 1 2026-10-11 girlpages "girlpages Manual"
+.SH NAME
+girlrepo \- build and publish girlpages repositories and their website
+.SH SYNOPSIS
+.B girlrepo
+.RB [ \-d
+.IR dir ]
+.RB [ \-C
+.IR file ]
+.B ingest
+.RI [ options ]
+.IR path ...
+.br
+.B girlrepo
+.RB [ \-d
+.IR dir ]
+.B ingest \-\-system
+.RI [ options ]
+.br
+.B girlrepo
+.RB [ \-d
+.IR dir ]
+.B girlify
+.RI [ options ]
+.RI [ name ...]
+.br
+.B girlrepo
+.RB [ \-d
+.IR dir ]
+.B publish
+.RI [ options ]
+.br
+.B girlrepo
+.RB [ \-d
+.IR dir ]
+.BR gc " | " search " | " serve " | " status
+.SH DESCRIPTION
+.B girlrepo
+collects man pages from packages and systems, girlifies them, and publishes
+them as a
+.I repository
+\(em a tree of JSON files any static web host can serve \(em with a website on
+top.
+.BR girl (1)
+can fetch pages from a repository instead of asking a model, and the website
+lets anyone browse and search them, with a plain HTML page for every man page
+so search engines can find them.
+.PP
+.I dir
+(the current directory unless
+.B \-d
+is given) is the website; the repository lives in
+.IR dir /repo .
+Upload the whole of
+.I dir
+to publish both.
+Every command that changes the repository takes a lock on it, so they can be
+run from cron or CI without stepping on each other.
+.PP
+The usual cycle is:
+.PP
+.RS
+.nf
+girlrepo ingest \-\-distro debian \-\-release trixie *.deb
+girlrepo girlify
+girlrepo publish \-\-url https://example.org \-\-gc
+.fi
+.RE
+.SH COMMANDS
+.SS "ingest \fIpath\fR..."
+Adds every English man page found in each
+.IR path ,
+which may be a directory (a manual root such as
+.BR /usr/share/man ,
+or any tree containing one, like an unpacked package or a whole system
+image) or a package file:
+.BR .deb ,
+.BR .pkg.tar.* ,
+or
+.B .rpm
+(source packages are skipped).
+Packages are unpacked with
+.BR tar (1)
+and
+.BR cpio (1);
+neither dpkg nor rpm is needed.
+Translations
+.RI ( man/de/man1 ,
+and so on) are left out.
+.PP
+Each page is identified by the SHA-256 of its roff source, decompressed, with
+.B .so
+requests replaced by what they include, and symlinks followed (inside the
+unpacked package, for absolute links).
+The same page from different packages or distributions is stored once, noting
+everywhere it was found.
+A page whose source changed becomes a new version, and the current one unless
+.B \-\-keep\-current
+is given; old versions are kept.
+New versions are rendered with
+.BR man (1)
+to make their
+.B man
+variant.
+If
+.BR girl (1)'s
+cache already has a conversion of the same text, that becomes the
+.B girl
+variant straight away.
+.TP
+.B \-\-system
+Ingest this system's manpath instead of paths, noting which installed package
+(from the dpkg, pacman or rpm database) each page came from, and the
+distribution from
+.BR os\-release (5).
+.TP
+.BR \-\-distro =\fIid\fR ", " \-\-release =\fIrelease\fR
+Record where the pages came from, such as
+.B debian
+and
+.BR trixie .
+.TP
+.BR \-\-package =\fIname\fR ", " \-\-package\-version =\fIversion\fR ", " \-\-arch =\fIarch\fR
+Record the package, for directories, or for a single package file whose name
+doesn't follow its format's convention.
+Package files are otherwise identified by their names.
+.TP
+.B \-\-keep\-current
+Don't make the ingested versions current: for adding older releases after
+newer ones.
+.TP
+.BR \-s ", " \-\-sections =\fIlist\fR
+Only these sections.
+.TP
+.BR \-j ", " \-\-jobs =\fIn\fR
+Render this many pages at once (default: one per CPU).
+.TP
+.BR \-n ", " \-\-dry\-run
+Say what would be added.
+.TP
+.B \-\-no\-cache
+Don't take conversions from girl's cache.
+.TP
+.BR \-q ", " \-\-quiet
+Only report problems.
+.SS "girlify [\fIname\fR...]"
+Converts the current version of every page (or just the named ones) that has
+no
+.B girl
+variant yet, using the backend and model from girl's configuration (see
+.BR girl (1)).
+Aliases sharing a source are converted once.
+Interrupting it is safe: each page is saved as it's done, and the next run
+carries on.
+.TP
+.BR \-\-backend =\fIname\fR ", " \-\-model =\fImodel\fR
+Override the configured backend and model.
+.TP
+.BR \-j ", " \-\-jobs =\fIn\fR
+Convert this many pages at once (default from the configuration).
+.TP
+.BR \-\-limit =\fIn\fR
+Stop after this many pages.
+.TP
+.BR \-s ", " \-\-sections =\fIlist\fR
+Only these sections.
+.TP
+.B \-\-all\-versions
+Convert old versions too.
+.TP
+.B \-\-force
+Convert again, even pages that already have a
+.B girl
+variant.
+.TP
+.BR \-n ", " \-\-dry\-run ", " \-\-no\-cache ", " \-q ", " \-\-quiet
+As for
+.BR ingest .
+.SS publish
+Writes the section indexes, the search index and
+.BR manifest.json ,
+then the website.
+Until it runs, nothing ingested or girlified since the last publish is
+visible.
+Website files are only rewritten when they change, so syncing the result
+somewhere is cheap.
+.TP
+.BR \-\-url =\fIurl\fR
+The site's absolute URL, for canonical links and
+.BR sitemap.xml .
+.TP
+.BR \-\-base =\fIpath\fR
+The URL path the site is served from, if not
+.BR / ,
+such as
+.B /girlpages/
+for a GitHub Pages project site.
+.TP
+.B \-\-no\-site
+Only update the repository.
+.TP
+.B \-\-gc
+Collect garbage afterwards.
+.SS gc
+Deletes files nothing refers to any more: superseded listings, section indexes
+and index shards, and the contents of versions no listing mentions.
+Content-addressed files may be cached by browsers and proxies forever, so it is
+kinder to collect garbage some time after publishing rather than straight
+away.
+.B \-n
+says what would go.
+.SS "search \fIquery\fR..."
+Searches the published index the way the website does.
+.B \-\-repo
+searches a repository elsewhere;
+.B \-l
+sets how many results.
+.SS serve
+Serves
+.I dir
+at
+.B http://localhost:1990/
+(or
+.BR \-\-listen )
+to preview the site.
+.SS status
+Counts pages, versions and conversions.
+.SH "REPOSITORY FORMAT"
+Everything is JSON.
+Files named
+.IB name \- sha .json
+or
+.IB sha .json
+are named after the SHA-256 of their own contents and never change, so they
+can be cached forever.
+.B manifest.json
+and the pointer files change in place and should be cached briefly.
+.TP
+.B manifest.json
+The root: sections, page counts and the index manifests.
+.TP
+.BI contents/ ab / source / variant .json
+One version of a page.
+.TP
+.BI page/name\- section / name .json
+Points at the page's listing.
+.TP
+.BI page/page\- ab / sha .json
+Every version of a page, where each was found, and its variants' hashes.
+.TP
+.BI section/ section .json
+Points at the section's index.
+.TP
+.BI section/ section \- sha .json
+Every page in a section, with its description and listing hash.
+.TP
+.BI index/words/manifest\- sha .json
+The range of words in each word shard.
+.TP
+.BI index/words/shard\- ab / sha .json
+Words, each with the pages it appears in as [doc id, score].
+.TP
+.BI index/grams/manifest\- sha .json
+The range of trigrams in each gram shard.
+.TP
+.BI index/grams/shard\- ab / sha .json
+Trigrams, each with the words containing it, for finding misspelt words.
+.TP
+.BI index/docs/manifest\- sha .json
+The shards of the page table that doc ids index.
+.TP
+.BI index/docs/shard\- ab / sha .json
+Part of the page table: [name, section, description].
+.PP
+.I source
+is the page's source hash (as above) and
+.I ab
+its first two characters.
+Variants are
+.B girl
+(girlpages markup, split into sections at top-level headings) and
+.B man
+(man's plain text, split at its headings, with the header and footer lines
+apart); joining a variant's sections gives back exactly the original.
+Names and sections are escaped in file names: anything but letters, digits
+and
+.B _+\-.,:@
+(or a leading dot) becomes
+.BI % XX\fR,
+which must be percent-encoded again in URLs.
+.PP
+A client with a page installed needs one request:
+.IB repo /contents/ ab / source /girl.json\fR.
+The website's search reads the manifests, then only the shards a query needs.
+.SH FILES
+.TP
+.IR dir /repo/
+The repository.
+.TP
+.IR dir /repo/.lock
+Held while the repository is being changed.
+.TP
+.IR dir /man/ section / name /
+A page on the website; old versions are under
+.BI v/ source /\fR,
+and girlified pages have the original under
+.BR original/ .
+.SH "EXIT STATUS"
+0 on success, 1 for a usage error, 2 if something failed, 130 if interrupted.
+.SH EXAMPLES
+.TP
+.B girlrepo ingest \-\-system && girlrepo girlify \-\-limit 100 && girlrepo publish
+Start a repository from this machine, girlifying the first hundred pages.
+.TP
+.B girlrepo ingest \-\-distro arch \-\-release rolling /var/cache/pacman/pkg/*.pkg.tar.zst
+Add every page from Arch's package cache.
+.TP
+.B girlrepo publish \-\-base /girlpages/ \-\-url https://naomiamethyst.github.io/girlpages
+Build for a GitHub Pages project site.
+.TP
+.B girl \-\-repo ./repo ls
+Read
+.BR ls (1)
+from a repository on disk.
+.SH "SEE ALSO"
+.BR girl (1),
+.BR man (1)
+.SH AUTHOR
+Naomi Persephone Amethyst <naomi@amethyst.name>

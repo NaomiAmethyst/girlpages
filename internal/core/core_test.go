@@ -1,0 +1,119 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Naomi Persephone Amethyst <naomi@amethyst.name>
+
+package core
+
+import (
+	"context"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/NaomiAmethyst/girlpages/internal/cache"
+	"github.com/NaomiAmethyst/girlpages/internal/config"
+	"github.com/NaomiAmethyst/girlpages/internal/ingest"
+	"github.com/NaomiAmethyst/girlpages/internal/llm"
+	"github.com/NaomiAmethyst/girlpages/internal/manpage"
+	"github.com/NaomiAmethyst/girlpages/internal/repo"
+)
+
+type fake struct{ reply string }
+
+func (f *fake) Name() string  { return "fake" }
+func (f *fake) Model() string { return "fake-" + f.reply }
+func (f *fake) Complete(_ context.Context, _, user string) (string, error) {
+	var opts []string
+	for _, w := range strings.Fields(user) {
+		if strings.HasPrefix(w, "-") {
+			opts = append(opts, w)
+		}
+	}
+	return "# NAME\n\n" + f.reply + " " + strings.Join(opts, " "), nil
+}
+
+func roff(name, desc string) string {
+	return ".TH " + strings.ToUpper(name) + " 1 2026-01-01 test\n.SH NAME\n" + name + " \\- " + desc +
+		"\n.SH OPTIONS\n.TP\n.B \\-v\nbe loud\n"
+}
+
+func TestRepo(t *testing.T) {
+	if _, err := exec.LookPath("man"); err != nil {
+		t.Skip("man not installed")
+	}
+	ctx := context.Background()
+	mp := filepath.Join(t.TempDir(), "man")
+	for name, desc := range map[string]string{"foo": "does foo", "bar": "does bar"} {
+		p := filepath.Join(mp, "man1", name+".1")
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		os.WriteFile(p, []byte(roff(name, desc)), 0o644)
+	}
+
+	// A published repo with foo girlified (by "the repo's model") but not bar.
+	site := t.TempDir()
+	s, err := repo.Open(filepath.Join(site, "repo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ingest.Paths(ctx, s, []string{mp}, ingest.Options{Quiet: true, Log: io.Discard}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ingest.Girlify(ctx, s, ingest.GirlifyOptions{Backend: &fake{"from-repo"}, Names: []string{"foo"},
+		Quiet: true, Log: io.Discard}); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.FileServer(http.Dir(site)))
+	defer srv.Close()
+
+	cfg := config.Defaults()
+	newGirl := func() *Girl {
+		return &Girl{Cfg: &cfg, Caches: cache.Set{cache.Dir(t.TempDir())}, Man: manpage.Options{ManPath: mp},
+			Repo:       repo.NewClient(srv.URL+"/repo", 5*time.Second),
+			NewBackend: func(*config.Config) (llm.Backend, error) { return &fake{"from-model"}, nil }}
+	}
+	foo, _ := manpage.NewPage(filepath.Join(mp, "man1", "foo.1"))
+	bar, _ := manpage.NewPage(filepath.Join(mp, "man1", "bar.1"))
+
+	g := newGirl()
+	res, err := g.Get(ctx, foo, GetOptions{CachedOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(res.Markup, "from-repo") || res.Entry.Backend != BackendRepo || res.Entry.Model != "fake-from-repo" {
+		t.Fatalf("from the repo: %q %+v", res.Markup, res.Entry)
+	}
+	// It's cached now.
+	if r, ok := g.Cached(foo); !ok || r.Markup != res.Markup || r.Stale {
+		t.Errorf("not cached after fetching: %+v %v", r, ok)
+	}
+	// Not in the repo, and not allowed to convert.
+	if _, err := g.Get(ctx, bar, GetOptions{CachedOnly: true}); !errors.Is(err, ErrNotCached) {
+		t.Errorf("bar: %v", err)
+	}
+	// Allowed to convert: the model does it.
+	if res, err := g.Get(ctx, bar, GetOptions{}); err != nil || !strings.Contains(res.Markup, "from-model") {
+		t.Errorf("bar converted: %q, %v", res.Markup, err)
+	}
+	// Refreshing asks the model, not the repo.
+	if res, err := g.Get(ctx, foo, GetOptions{Refresh: true}); err != nil || !strings.Contains(res.Markup, "from-model") {
+		t.Errorf("refresh: %q, %v", res.Markup, err)
+	}
+	// Custom instructions mean the repo's pages aren't wanted.
+	cfg.ExtraInstructions = "talk like a pirate"
+	if _, err := newGirl().Get(ctx, foo, GetOptions{CachedOnly: true}); !errors.Is(err, ErrNotCached) {
+		t.Errorf("with extra instructions: %v", err)
+	}
+	cfg.ExtraInstructions = ""
+	// An unreachable repo just means converting as usual.
+	g = newGirl()
+	g.Repo = repo.NewClient("http://127.0.0.1:1/repo", time.Second)
+	if res, err := g.Get(ctx, foo, GetOptions{}); err != nil || !strings.Contains(res.Markup, "from-model") {
+		t.Errorf("unreachable repo: %q, %v", res.Markup, err)
+	}
+}
