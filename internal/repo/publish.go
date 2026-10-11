@@ -169,10 +169,48 @@ func (s *Store) Publish(pages []PageRef) (*Manifest, error) {
 		return nil, err
 	}
 
+	if m.Index.Sources, err = s.writeSourceIndex(pages); err != nil {
+		return nil, err
+	}
+
 	if _, _, err := s.Write(ManifestPath(), m); err != nil {
 		return nil, err
 	}
 	return m, nil
+}
+
+// sourceShardSize is how many keys go in each girlified-sources shard:
+// about 64 KB.
+const sourceShardSize = 3500
+
+// writeSourceIndex writes the girlified-sources index, returning its
+// manifest's hash.
+func (s *Store) writeSourceIndex(pages []PageRef) (string, error) {
+	seen := map[string]bool{}
+	var keys []string
+	for _, p := range pages {
+		for _, v := range p.Listing.Versions {
+			if _, ok := v.Variants[VariantGirl]; !ok {
+				continue
+			}
+			if k := v.Source[:SourceKeyLength]; !seen[k] {
+				seen[k] = true
+				keys = append(keys, k)
+			}
+		}
+	}
+	sort.Strings(keys)
+	sm := ShardManifest{Format: Format, Shards: []ShardRange{}}
+	for i := 0; i < len(keys); i += sourceShardSize {
+		part := keys[i:min(i+sourceShardSize, len(keys))]
+		sha, err := s.WriteAddressed(func(sha string) string { return ShardPath("sources", sha) },
+			&SourceShard{Format: Format, Length: SourceKeyLength, Sources: part})
+		if err != nil {
+			return "", err
+		}
+		sm.Shards = append(sm.Shards, ShardRange{First: part[0], Last: part[len(part)-1], SHA256: sha})
+	}
+	return s.WriteAddressed(func(sha string) string { return IndexManifestPath("sources", sha) }, &sm)
 }
 
 func (s *Store) writeShards(kind string, ranges []ShardRange, shard func(int) any) (string, error) {
@@ -217,10 +255,10 @@ func (s *Store) GC(dryRun bool) (GCStats, error) {
 	for _, sha := range dm.Shards {
 		live[ShardPath("docs", sha)] = true
 	}
-	for _, kind := range []string{"words", "grams"} {
-		sha := m.Index.Words
-		if kind == "grams" {
-			sha = m.Index.Grams
+	for _, kind := range []string{"words", "grams", "sources"} {
+		sha := map[string]string{"words": m.Index.Words, "grams": m.Index.Grams, "sources": m.Index.Sources}[kind]
+		if sha == "" {
+			continue
 		}
 		live[IndexManifestPath(kind, sha)] = true
 		var sm ShardManifest

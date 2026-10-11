@@ -470,7 +470,18 @@ Trigrams, each with the words containing it, for finding misspelt words.
 The shards of the page table that doc ids index.
 .TP
 .BI index/docs/shard\- ab / sha .json
-Part of the page table: [name, section, description].
+Part of the page table: [name, section, description, sources].
+.TP
+.BI index/sources/manifest\- sha .json
+The range of keys in each girlified-sources shard.
+.TP
+.BI index/sources/shard\- ab / sha .json
+The first 16 hex digits of the source hash of every version with a girl
+variant, sorted, so a client like
+.B girl \-\-bulk
+or
+.B girl \-\-import
+can tell which of its pages a repository has without asking for each.
 .PP
 .I source
 is the page's source hash (as above) and

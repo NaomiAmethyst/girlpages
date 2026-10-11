@@ -304,3 +304,77 @@ func TestClient(t *testing.T) {
 		t.Error("bad hashes should be refused")
 	}
 }
+
+func TestGirlifiedIndex(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	g := NewClient(s.Dir, time.Second).Girlified()
+	pages, _ := s.AllPages()
+	girl, plain := 0, 0
+	for _, p := range pages {
+		v := p.Current()
+		has, err := g.Has(ctx, v.Source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := v.Variants[VariantGirl]; ok != has {
+			t.Errorf("%s: index says %v", p.Pointer.Name, has)
+		}
+		if has {
+			girl++
+		} else {
+			plain++
+		}
+	}
+	if girl != 3 || plain != 34 {
+		t.Errorf("%d girlified, %d not", girl, plain)
+	}
+	if has, err := g.Has(ctx, strings.Repeat("f", 64)); has || err != nil {
+		t.Errorf("unknown source: %v, %v", has, err)
+	}
+	m, _ := s.Manifest()
+	var sm ShardManifest
+	s.Read(IndexManifestPath("sources", m.Index.Sources), &sm)
+	if len(sm.Shards) != 1 {
+		t.Errorf("%d shards for 3 keys", len(sm.Shards))
+	}
+	// An index from before there were indexes.
+	m.Index.Sources = ""
+	s.Write(ManifestPath(), m)
+	if _, err := NewClient(s.Dir, time.Second).Girlified().Has(ctx, strings.Repeat("a", 64)); !errors.Is(err, ErrNoIndex) {
+		t.Errorf("no index: %v", err)
+	}
+}
+
+func TestGirlifiedIndexShards(t *testing.T) {
+	s, _ := Open(t.TempDir())
+	var pages []PageRef
+	want := map[string]bool{}
+	for i := 0; i < 2*sourceShardSize+10; i++ {
+		src := Hash([]byte{byte(i), byte(i >> 8), 1})
+		girl := i%2 == 0
+		vs := map[string]VariantInfo{VariantMan: {}}
+		if girl {
+			vs[VariantGirl] = VariantInfo{}
+		}
+		want[src] = girl
+		pages = append(pages, PageRef{Pointer: Pointer{Name: fmt.Sprint(i), Section: "1"},
+			Listing: &Listing{Versions: []Version{{Source: src, Variants: vs}}}})
+	}
+	sha, err := s.writeSourceIndex(pages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sm ShardManifest
+	s.Read(IndexManifestPath("sources", sha), &sm)
+	if len(sm.Shards) != 2 {
+		t.Fatalf("%d shards", len(sm.Shards))
+	}
+	s.Write(ManifestPath(), &Manifest{Format: Format, Index: IndexEntry{Sources: sha}})
+	g := NewClient(s.Dir, time.Second).Girlified()
+	for src, girl := range want {
+		if has, err := g.Has(context.Background(), src); err != nil || has != girl {
+			t.Fatalf("%s: %v, %v (want %v)", src[:8], has, err, girl)
+		}
+	}
+}

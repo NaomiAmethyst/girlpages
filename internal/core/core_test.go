@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -115,5 +116,45 @@ func TestRepo(t *testing.T) {
 	g.Repo = repo.NewClient("http://127.0.0.1:1/repo", time.Second)
 	if res, err := g.Get(ctx, foo, GetOptions{}); err != nil || !strings.Contains(res.Markup, "from-model") {
 		t.Errorf("unreachable repo: %q, %v", res.Markup, err)
+	}
+}
+
+// BulkFetch asks only for pages the repository's index lists.
+func TestBulkFetch(t *testing.T) {
+	if _, err := exec.LookPath("man"); err != nil {
+		t.Skip("man not installed")
+	}
+	ctx := context.Background()
+	mp := filepath.Join(t.TempDir(), "man")
+	for name, desc := range map[string]string{"foo": "does foo", "bar": "does bar"} {
+		p := filepath.Join(mp, "man1", name+".1")
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		os.WriteFile(p, []byte(roff(name, desc)), 0o644)
+	}
+	site := t.TempDir()
+	s, _ := repo.Open(filepath.Join(site, "repo"))
+	ingest.Paths(ctx, s, []string{mp}, ingest.Options{Quiet: true, Log: io.Discard})
+	ingest.Girlify(ctx, s, ingest.GirlifyOptions{Backend: &fake{"from-repo"}, Names: []string{"foo"}, Quiet: true, Log: io.Discard})
+	pages, _ := s.AllPages()
+	s.Publish(pages)
+	var contents atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/contents/") {
+			contents.Add(1)
+		}
+		http.FileServer(http.Dir(site)).ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+	fetch := BulkFetch(repo.NewClient(srv.URL+"/repo", 5*time.Second))
+	foo, _ := manpage.NewPage(filepath.Join(mp, "man1", "foo.1"))
+	bar, _ := manpage.NewPage(filepath.Join(mp, "man1", "bar.1"))
+	if markup, _, err := fetch(ctx, foo); err != nil || !strings.Contains(markup, "from-repo") {
+		t.Errorf("foo: %q, %v", markup, err)
+	}
+	if _, _, err := fetch(ctx, bar); !errors.Is(err, repo.ErrNotFound) {
+		t.Errorf("bar: %v", err)
+	}
+	if n := contents.Load(); n != 1 {
+		t.Errorf("%d content requests, want 1 (just foo's)", n)
 	}
 }

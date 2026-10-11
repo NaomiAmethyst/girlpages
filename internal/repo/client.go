@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -146,4 +147,74 @@ func Find(ctx context.Context, src string, timeout time.Duration, userAgent stri
 		}
 	}
 	return nil, fmt.Errorf("no published girlpages repository at %s (%v)", src, firstErr)
+}
+
+// Girlified says which versions a repository has girl variants of, from
+// its girlified-sources index, fetching each shard once.
+type Girlified struct {
+	c *Client
+
+	mu     sync.Mutex
+	loaded bool
+	ranges []ShardRange // nil if the repository has no index
+	shards map[string]map[string]bool
+}
+
+// Girlified returns a Girlified for the repository.
+func (c *Client) Girlified() *Girlified {
+	return &Girlified{c: c, shards: map[string]map[string]bool{}}
+}
+
+// ErrNoIndex means a repository was published without a girlified-sources
+// index (by an older girlrepo).
+var ErrNoIndex = errors.New("the repository has no girlified-sources index")
+
+// Has reports whether the repository has a girl variant of the version
+// with this source hash.
+func (g *Girlified) Has(ctx context.Context, source string) (bool, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !g.loaded {
+		m, err := g.c.Manifest(ctx)
+		if err != nil {
+			return false, err
+		}
+		if m.Index.Sources != "" {
+			var sm ShardManifest
+			if err := g.c.Get(ctx, IndexManifestPath("sources", m.Index.Sources), &sm); err != nil {
+				return false, err
+			}
+			g.ranges = sm.Shards
+		}
+		g.loaded = true
+	}
+	if g.ranges == nil {
+		return false, ErrNoIndex
+	}
+	if len(source) < SourceKeyLength {
+		return false, nil
+	}
+	key := source[:SourceKeyLength]
+	r := findRange(g.ranges, key)
+	if r == nil {
+		return false, nil
+	}
+	set, ok := g.shards[r.SHA256]
+	if !ok {
+		if !ValidHash(r.SHA256) {
+			return false, fmt.Errorf("bad shard hash %q", r.SHA256)
+		}
+		var sh SourceShard
+		if err := g.c.Get(ctx, ShardPath("sources", r.SHA256), &sh); err != nil {
+			return false, err
+		}
+		set = make(map[string]bool, len(sh.Sources))
+		for _, k := range sh.Sources {
+			if len(k) >= SourceKeyLength {
+				set[k[:SourceKeyLength]] = true
+			}
+		}
+		g.shards[r.SHA256] = set
+	}
+	return set[key], nil
 }

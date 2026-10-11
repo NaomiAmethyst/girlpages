@@ -21,6 +21,8 @@
 //	index/grams/shard-ab/<sha>.json        GramShard
 //	index/docs/manifest-<sha>.json         DocsManifest
 //	index/docs/shard-ab/<sha>.json         DocShard: the pages postings name
+//	index/sources/manifest-<sha>.json      ShardManifest: source hash ranges
+//	index/sources/shard-ab/<sha>.json      SourceShard: girlified versions
 //
 // Files whose names end in -<sha> or are named <sha>.json are named after
 // the SHA-256 of their own bytes, so they never change and can be cached
@@ -75,11 +77,15 @@ type SectionEntry struct {
 	Girlified int    `json:"girlified"`
 }
 
-// IndexEntry names the search index manifests.
+// IndexEntry names the index manifests.
 type IndexEntry struct {
 	Words string `json:"words"`
 	Grams string `json:"grams"`
 	Docs  string `json:"docs"`
+	// Sources names the manifest of the girlified-sources index (a
+	// ShardManifest of SourceShards), which says which page versions have
+	// a girl variant without asking for each.
+	Sources string `json:"sources,omitempty"`
 }
 
 // Pointer is a small mutable document naming an immutable one.
@@ -301,6 +307,20 @@ type WordShard struct {
 	Words  map[string][][2]int `json:"words"`
 }
 
+// SourceShard is part of the girlified-sources index: the first Length
+// hex digits of the source hash of every version with a girl variant,
+// sorted. A match means the variant is (almost certainly) there.
+type SourceShard struct {
+	Format  int      `json:"format"`
+	Length  int      `json:"length"`
+	Sources []string `json:"sources"`
+}
+
+// SourceKeyLength is how many hex digits of a source hash the
+// girlified-sources index keeps: 64 bits, so a false match (which only
+// costs a request that finds nothing) is vanishingly unlikely.
+const SourceKeyLength = 16
+
 // DocsManifest lists the shards of the search index's page table. Doc id
 // i is entry i%Size of shard i/Size. Ids are in name, then section, order.
 type DocsManifest struct {
@@ -351,7 +371,7 @@ func SectionIndexPath(section, sha string) string {
 }
 
 // IndexManifestPath is index/<kind>/manifest-<sha>.json; kind is
-// "words", "grams" or "docs".
+// "words", "grams", "docs" or "sources".
 func IndexManifestPath(kind, sha string) string {
 	return path.Join("index", kind, "manifest-"+sha+".json")
 }

@@ -204,6 +204,28 @@ func FetchFrom(ctx context.Context, c *repo.Client, p manpage.Page) (string, *re
 	return v.Text(), gen, nil
 }
 
+// BulkFetch makes a fetch function for bulk runs (girl --bulk, --import):
+// it checks the repository's girlified-sources index before asking for
+// each page, so pages the repository doesn't have cost no requests. Older
+// repositories without the index are asked page by page.
+func BulkFetch(c *repo.Client) func(ctx context.Context, p manpage.Page) (string, string, error) {
+	idx := c.Girlified()
+	return func(ctx context.Context, p manpage.Page) (string, string, error) {
+		src, err := manpage.SourceHash(p.Path, nil)
+		if err != nil {
+			return "", "", err
+		}
+		if has, err := idx.Has(ctx, src); err == nil && !has {
+			return "", "", fmt.Errorf("%s: %w", p.Title(), repo.ErrNotFound)
+		}
+		markup, gen, err := FetchFrom(ctx, c, p)
+		if err != nil {
+			return "", "", err
+		}
+		return markup, gen.Model, nil
+	}
+}
+
 // NewRepo makes a client for the configured repository, or nil if there
 // isn't one.
 func NewRepo(cfg *config.Config, version string) *repo.Client {

@@ -398,13 +398,7 @@ func runImport(ctx context.Context, f flags, cfg *config.Config, g *core.Girl, m
 		Limit:     f.limit,
 		Man:       mo,
 		FetchOnly: true,
-		Fetch: func(ctx context.Context, p manpage.Page) (string, string, error) {
-			markup, gen, err := core.FetchFrom(ctx, c, p)
-			if err != nil {
-				return "", "", err
-			}
-			return markup, gen.Model, nil
-		},
+		Fetch:     core.BulkFetch(c),
 	}, g.Caches, nil, os.Stderr)
 	switch {
 	case errors.Is(err, bulk.ErrLocked):
@@ -486,13 +480,7 @@ func runBulk(ctx context.Context, f flags, cfg *config.Config, g *core.Girl, mo 
 	}
 	var fetch func(context.Context, manpage.Page) (string, string, error)
 	if g.Repo != nil && cfg.ExtraInstructions == "" {
-		fetch = func(ctx context.Context, p manpage.Page) (string, string, error) {
-			markup, gen, err := g.FromRepo(ctx, p)
-			if err != nil {
-				return "", "", err
-			}
-			return markup, gen.Model, nil
-		}
+		fetch = core.BulkFetch(g.Repo)
 	}
 	mo.Sections = ""
 	_, err = bulk.Run(ctx, bulk.Options{
