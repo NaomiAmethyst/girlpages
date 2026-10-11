@@ -153,7 +153,10 @@ girlrepo publish --url https://example.org --gc               # index it and bui
 girlrepo serve                                                # preview at localhost:1990
 ```
 
-That leaves a directory to upload anywhere static: the repo in `repo/`, and
+`publish` also writes `.zst`, `.br` and `.gz` copies of everything for the
+web server to send as they are (`dist/hosting/` has configurations for
+static-web-server and nginx, with the right cache lifetimes), and `girl`
+asks for them. That leaves a directory to upload anywhere static: the repo in `repo/`, and
 a website around it. The static part is what search engines see: a page for
 the latest version (by version number) of every man page, girlified, with
 OpenGraph, JSON-LD and a sitemap, plus section listings. Everything else runs

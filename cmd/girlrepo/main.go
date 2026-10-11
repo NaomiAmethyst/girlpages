@@ -16,6 +16,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"runtime/debug"
 	"sort"
 	"strconv"
@@ -30,6 +31,7 @@ import (
 	"github.com/NaomiAmethyst/girlpages/internal/crawl"
 	"github.com/NaomiAmethyst/girlpages/internal/ingest"
 	"github.com/NaomiAmethyst/girlpages/internal/llm"
+	"github.com/NaomiAmethyst/girlpages/internal/precompress"
 	"github.com/NaomiAmethyst/girlpages/internal/repo"
 	"github.com/NaomiAmethyst/girlpages/internal/site"
 )
@@ -545,6 +547,7 @@ func (a *app) publish(ctx context.Context, args []string) error {
 	base := fs.String("base", "/", "URL path the site is served from")
 	siteURL := fs.String("url", "", "the site's absolute URL, for canonical links and sitemap.xml")
 	gc := fs.Bool("gc", false, "collect garbage afterwards")
+	compress := fs.String("precompress", "zstd,br,gzip", "write compressed copies of files for the web server to send (or none)")
 	if err := parse(fs, args); err != nil {
 		return err
 	}
@@ -589,6 +592,25 @@ func (a *app) publish(ctx context.Context, args []string) error {
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "🧹 removed %d unused files (%s)\n", st.Files, humanBytes(st.Bytes))
+	}
+	encodings, err := precompress.Parse(*compress)
+	if err != nil {
+		return err
+	}
+	pages, m = nil, nil // the compressors want the memory more
+	runtime.GC()
+	// After the website and GC, so copies of removed files go too.
+	root := a.dir
+	if *noSite {
+		root = s.Dir
+	}
+	pst, err := precompress.Sweep(root, encodings)
+	if err != nil {
+		return err
+	}
+	if pst.Compressed+pst.Removed > 0 {
+		fmt.Fprintf(os.Stderr, "🗜️  compressed %d files (%s smaller), removed %d stale copies\n",
+			pst.Compressed, humanBytes(pst.Saved), pst.Removed)
 	}
 	fmt.Fprintf(os.Stderr, "✨ done in %s\n", time.Since(start).Round(time.Millisecond))
 	return ctx.Err()
@@ -664,7 +686,7 @@ func (a *app) serve(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	srv := &http.Server{Handler: previewHandler(a.dir), ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Handler: site.Handler(a.dir), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()
 		sctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -676,29 +698,6 @@ func (a *app) serve(ctx context.Context, args []string) error {
 		return err
 	}
 	return nil
-}
-
-// previewHandler serves the site the way a static host would, including
-// its 404 page.
-func previewHandler(dir string) http.Handler {
-	files := http.FileServer(http.Dir(dir))
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		p := filepath.Join(dir, filepath.FromSlash(filepath.Clean("/"+r.URL.Path)))
-		if fi, err := os.Stat(p); err != nil || fi.IsDir() && !exists(filepath.Join(p, "index.html")) {
-			if b, err := os.ReadFile(filepath.Join(dir, "404.html")); err == nil {
-				w.Header().Set("Content-Type", "text/html; charset=utf-8")
-				w.WriteHeader(http.StatusNotFound)
-				_, _ = w.Write(b)
-				return
-			}
-		}
-		files.ServeHTTP(w, r)
-	})
-}
-
-func exists(p string) bool {
-	_, err := os.Stat(p)
-	return err == nil
 }
 
 func (a *app) status(_ context.Context, args []string) error {

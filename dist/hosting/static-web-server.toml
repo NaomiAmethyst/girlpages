@@ -1,0 +1,74 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# static-web-server (https://static-web-server.net) serving a girlpages site
+# built by `girlrepo -d /srv/girlpages publish --url https://girlpages.dev`.
+#
+#   static-web-server --config-file /etc/static-web-server/girlpages.toml
+#
+# girlrepo publish writes .zst, .br and .gz copies of every file worth
+# compressing, so compression is static only: nothing is compressed per
+# request. Cache lifetimes match girlrepo serve (and girlrepo(1)).
+
+[general]
+host = "::"
+port = 8080
+root = "/srv/girlpages"
+page404 = "/srv/girlpages/404.html"
+
+compression = false
+compression-static = true
+directory-listing = false
+redirect-trailing-slash = true
+# Our own Cache-Control rules are below.
+cache-control-headers = false
+# Hidden files (the lock file, half-written files) are never served.
+
+[advanced]
+
+# Every matching rule applies, in order, later ones winning: general first.
+
+# The website: pages, scripts, styles.
+[[advanced.headers]]
+source = "**"
+[advanced.headers.headers]
+Cache-Control = "public, max-age=3600"
+
+# The service worker must always be checked for updates.
+[[advanced.headers]]
+source = "/sw.js"
+[advanced.headers.headers]
+Cache-Control = "no-cache"
+
+# manifest.json and the pointers into the rest: they change on every publish.
+[[advanced.headers]]
+source = "/repo/**"
+[advanced.headers.headers]
+Cache-Control = "public, max-age=300"
+
+# Page contents change only when a page is girlified again.
+[[advanced.headers]]
+source = "/repo/contents/**"
+[advanced.headers.headers]
+Cache-Control = "public, max-age=86400"
+
+# Files named after their own hash never change.
+[[advanced.headers]]
+source = "/repo/{page/page-*,index}/**"
+[advanced.headers.headers]
+Cache-Control = "public, max-age=31536000, immutable"
+
+[[advanced.headers]]
+source = "/repo/section/*-*.json"
+[advanced.headers.headers]
+Cache-Control = "public, max-age=31536000, immutable"
+
+# Versions of static-web-server whose headers take a status list (after
+# 2.44.1) can make not-found pages checked again soon, as a publish may
+# add the page. Older ones ignore status and would apply it to everything,
+# so it's left out here:
+#
+#   [[advanced.headers]]
+#   source = "**"
+#   status = [404]
+#   [advanced.headers.headers]
+#   Cache-Control = "public, max-age=60"

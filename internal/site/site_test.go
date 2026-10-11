@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NaomiAmethyst/girlpages/internal/precompress"
 	"github.com/NaomiAmethyst/girlpages/internal/render"
 	"github.com/NaomiAmethyst/girlpages/internal/repo"
 )
@@ -638,5 +639,61 @@ func TestSources(t *testing.T) {
 	sec1 := read(t, filepath.Join(out, "section", "1", "index.html"))
 	if !strings.Contains(sec1, `href="/browse/?section=1&amp;src=arch%2Frolling"`) || strings.Contains(sec1, "src=upstream") {
 		t.Error("section 1 should offer the sources that have pages in it, and only those")
+	}
+}
+
+func TestHandler(t *testing.T) {
+	out := t.TempDir()
+	build(t, out, specs, Options{})
+	if _, err := precompress.Sweep(out, precompress.Encodings); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(Handler(out))
+	defer srv.Close()
+	get := func(path, enc string) *http.Response {
+		t.Helper()
+		req, _ := http.NewRequest("GET", srv.URL+path, nil)
+		if enc != "" {
+			req.Header.Set("Accept-Encoding", enc)
+		}
+		resp, err := http.DefaultTransport.RoundTrip(req) // no automatic gzip
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp
+	}
+	for _, c := range []struct{ accept, want string }{
+		{"zstd, br, gzip", "zstd"}, {"gzip, br", "br"}, {"gzip", "gzip"}, {"br;q=0, gzip", "gzip"}, {"", ""}, {"*", "zstd"},
+	} {
+		resp := get("/man/1/ls/", c.accept)
+		if got := resp.Header.Get("Content-Encoding"); got != c.want || resp.Header.Get("Content-Type") != "text/html; charset=utf-8" ||
+			resp.Header.Get("Vary") != "Accept-Encoding" {
+			t.Errorf("Accept-Encoding %q: got %q, %q", c.accept, got, resp.Header.Get("Content-Type"))
+		}
+	}
+	s, _ := repo.Open(filepath.Join(out, "repo"))
+	m, _ := s.Manifest()
+	for path, want := range map[string]string{
+		"/repo/manifest.json": CachePointer,
+		"/repo/" + repo.SectionIndexPath("1", m.Sections[0].SHA256): CacheImmutable,
+		"/repo/" + repo.NamePath("ls", "1"):                         CachePointer,
+		"/man/1/ls/":                                                CacheSite,
+		"/sw.js":                                                    CacheRevalidate,
+	} {
+		if got := get(path, "br").Header.Get("Cache-Control"); got != want {
+			t.Errorf("%s: Cache-Control %q, want %q", path, got, want)
+		}
+	}
+	if resp := get("/nope/", ""); resp.StatusCode != 404 {
+		t.Errorf("missing page: %d", resp.StatusCode)
+	}
+	if resp := get("/man/1/ls", ""); resp.StatusCode != 301 {
+		t.Errorf("directory without slash: %d", resp.StatusCode)
+	}
+	// The repository client negotiates and decodes.
+	c := repo.NewClient(srv.URL+"/repo", 5*time.Second)
+	if _, err := c.Manifest(context.Background()); err != nil {
+		t.Errorf("client through the handler: %v", err)
 	}
 }

@@ -395,6 +395,15 @@ Only update the repository.
 .TP
 .B \-\-gc
 Collect garbage afterwards.
+.TP
+.BR \-\-precompress =\fIlist\fR
+Write compressed copies of the site's and repository's files, in these
+formats (default
+.BR zstd,br,gzip ;
+.B none
+for none): see
+.BR HOSTING .
+Only new and changed files are compressed, and copies of removed files go.
 .PP
 The website is a progressive web app: it can be installed, and a service
 worker keeps the pages someone has read (up to 300) and the app itself for
@@ -520,6 +529,75 @@ which must be percent-encoded again in URLs.
 A client with a page installed needs one request:
 .IB repo /contents/ ab / source /girl.json\fR.
 The website's search reads the manifests, then only the shards a query needs.
+.SH HOSTING
+A site is plain files: any static web server will do.
+.B publish
+also writes compressed copies of every file worth compressing
+.RB ( .zst ,
+.BR .br " and"
+.BR .gz ;
+see
+.BR \-\-precompress ),
+compressed as hard as each format goes, once, so the server only has to send
+the right one: static-web-server with
+.BR \-\-compression\-static ,
+or nginx with
+.BR gzip_static ,
+.B brotli_static
+and
+.BR zstd_static .
+JSON shrinks to about a quarter.
+.BR girl (1)
+asks for zstd, then brotli, then gzip, and browsers ask for what they can
+take.
+Ready-made configurations are in the source,
+.B dist/hosting/static\-web\-server.toml
+and
+.BR dist/hosting/nginx.conf .
+.PP
+They send these
+.BR Cache\-Control s,
+as
+.B girlrepo serve
+does:
+.TP
+.B public, max-age=31536000, immutable
+Files named after their own hash: listings
+.RB ( repo/page/page\-*/ ),
+section indexes
+.RB ( repo/section/*\- sha .json ),
+and everything under
+.BR repo/index/ .
+.TP
+.B public, max-age=300
+.BR repo/manifest.json ,
+and the pointers into the rest
+.RB ( repo/page/name\-*/ ,
+.BR repo/section/ section .json ),
+which change on every publish.
+.TP
+.B public, max-age=86400
+Page contents
+.RB ( repo/contents/ ),
+which change only when a page is girlified again.
+.TP
+.B no-cache
+.BR sw.js ,
+so browsers pick up a new site.
+.TP
+.B public, max-age=3600
+Everything else.
+.PP
+A CDN such as CloudFront can go in front, keeping those lifetimes (set its
+cache policy to use the origin's headers) and passing
+.B Accept\-Encoding
+through to the origin so its copies are used; CloudFront normalises that
+header to the encodings it knows, so check zstd is among them, or clients
+behind it will get brotli.
+Files a publish removes are best left until clients' caches have moved on:
+publish, sync, and collect garbage
+.RB ( gc )
+a few minutes later, rather than all at once.
 .SH FILES
 .TP
 .IR dir /repo/

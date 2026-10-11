@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/NaomiAmethyst/girlpages/internal/precompress"
 )
 
 // Client fetches from a published repository: an http(s) URL, a file://
@@ -72,6 +74,9 @@ func (c *Client) Raw(ctx context.Context, rel string) ([]byte, error) {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
+	// Repositories are served with pre-compressed copies of every file
+	// (see girlrepo publish), and their JSON compresses very well.
+	req.Header.Set("Accept-Encoding", AcceptEncoding)
 	if c.UserAgent != "" {
 		req.Header.Set("User-Agent", c.UserAgent)
 	}
@@ -90,7 +95,41 @@ func (c *Client) Raw(ctx context.Context, rel string) ([]byte, error) {
 	case resp.StatusCode != http.StatusOK:
 		return nil, fmt.Errorf("repo %s: %s", u, resp.Status)
 	}
-	return io.ReadAll(io.LimitReader(resp.Body, maxDocument))
+	body, err := decode(resp.Body, resp.Header.Get("Content-Encoding"))
+	if err != nil {
+		return nil, fmt.Errorf("repo %s: %w", u, err)
+	}
+	defer body.Close()
+	// The limit is on what it decompresses to, so a small compressed file
+	// can't swell to fill memory.
+	b, err := io.ReadAll(io.LimitReader(body, maxDocument+1))
+	if err != nil {
+		return nil, fmt.Errorf("repo %s: %w", u, err)
+	}
+	if len(b) > maxDocument {
+		return nil, fmt.Errorf("repo %s: bigger than %d bytes", u, maxDocument)
+	}
+	return b, nil
+}
+
+// AcceptEncoding is what the client asks for: zstd, brotli or gzip, in
+// that order of preference.
+const AcceptEncoding = "zstd, br, gzip"
+
+// decode undoes the Content-Encoding of a response body.
+func decode(r io.Reader, encoding string) (io.ReadCloser, error) {
+	encoding = strings.ToLower(strings.TrimSpace(encoding))
+	if encoding == "" || encoding == "identity" {
+		return io.NopCloser(r), nil
+	}
+	if strings.Contains(encoding, ",") {
+		return nil, fmt.Errorf("can't undo layered Content-Encoding %q", encoding)
+	}
+	e, ok := precompress.Lookup(encoding)
+	if !ok {
+		return nil, fmt.Errorf("unexpected Content-Encoding %q", encoding)
+	}
+	return e.Reader(r)
 }
 
 // escapePath percent-encodes each segment of a relative path, so the %XX

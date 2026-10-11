@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/NaomiAmethyst/girlpages/internal/precompress"
 )
 
 // PageRef is a page with its current listing, as gathered for publishing.
@@ -334,6 +336,9 @@ func (s *Store) GC(dryRun bool) (GCStats, error) {
 			}
 			rel, _ := filepath.Rel(s.Dir, path)
 			rel = filepath.ToSlash(rel)
+			if base, ok := precompress.IsCopy(rel); ok {
+				rel = base // a compressed copy lives and dies with its original
+			}
 			if live[rel] {
 				return nil
 			}

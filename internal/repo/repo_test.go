@@ -4,6 +4,7 @@
 package repo
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -15,6 +16,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/NaomiAmethyst/girlpages/internal/precompress"
 )
 
 const lsText = `LS(1)                     User Commands                    LS(1)
@@ -441,5 +444,55 @@ func TestRefreshPromptVersions(t *testing.T) {
 	pages, _ = s.AllPages()
 	if n, _ := s.Refresh(pages); n != 0 {
 		t.Errorf("second refresh changed %d", n)
+	}
+}
+
+func TestClientEncodings(t *testing.T) {
+	s := testStore(t)
+	raw, _ := os.ReadFile(filepath.Join(s.Dir, ManifestPath()))
+	for _, e := range precompress.Encodings {
+		t.Run(e.Name, func(t *testing.T) {
+			data, _ := e.Compress(raw)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if !strings.Contains(r.Header.Get("Accept-Encoding"), e.Name) {
+					t.Errorf("client didn't offer %s: %q", e.Name, r.Header.Get("Accept-Encoding"))
+				}
+				w.Header().Set("Content-Encoding", e.Name)
+				w.Write(data)
+			}))
+			defer srv.Close()
+			if m, err := NewClient(srv.URL, time.Second).Manifest(context.Background()); err != nil || m.Pages != 37 {
+				t.Errorf("%+v, %v", m, err)
+			}
+		})
+	}
+	// A compression bomb is refused rather than read into memory.
+	bomb, _ := precompress.Encodings[0].Compress(bytes.Repeat([]byte{' '}, maxDocument+10))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Encoding", "zstd")
+		w.Write(bomb)
+	}))
+	defer srv.Close()
+	if _, err := NewClient(srv.URL, 5*time.Second).Manifest(context.Background()); err == nil || !strings.Contains(err.Error(), "bigger than") {
+		t.Errorf("bomb: %v", err)
+	}
+	// An encoding it didn't ask for is an error, not garbage.
+	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Encoding", "compress")
+		w.Write(raw)
+	}))
+	defer srv2.Close()
+	if _, err := NewClient(srv2.URL, time.Second).Manifest(context.Background()); err == nil {
+		t.Error("unknown encoding should fail")
+	}
+	// GC keeps a live file's compressed copies.
+	if _, err := precompress.Sweep(s.Dir, precompress.Encodings); err != nil {
+		t.Fatal(err)
+	}
+	if st, err := s.GC(false); err != nil || st.Files != 0 {
+		t.Errorf("GC removed %d files, %v", st.Files, err)
+	}
+	if _, err := os.Stat(filepath.Join(s.Dir, ManifestPath()+".br")); err != nil {
+		t.Error(err)
 	}
 }
