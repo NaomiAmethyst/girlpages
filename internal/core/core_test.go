@@ -86,7 +86,8 @@ func TestRepo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(res.Markup, "from-repo") || res.Entry.Backend != BackendRepo || res.Entry.Model != "fake-from-repo" {
+	if !strings.Contains(res.Markup, "from-repo") || res.Entry.Backend != BackendRepo || res.Entry.Model != "fake-from-repo" ||
+		res.Entry.PromptVersion != llm.PromptVersion {
 		t.Fatalf("from the repo: %q %+v", res.Markup, res.Entry)
 	}
 	// It's cached now.

@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime/debug"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -436,6 +437,7 @@ func (a *app) girlify(ctx context.Context, args []string) error {
 	sections := fs.StringP("sections", "s", "", "only these sections (comma separated)")
 	all := fs.Bool("all-versions", false, "girlify old versions too, not just current ones")
 	force := fs.Bool("force", false, "girlify again even if already done")
+	reprompt := fs.Bool("reprompt", false, "girlify again pages made with an older prompt")
 	dry := fs.BoolP("dry-run", "n", false, "say what would be girlified, and estimate the tokens it'd take")
 	price := fs.String("price", "", "with --dry-run, estimate the cost at IN/OUT US dollars per million tokens, e.g. 0.10/0.50")
 	ratio := fs.Float64("output-ratio", ingest.OutputRatio, "with --dry-run, how long output is reckoned to be next to the original")
@@ -460,7 +462,7 @@ func (a *app) girlify(ctx context.Context, args []string) error {
 	o := ingest.GirlifyOptions{
 		LLM:  llm.Options{ChunkSize: a.cfg.ChunkSize, ExtraInstructions: a.cfg.ExtraInstructions},
 		Jobs: *jobs, Limit: *limit, Sections: splitSections(*sections), Names: fs.Args(),
-		AllVersions: *all, Force: *force, DryRun: *dry, Quiet: *quiet, Log: os.Stderr,
+		AllVersions: *all, Force: *force, Reprompt: *reprompt, DryRun: *dry, Quiet: *quiet, Log: os.Stderr,
 	}
 	if !*noCache && !*force {
 		o.Cache = core.CacheSet(a.cfg)
@@ -713,6 +715,7 @@ func (a *app) status(_ context.Context, args []string) error {
 		return err
 	}
 	versions, girl, current := 0, 0, 0
+	prompts := map[int]int{}
 	sections := map[string]int{}
 	for _, p := range pages {
 		versions += len(p.Listing.Versions)
@@ -721,14 +724,34 @@ func (a *app) status(_ context.Context, args []string) error {
 			current++
 		}
 		for _, v := range p.Listing.Versions {
-			if _, ok := v.Variants[repo.VariantGirl]; ok {
+			if info, ok := v.Variants[repo.VariantGirl]; ok {
 				girl++
+				prompts[info.PromptVersion]++
 			}
 		}
 	}
 	fmt.Printf("repository: %s\n", s.Dir)
 	fmt.Printf("pages:      %d in %d sections\n", len(pages), len(sections))
 	fmt.Printf("versions:   %d (%d girlified)\n", versions, girl)
+	if len(prompts) > 0 {
+		var keys []int
+		for k := range prompts {
+			keys = append(keys, k)
+		}
+		sort.Ints(keys)
+		var parts []string
+		for _, k := range keys {
+			label := fmt.Sprintf("v%d", k)
+			if k == 0 {
+				label = "unknown"
+			}
+			if k == llm.PromptVersion {
+				label += " (current)"
+			}
+			parts = append(parts, fmt.Sprintf("%s: %d", label, prompts[k]))
+		}
+		fmt.Printf("prompts:    %s\n", strings.Join(parts, ", "))
+	}
 	fmt.Printf("current:    %d of %d girlified", current, len(pages))
 	if len(pages) > 0 {
 		fmt.Printf(" (%d%%)", current*100/len(pages))

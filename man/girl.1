@@ -217,6 +217,14 @@ or
 .BR batches ),
 overriding the configuration.
 .TP
+.B \-\-reprompt
+Convert again pages made with an older prompt (the prompt's version is
+recorded with every conversion; see
+.BR \-\-doctor ),
+not taking such conversions from the cache or a repository.
+Ordinary runs, and the hooks, leave them be: a new prompt shouldn't cost a
+whole system's worth of conversions unless you ask.
+.TP
 .B \-\-no\-batch
 The same as
 .BR \-\-batch=none .

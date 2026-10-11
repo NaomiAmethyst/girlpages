@@ -510,3 +510,49 @@ func TestExport(t *testing.T) {
 		t.Errorf("reading the export: %v", err)
 	}
 }
+
+func TestGirlifyReprompt(t *testing.T) {
+	needTools(t)
+	root := filepath.Join(t.TempDir(), "man")
+	write(t, filepath.Join(root, "man1", "foo.1"), []byte(roff("foo", "1", "does foo")))
+	write(t, filepath.Join(root, "man1", "bar.1"), []byte(roff("bar", "1", "does bar")))
+	s, _ := repo.Open(t.TempDir())
+	ctx := context.Background()
+	if _, err := Paths(ctx, s, []string{root}, Options{Quiet: true, Log: io.Discard}); err != nil {
+		t.Fatal(err)
+	}
+	b := &fake{}
+	if _, err := Girlify(ctx, s, GirlifyOptions{Backend: b, Quiet: true, Log: io.Discard}); err != nil {
+		t.Fatal(err)
+	}
+	l, _, _ := s.Listing("foo", "1")
+	if pv := l.CurrentVersion().Variants[repo.VariantGirl].PromptVersion; pv != llm.PromptVersion {
+		t.Fatalf("listing records prompt %d", pv)
+	}
+	// foo's conversion is from an older prompt, as an older girlrepo
+	// would have recorded it: in the variant, not the listing.
+	g, _ := s.Variant(l.Current, repo.VariantGirl)
+	g.Generator.PromptVersion = llm.PromptVersion - 1
+	info, _ := s.PutVariant(g)
+	info.PromptVersion = 0
+	s.UpdateListing("foo", "1", func(l *repo.Listing) error { l.CurrentVersion().Variants[repo.VariantGirl] = info; return nil })
+
+	if st, _ := Girlify(ctx, s, GirlifyOptions{Backend: b, DryRun: true, Quiet: true, Log: io.Discard}); st.Estimate.Pages != 0 {
+		t.Errorf("an ordinary run should leave it be: %+v", st)
+	}
+	st, _ := Girlify(ctx, s, GirlifyOptions{Backend: b, DryRun: true, Reprompt: true, Quiet: true, Log: io.Discard})
+	if st.Estimate.Pages != 1 {
+		t.Errorf("reprompt dry run: %+v", st)
+	}
+	calls := b.calls.Load()
+	if st, err := Girlify(ctx, s, GirlifyOptions{Backend: b, Reprompt: true, Quiet: true, Log: io.Discard}); err != nil || st.Converted != 1 {
+		t.Fatalf("reprompt: %+v, %v", st, err)
+	}
+	if b.calls.Load() != calls+1 {
+		t.Errorf("%d calls", b.calls.Load()-calls)
+	}
+	l, _, _ = s.Listing("foo", "1")
+	if pv := l.CurrentVersion().Variants[repo.VariantGirl].PromptVersion; pv != llm.PromptVersion {
+		t.Errorf("after reprompt: prompt %d", pv)
+	}
+}

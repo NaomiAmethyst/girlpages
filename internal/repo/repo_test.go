@@ -403,3 +403,42 @@ func TestVariantIndexShards(t *testing.T) {
 		}
 	}
 }
+
+func TestRefreshPromptVersions(t *testing.T) {
+	s := testStore(t)
+	// Forget the prompt versions, as listings from before they were
+	// recorded did.
+	pages, _ := s.AllPages()
+	for _, p := range pages {
+		s.UpdateListing(p.Pointer.Name, p.Pointer.Section, func(l *Listing) error {
+			for i := range l.Versions {
+				for k, info := range l.Versions[i].Variants {
+					info.PromptVersion = 0
+					l.Versions[i].Variants[k] = info
+				}
+			}
+			return nil
+		})
+	}
+	// The test store's girl variants record no prompt version; give one.
+	l, _, _ := s.Listing("ls", "1")
+	g, _ := s.Variant(l.Current, VariantGirl)
+	g.Generator.PromptVersion = 7
+	info, _ := s.PutVariant(g)
+	info.PromptVersion = 0
+	s.UpdateListing("ls", "1", func(l *Listing) error { l.CurrentVersion().Variants[VariantGirl] = info; return nil })
+
+	pages, _ = s.AllPages()
+	n, err := s.Refresh(pages)
+	if err != nil || n != 1 {
+		t.Fatalf("refresh changed %d listings, %v", n, err)
+	}
+	l, _, _ = s.Listing("ls", "1")
+	if pv := l.CurrentVersion().Variants[VariantGirl].PromptVersion; pv != 7 {
+		t.Errorf("ls girl prompt %d", pv)
+	}
+	pages, _ = s.AllPages()
+	if n, _ := s.Refresh(pages); n != 0 {
+		t.Errorf("second refresh changed %d", n)
+	}
+}

@@ -316,7 +316,7 @@ func (s *Store) importVariant(ctx context.Context, c *Client, source, variant st
 	case err == nil && Hash(have) == remote.SHA256:
 		return remote, false, false, nil
 	case err == nil && !o.PreferRemote:
-		return VariantInfo{SHA256: Hash(have), Size: int64(len(have))}, false, true, nil
+		return InfoFor(have), false, true, nil
 	case err != nil && !errors.Is(err, ErrNotFound):
 		return VariantInfo{}, false, false, err
 	}
@@ -341,7 +341,7 @@ func (s *Store) importVariant(ctx context.Context, c *Client, source, variant st
 	if err := s.WriteRaw(rel, raw); err != nil {
 		return VariantInfo{}, false, false, err
 	}
-	return VariantInfo{SHA256: remote.SHA256, Size: int64(len(raw))}, !conflict, conflict, nil
+	return InfoFor(raw), !conflict, conflict, nil
 }
 
 func hasPackage(ps []Package, p Package) bool {

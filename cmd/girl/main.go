@@ -54,7 +54,7 @@ type flags struct {
 	sections, manPath, locale, pager, configFile  string
 	help, version                                 bool
 	bulk, update, force, dryRun, prune, quiet     bool
-	noWait, noBatch                               bool
+	noWait, noBatch, reprompt                     bool
 	jobs, limit                                   int
 	refresh, cachedOnly, raw, doctor, html, serve bool
 	color, backend, model, listen, repo, batch    string
@@ -88,6 +88,7 @@ func newFlagSet(f *flags) *pflag.FlagSet {
 	fs.BoolVar(&f.prune, "prune", false, "")
 	fs.BoolVar(&f.noWait, "no-wait", false, "")
 	fs.BoolVar(&f.noBatch, "no-batch", false, "")
+	fs.BoolVar(&f.reprompt, "reprompt", false, "")
 	fs.StringVar(&f.batch, "batch", "", "")
 	fs.StringVar(&f.importSrc, "import", "", "")
 	fs.StringVar(&f.exportDir, "export", "", "")
@@ -167,6 +168,7 @@ bulk options:
       --update            refresh changed pages; with a previous full --bulk,
                           new pages too (this is what the hooks run)
       --force             reconvert pages even if they're up to date
+      --reprompt          reconvert pages made with an older prompt
       --prune             drop cache entries for pages that no longer exist
       --batch=API         send pages in batches: openrouter, anthropic or none
                           (default from the config)
@@ -478,7 +480,7 @@ func runBulk(ctx context.Context, f flags, cfg *config.Config, g *core.Girl, mo 
 		}
 		b = nil
 	}
-	var fetch func(context.Context, manpage.Page) (string, string, error)
+	var fetch func(context.Context, manpage.Page) (string, *repo.Generator, error)
 	if g.Repo != nil && cfg.ExtraInstructions == "" {
 		fetch = core.BulkFetch(g.Repo)
 	}
@@ -495,6 +497,7 @@ func runBulk(ctx context.Context, f flags, cfg *config.Config, g *core.Girl, mo 
 		Man:      mo,
 		LLM:      llm.Options{ChunkSize: cfg.ChunkSize, ExtraInstructions: cfg.ExtraInstructions},
 		Fetch:    fetch,
+		Reprompt: f.reprompt,
 		Batch:    batcher,
 		NoWait:   f.noWait,
 	}, g.Caches, b, os.Stderr)
@@ -589,7 +592,7 @@ func doctor(ctx context.Context, cfg *config.Config, g *core.Girl) int {
 			}
 		}
 	}
-	fmt.Printf("jobs %d, chunk size %d\n", cfg.Jobs, cfg.ChunkSize)
+	fmt.Printf("jobs %d, chunk size %d, prompt version %d\n", cfg.Jobs, cfg.ChunkSize, llm.PromptVersion)
 	if kind, err := cfg.ResolveBatch(); err != nil || kind != config.BatchNone {
 		fmt.Printf("batches: %s (for --bulk)", kind)
 		if b, err := core.NewBatcher(cfg, "", nil); err != nil {
@@ -624,8 +627,15 @@ func doctor(ctx context.Context, cfg *config.Config, g *core.Girl) int {
 	}
 	fmt.Println("caches:")
 	for i, d := range caches {
-		pages, objects := 0, map[string]bool{}
-		_ = d.Entries(func(e *cache.Entry) error { pages++; objects[e.Hash] = true; return nil })
+		pages, objects, older := 0, map[string]bool{}, 0
+		_ = d.Entries(func(e *cache.Entry) error {
+			pages++
+			objects[e.Hash] = true
+			if e.PromptVersion < llm.PromptVersion {
+				older++
+			}
+			return nil
+		})
 		role := "read"
 		if i == 0 {
 			role = "read/write"
@@ -633,6 +643,9 @@ func doctor(ctx context.Context, cfg *config.Config, g *core.Girl) int {
 		extra := ""
 		if _, err := os.Stat(d.MarkerPath()); err == nil {
 			extra = ", full bulk done"
+		}
+		if older > 0 {
+			extra += fmt.Sprintf(", %d pages from an older prompt (girl --bulk --reprompt redoes them)", older)
 		}
 		fmt.Printf("  %s (%s): %d pages, %d conversions%s\n", d, role, pages, len(objects), extra)
 	}

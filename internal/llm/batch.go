@@ -470,6 +470,8 @@ type Result struct {
 	Job    SavedJob
 	Markup string
 	Model  string
+	// PromptVersion is the prompt it was sent with.
+	PromptVersion int
 	// Err is set if the page couldn't be converted; it will be submitted
 	// again next time.
 	Err error
@@ -594,7 +596,7 @@ func (b *Batcher) finish(ctx context.Context, st *batchState, batch *Batch, text
 					break
 				}
 			}
-			res := Result{Job: j, Model: st.Model, Err: err}
+			res := Result{Job: j, Model: st.Model, PromptVersion: st.PromptVersion, Err: err}
 			if err == nil {
 				res.Markup = Join(outs)
 			}

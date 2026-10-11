@@ -227,8 +227,8 @@ func (l *Listing) derive() {
 }
 
 // Refresh rewrites listings whose derived fields are out of date (written
-// by an older girlrepo, say), returning how many changed. The caller must
-// hold Lock.
+// by an older girlrepo, say), and fills in prompt versions they don't
+// record, returning how many changed. The caller must hold Lock.
 func (s *Store) Refresh(pages []PageRef) (int, error) {
 	n := 0
 	for _, p := range pages {
@@ -239,10 +239,42 @@ func (s *Store) Refresh(pages []PageRef) (int, error) {
 		for i := range want.Versions {
 			same = same && want.Versions[i].Version == p.Listing.Versions[i].Version
 		}
+		// Prompt versions the listing doesn't know but the variant does.
+		prompts := map[string]map[string]int{}
+		for _, v := range p.Listing.Versions {
+			for variant, info := range v.Variants {
+				if info.PromptVersion != 0 || variant == VariantMan {
+					continue
+				}
+				b, err := s.ReadRaw(ContentPath(v.Source, variant))
+				if err != nil {
+					continue
+				}
+				if pv := InfoFor(b).PromptVersion; pv != 0 {
+					if prompts[v.Source] == nil {
+						prompts[v.Source] = map[string]int{}
+					}
+					prompts[v.Source][variant] = pv
+					same = false
+				}
+			}
+		}
 		if same {
 			continue
 		}
-		if err := s.UpdateListing(p.Pointer.Name, p.Pointer.Section, func(*Listing) error { return nil }); err != nil {
+		err := s.UpdateListing(p.Pointer.Name, p.Pointer.Section, func(l *Listing) error {
+			for i := range l.Versions {
+				v := &l.Versions[i]
+				for variant, pv := range prompts[v.Source] {
+					if info, ok := v.Variants[variant]; ok && info.PromptVersion == 0 {
+						info.PromptVersion = pv
+						v.Variants[variant] = info
+					}
+				}
+			}
+			return nil
+		})
+		if err != nil {
 			return n, err
 		}
 		n++
@@ -268,7 +300,11 @@ func (s *Store) HasVariant(source, variant string) bool {
 // PutVariant stores a variant.
 func (s *Store) PutVariant(v *Variant) (VariantInfo, error) {
 	sha, size, err := s.Write(ContentPath(v.Source, v.Variant), v)
-	return VariantInfo{SHA256: sha, Size: size}, err
+	info := VariantInfo{SHA256: sha, Size: size}
+	if v.Generator != nil {
+		info.PromptVersion = v.Generator.PromptVersion
+	}
+	return info, err
 }
 
 // Pages calls fn for every page pointer, in no particular order.

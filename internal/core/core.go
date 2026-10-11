@@ -125,10 +125,8 @@ func (g *Girl) Get(ctx context.Context, p manpage.Page, o GetOptions) (Result, e
 	}
 	if !o.Refresh {
 		if markup, gen, err := g.FromRepo(ctx, p); err == nil {
-			entry.Backend, entry.Model = BackendRepo, gen.Model
-			if gen.PromptVersion != 0 {
-				entry.PromptVersion = gen.PromptVersion
-			}
+			// Record the prompt that made it, not ours (0 if it doesn't say).
+			entry.Backend, entry.Model, entry.PromptVersion = BackendRepo, gen.Model, gen.PromptVersion
 			if err := dir.PutObject(hash, markup); err != nil {
 				fmt.Fprintf(os.Stderr, "girl: couldn't save to cache: %v\n", err)
 			} else if err := entry.Stamp(); err == nil {
@@ -208,21 +206,17 @@ func FetchFrom(ctx context.Context, c *repo.Client, p manpage.Page) (string, *re
 // it checks the repository's index of girl variants before asking for each
 // page, so pages the repository doesn't have cost no requests. Older
 // repositories without the index are asked page by page.
-func BulkFetch(c *repo.Client) func(ctx context.Context, p manpage.Page) (string, string, error) {
+func BulkFetch(c *repo.Client) func(ctx context.Context, p manpage.Page) (string, *repo.Generator, error) {
 	idx := c.VariantIndex(repo.VariantGirl)
-	return func(ctx context.Context, p manpage.Page) (string, string, error) {
+	return func(ctx context.Context, p manpage.Page) (string, *repo.Generator, error) {
 		src, err := manpage.SourceHash(p.Path, nil)
 		if err != nil {
-			return "", "", err
+			return "", nil, err
 		}
 		if has, err := idx.Has(ctx, src); err == nil && !has {
-			return "", "", fmt.Errorf("%s: %w", p.Title(), repo.ErrNotFound)
+			return "", nil, fmt.Errorf("%s: %w", p.Title(), repo.ErrNotFound)
 		}
-		markup, gen, err := FetchFrom(ctx, c, p)
-		if err != nil {
-			return "", "", err
-		}
-		return markup, gen.Model, nil
+		return FetchFrom(ctx, c, p)
 	}
 }
 

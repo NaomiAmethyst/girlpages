@@ -31,6 +31,7 @@
 package repo
 
 import (
+	"encoding/json"
 	"fmt"
 	"path"
 	"regexp"
@@ -130,6 +131,22 @@ type Version struct {
 type VariantInfo struct {
 	SHA256 string `json:"sha256"`
 	Size   int64  `json:"size"`
+	// PromptVersion is the prompt version its generator records, so
+	// outdated conversions can be found without reading them; 0 if it
+	// doesn't say.
+	PromptVersion int `json:"prompt_version,omitempty"`
+}
+
+// InfoFor describes a variant stored as b.
+func InfoFor(b []byte) VariantInfo {
+	info := VariantInfo{SHA256: Hash(b), Size: int64(len(b))}
+	var v struct {
+		Generator *Generator `json:"generator"`
+	}
+	if json.Unmarshal(b, &v) == nil && v.Generator != nil {
+		info.PromptVersion = v.Generator.PromptVersion
+	}
+	return info
 }
 
 // Package is somewhere a version was found.

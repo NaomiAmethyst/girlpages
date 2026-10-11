@@ -40,7 +40,7 @@ type Options struct {
 	LLM    llm.Options
 	// Fetch, if set, is tried before the model: it returns a page's
 	// conversion from a girlpages repository, with what made it.
-	Fetch func(ctx context.Context, p manpage.Page) (markup, model string, err error)
+	Fetch func(ctx context.Context, p manpage.Page) (markup string, made *repo.Generator, err error)
 	// Batch, if set, converts pages in batches instead of one at a time.
 	// Batches submitted by earlier runs are collected first.
 	Batch *llm.Batcher
@@ -50,6 +50,10 @@ type Options struct {
 	// FetchOnly is for runs that only take what Fetch has (girl --import):
 	// pages it doesn't have are counted, not failures.
 	FetchOnly bool
+	// Reprompt converts again pages made with an older prompt
+	// (llm.PromptVersion), and won't take such conversions from the cache
+	// or Fetch.
+	Reprompt bool
 }
 
 // Stats summarises a run.
@@ -116,6 +120,13 @@ func Run(ctx context.Context, o Options, caches cache.Set, b llm.Backend, log io
 		return st, err
 	}
 	st.Pages = len(pages)
+	// What made each conversion in the caches, so pages linked to one
+	// record the right thing, and reprompting can tell the old ones.
+	made := makers(caches)
+	current := func(hash string) bool {
+		m, ok := made[hash]
+		return !o.Reprompt || ok && m.PromptVersion >= llm.PromptVersion
+	}
 
 	// Pass 1: work out what needs converting. Rendering is local and cheap
 	// next to an LLM call, so use every CPU.
@@ -138,7 +149,7 @@ func Run(ctx context.Context, o Options, caches cache.Set, b llm.Backend, log io
 				}
 				p := pages[i]
 				if !o.Force {
-					if _, e, fresh := caches.Lookup(p.Path); e != nil && fresh {
+					if _, e, fresh := caches.Lookup(p.Path); e != nil && fresh && (!o.Reprompt || e.PromptVersion >= llm.PromptVersion) {
 						mu.Lock()
 						st.Fresh++
 						mu.Unlock()
@@ -157,9 +168,9 @@ func Run(ctx context.Context, o Options, caches cache.Set, b llm.Backend, log io
 					continue
 				}
 				hash := cache.Hash(text)
-				if !o.Force && caches.HasObject(hash) {
+				if !o.Force && caches.HasObject(hash) && current(hash) {
 					if !o.DryRun {
-						if err := putEntry(dir, p, hash, manpage.HeaderTitle(text), "", ""); err != nil {
+						if err := putEntry(dir, p, hash, manpage.HeaderTitle(text), made[hash]); err != nil {
 							fmt.Fprintf(log, "💔 %s: %v\n", p.Title(), err)
 						}
 					}
@@ -259,11 +270,15 @@ func Run(ctx context.Context, o Options, caches cache.Set, b llm.Backend, log io
 				start := time.Now()
 				var markup string
 				var err error
-				backend, model := "", ""
+				var mk maker
 				fetched, missing := false, false
 				if o.Fetch != nil {
-					if markup, model, err = o.Fetch(ctx, j.pages[0]); err == nil {
-						fetched, backend = true, "repo"
+					var gen *repo.Generator
+					if markup, gen, err = o.Fetch(ctx, j.pages[0]); err == nil && o.Reprompt && gen.PromptVersion < llm.PromptVersion {
+						err = fmt.Errorf("its conversion there is from an older prompt: %w", repo.ErrNotFound)
+					}
+					if err == nil {
+						fetched, mk = true, maker{Backend: "repo", Model: gen.Model, PromptVersion: gen.PromptVersion, Generated: gen.Generated}
 					} else if errors.Is(err, repo.ErrNotFound) {
 						missing = true
 					} else {
@@ -280,14 +295,14 @@ func Run(ctx context.Context, o Options, caches cache.Set, b llm.Backend, log io
 					lo.Parallel = 1
 					lo.Progress = nil
 					markup, err = llm.Convert(ctx, b, j.name(), j.text, lo)
-					backend, model = b.Name(), b.Model()
+					mk = maker{Backend: b.Name(), Model: b.Model(), PromptVersion: llm.PromptVersion, Generated: now()}
 				}
 				if err == nil {
 					err = dir.PutObject(j.hash, markup)
 				}
 				if err == nil {
 					for _, p := range j.pages {
-						if perr := putEntry(dir, p, j.hash, j.title, backend, model); perr != nil && err == nil {
+						if perr := putEntry(dir, p, j.hash, j.title, mk); perr != nil && err == nil {
 							err = perr
 						}
 					}
@@ -399,23 +414,44 @@ func pagesFor(ctx context.Context, o Options, dir cache.Dir) ([]manpage.Page, er
 	return pages, nil
 }
 
-// putEntry records that p converts to hash. backend and model say what
-// made the conversion; empty means it already existed, so keep what an
-// earlier entry said.
-func putEntry(dir cache.Dir, p manpage.Page, hash, title, backend, model string) error {
+// maker is what made a conversion.
+type maker struct {
+	Backend, Model string
+	PromptVersion  int
+	Generated      time.Time
+}
+
+func now() time.Time { return time.Now().UTC().Truncate(time.Second) }
+
+// makers reads what made each conversion in the caches, by hash.
+func makers(caches cache.Set) map[string]maker {
+	out := map[string]maker{}
+	for _, d := range caches {
+		_ = d.Entries(func(e *cache.Entry) error {
+			if m, ok := out[e.Hash]; !ok || e.PromptVersion > m.PromptVersion {
+				out[e.Hash] = maker{e.Backend, e.Model, e.PromptVersion, e.Generated}
+			}
+			return nil
+		})
+	}
+	return out
+}
+
+// putEntry records that p converts to hash, which m made.
+func putEntry(dir cache.Dir, p manpage.Page, hash, title string, m maker) error {
+	if m.Generated.IsZero() {
+		m.Generated = now()
+	}
 	e := &cache.Entry{
 		Source:        p.Path,
 		Name:          p.Name,
 		Section:       p.Section,
 		Title:         title,
 		Hash:          hash,
-		PromptVersion: llm.PromptVersion,
-		Generated:     time.Now().UTC().Truncate(time.Second),
-	}
-	if backend != "" {
-		e.Backend, e.Model = backend, model
-	} else if old, _ := dir.Entry(p.Path); old != nil && old.Hash == hash {
-		e.Backend, e.Model, e.PromptVersion, e.Generated = old.Backend, old.Model, old.PromptVersion, old.Generated
+		Backend:       m.Backend,
+		Model:         m.Model,
+		PromptVersion: m.PromptVersion,
+		Generated:     m.Generated,
 	}
 	if err := e.Stamp(); err != nil {
 		return err

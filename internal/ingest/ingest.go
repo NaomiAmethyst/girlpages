@@ -315,6 +315,25 @@ func cacheMakers(caches cache.Set) makers {
 	return m
 }
 
+// current reports whether the cached conversion for hash was made with the
+// current prompt.
+func (m makers) current(hash string) bool {
+	e := m[hash]
+	return e != nil && e.PromptVersion >= llm.PromptVersion
+}
+
+// outdated reports whether a girl variant was made with an older prompt,
+// reading it if its listing doesn't say (one written before listings
+// recorded prompt versions, or a variant whose maker didn't say).
+func outdated(s *repo.Store, source string, info repo.VariantInfo) bool {
+	if info.PromptVersion == 0 {
+		if v, err := s.Variant(source, repo.VariantGirl); err == nil && v.Generator != nil {
+			info.PromptVersion = v.Generator.PromptVersion
+		}
+	}
+	return info.PromptVersion < llm.PromptVersion
+}
+
 func (m makers) generator(hash string, fallback time.Time) *repo.Generator {
 	g := &repo.Generator{Generated: fallback}
 	if e := m[hash]; e != nil {
@@ -494,7 +513,7 @@ func variantInfo(s *repo.Store, source, variant string) (repo.VariantInfo, error
 	if err != nil {
 		return repo.VariantInfo{}, err
 	}
-	return repo.VariantInfo{SHA256: repo.Hash(b), Size: int64(len(b))}, nil
+	return repo.InfoFor(b), nil
 }
 
 func addPackage(v *repo.Version, p repo.Package) {
@@ -524,6 +543,10 @@ type GirlifyOptions struct {
 	AllVersions bool
 	// Force converts again even if there's a girl variant already.
 	Force bool
+	// Reprompt converts again versions whose girl variant was made with an
+	// older prompt (llm.PromptVersion), and won't take such conversions
+	// from the cache.
+	Reprompt bool
 	// OutputRatio, for dry runs, is how long output is reckoned to be next
 	// to the original; zero means the package's OutputRatio.
 	OutputRatio float64
@@ -629,7 +652,7 @@ func Girlify(ctx context.Context, s *repo.Store, o GirlifyOptions) (GirlifyStats
 			vs = []repo.Version{*p.Current()}
 		}
 		for _, v := range vs {
-			if _, ok := v.Variants[repo.VariantGirl]; ok && !o.Force {
+			if info, ok := v.Variants[repo.VariantGirl]; ok && !o.Force && !(o.Reprompt && outdated(s, v.Source, info)) {
 				continue
 			}
 			if pending[v.Source] && !o.Force {
@@ -706,7 +729,7 @@ func Girlify(ctx context.Context, s *repo.Store, o GirlifyOptions) (GirlifyStats
 				return st, err
 			}
 			text := man.Text()
-			if markup, ok := o.Cache.Object(cache.Hash(text)); ok && !o.Force {
+			if markup, ok := o.Cache.Object(cache.Hash(text)); ok && !o.Force && (!o.Reprompt || made.current(cache.Hash(text))) {
 				g := made.generator(cache.Hash(text), time.Now().UTC().Truncate(time.Second))
 				if err := putGirl(s, src, man.Title, markup, g, w.pages); err != nil {
 					return st, err
@@ -798,7 +821,9 @@ func girlifyOne(ctx context.Context, s *repo.Store, o GirlifyOptions, made maker
 	g := made.generator(cache.Hash(text), time.Now().UTC().Truncate(time.Second))
 	markup, fromCache := "", false
 	if !o.Force {
-		markup, fromCache = o.Cache.Object(cache.Hash(text))
+		if !o.Reprompt || made.current(cache.Hash(text)) {
+			markup, fromCache = o.Cache.Object(cache.Hash(text))
+		}
 	}
 	if !fromCache {
 		markup, err = llm.Convert(ctx, o.Backend, title, text, llm.Options{
@@ -864,7 +889,7 @@ func collectGirl(ctx context.Context, s *repo.Store, o GirlifyOptions, wait bool
 			_ = json.Unmarshal(r.Job.Meta, &pages)
 			var man *repo.Variant
 			if man, err = s.Variant(r.Job.Key, repo.VariantMan); err == nil {
-				g := &repo.Generator{Backend: "openai", Model: r.Model, PromptVersion: llm.PromptVersion,
+				g := &repo.Generator{Backend: "openai", Model: r.Model, PromptVersion: r.PromptVersion,
 					Generated: time.Now().UTC().Truncate(time.Second)}
 				err = putGirl(s, r.Job.Key, man.Title, r.Markup, g, pages)
 			}

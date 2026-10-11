@@ -61,7 +61,7 @@ func collect(ctx context.Context, o Options, dir cache.Dir, wait bool, st *Stats
 			return
 		}
 		for _, p := range m.Pages {
-			if err := putEntry(dir, p, r.Job.Key, m.Title, "openai", r.Model); err != nil {
+			if err := putEntry(dir, p, r.Job.Key, m.Title, maker{Backend: "openai", Model: r.Model, PromptVersion: r.PromptVersion}); err != nil {
 				continue // gone since; the next run sorts it out
 			}
 			st.Converted++
@@ -105,7 +105,10 @@ func runBatch(ctx context.Context, o Options, dir cache.Dir, byHash map[string]*
 			go func() {
 				defer wg.Done()
 				defer func() { <-sem }()
-				markup, model, err := o.Fetch(ctx, j.pages[0])
+				markup, gen, err := o.Fetch(ctx, j.pages[0])
+				if err == nil && o.Reprompt && gen.PromptVersion < llm.PromptVersion {
+					err = fmt.Errorf("its conversion there is from an older prompt: %w", repo.ErrNotFound)
+				}
 				if err == nil {
 					err = dir.PutObject(j.hash, markup)
 				}
@@ -119,7 +122,7 @@ func runBatch(ctx context.Context, o Options, dir cache.Dir, byHash map[string]*
 					return
 				}
 				for _, p := range j.pages {
-					if putEntry(dir, p, j.hash, j.title, "repo", model) == nil {
+					if putEntry(dir, p, j.hash, j.title, maker{Backend: "repo", Model: gen.Model, PromptVersion: gen.PromptVersion, Generated: gen.Generated}) == nil {
 						st.Fetched++
 					}
 				}

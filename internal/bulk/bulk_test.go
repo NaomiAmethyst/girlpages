@@ -180,12 +180,12 @@ func TestFetchFromRepo(t *testing.T) {
 	dir := cache.Dir(t.TempDir())
 	var asked atomic.Int32
 	o := Options{Jobs: 2, Quiet: true, Man: manpage.Options{ManPath: mp},
-		Fetch: func(_ context.Context, p manpage.Page) (string, string, error) {
+		Fetch: func(_ context.Context, p manpage.Page) (string, *repo.Generator, error) {
 			asked.Add(1)
 			if p.Name == "foo" {
-				return "# NAME\n\nfoo from the repo 💅\n", "repo-model", nil
+				return "# NAME\n\nfoo from the repo 💅\n", &repo.Generator{Model: "repo-model", PromptVersion: 1}, nil
 			}
-			return "", "", repo.ErrNotFound
+			return "", nil, repo.ErrNotFound
 		}}
 	// No model at all: what's in the repo still gets cached.
 	st, err := Run(context.Background(), o, cache.Set{dir}, nil, io.Discard)
@@ -263,11 +263,11 @@ func TestFetchOnly(t *testing.T) {
 	write(t, filepath.Join(mp, "man1", "bar.1"), page("bar", "1", "does bar"))
 	dir := cache.Dir(t.TempDir())
 	o := Options{Jobs: 2, Quiet: true, Man: manpage.Options{ManPath: mp}, FetchOnly: true,
-		Fetch: func(_ context.Context, p manpage.Page) (string, string, error) {
+		Fetch: func(_ context.Context, p manpage.Page) (string, *repo.Generator, error) {
 			if p.Name == "foo" {
-				return "# NAME\n\nfoo from the repo 💅\n", "m", nil
+				return "# NAME\n\nfoo from the repo 💅\n", &repo.Generator{Model: "m", PromptVersion: 1}, nil
 			}
-			return "", "", repo.ErrNotFound
+			return "", nil, repo.ErrNotFound
 		}}
 	// Missing pages aren't failures, and it isn't a full run.
 	st, err := Run(context.Background(), o, cache.Set{dir}, nil, io.Discard)
@@ -276,5 +276,55 @@ func TestFetchOnly(t *testing.T) {
 	}
 	if _, err := os.Stat(dir.MarkerPath()); err == nil {
 		t.Error("an import shouldn't count as a full bulk run")
+	}
+}
+
+func TestReprompt(t *testing.T) {
+	if _, err := exec.LookPath("man"); err != nil {
+		t.Skip("man not installed")
+	}
+	mp := t.TempDir()
+	write(t, filepath.Join(mp, "man1", "foo.1"), page("foo", "1", "does foo"))
+	write(t, filepath.Join(mp, "man1", "bar.1"), page("bar", "1", "does bar"))
+	dir := cache.Dir(t.TempDir())
+	caches := cache.Set{dir}
+	ctx := context.Background()
+	b := &fake{}
+	o := Options{Jobs: 2, Quiet: true, Man: manpage.Options{ManPath: mp}}
+	if _, err := Run(ctx, o, caches, b, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	// Pretend foo was made with an older prompt.
+	foo := filepath.Join(mp, "man1", "foo.1")
+	e, _ := dir.Entry(foo)
+	e.PromptVersion = llm.PromptVersion - 1
+	dir.PutEntry(e)
+	// An alias of foo turns up; an ordinary run links it to the old
+	// conversion and records its maker faithfully.
+	if err := os.Symlink("foo.1", filepath.Join(mp, "man1", "foo-alias.1")); err != nil {
+		t.Fatal(err)
+	}
+	st, err := Run(ctx, o, caches, b, io.Discard)
+	if err != nil || st.Linked != 1 || st.Converted != 0 {
+		t.Fatalf("ordinary run: %+v, %v", st, err)
+	}
+	if a, _ := dir.Entry(filepath.Join(mp, "man1", "foo-alias.1")); a.PromptVersion != llm.PromptVersion-1 || a.Model != "fake-1" {
+		t.Errorf("alias entry: %+v", a)
+	}
+	// A repo that only has the old conversion doesn't count when
+	// reprompting.
+	calls := b.calls.Load()
+	o.Reprompt = true
+	o.Fetch = func(context.Context, manpage.Page) (string, *repo.Generator, error) {
+		return "# NAME\n\nold\n", &repo.Generator{PromptVersion: llm.PromptVersion - 1}, nil
+	}
+	st, err = Run(ctx, o, caches, b, io.Discard)
+	if err != nil || st.Converted != 2 || st.Fresh != 1 || st.Fetched != 0 || b.calls.Load() != calls+1 {
+		t.Fatalf("reprompt: %+v, %v, %d calls", st, err, b.calls.Load()-calls)
+	}
+	for _, p := range []string{"foo.1", "foo-alias.1"} {
+		if e, _ := dir.Entry(filepath.Join(mp, "man1", p)); e.PromptVersion != llm.PromptVersion {
+			t.Errorf("%s: prompt %d", p, e.PromptVersion)
+		}
 	}
 }
