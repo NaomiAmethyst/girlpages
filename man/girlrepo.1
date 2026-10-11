@@ -203,6 +203,20 @@ Only update the repository.
 .TP
 .B \-\-gc
 Collect garbage afterwards.
+.PP
+The website is a progressive web app: it can be installed, and a service
+worker keeps the pages someone has read (up to 300) and the app itself for
+offline use.
+Repository files fetched by the browser are kept in
+.BR localStorage :
+content-addressed ones forever, until space runs out (the least recently used
+go first), and
+.B manifest.json
+as a fallback for when there's no network.
+Every half hour while a page is open, the browser looks at
+.BR manifest.json ;
+when it has changed, the shards the new one doesn't use are deleted from
+localStorage in idle time.
 .SS gc
 Deletes files nothing refers to any more: superseded listings, section indexes
 and index shards, and the contents of versions no listing mentions.

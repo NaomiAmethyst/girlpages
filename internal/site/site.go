@@ -10,7 +10,10 @@ package site
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
@@ -38,6 +41,12 @@ var templateFS embed.FS
 //go:embed static/search.js
 var searchJS string
 
+//go:embed static/girlpages.js
+var girlpagesJS string
+
+//go:embed static/sw.js
+var serviceWorkerJS string
+
 // SearchJS is the browser search module.
 func SearchJS() string { return searchJS }
 
@@ -50,7 +59,7 @@ func init() {
 		}
 		return fmt.Sprintf("%d pages", n)
 	}}
-	for _, name := range []string{"home", "list", "page", "original", "search", "notfound"} {
+	for _, name := range []string{"home", "list", "page", "original", "search", "notfound", "offline"} {
 		templates[name] = template.Must(template.New(name).Funcs(funcs).ParseFS(templateFS,
 			"templates/layout.html", "templates/"+name+".html"))
 	}
@@ -119,6 +128,8 @@ type view struct {
 	Title, Description, Canonical string
 	Base, Version, Query          string
 	NoIndex                       bool
+	// Search pages load the search script, which brings the rest.
+	Search bool
 
 	// home
 	Sections         []card
@@ -261,12 +272,70 @@ func (b *builder) render(u, name string, v *view) error {
 }
 
 func (b *builder) static() error {
-	if err := b.write(filepath.Join(b.o.Out, "static", "style.css"), []byte(web.StyleCSS())); err != nil {
+	icons := appIcons()
+	files := map[string][]byte{
+		"style.css":    []byte(web.StyleCSS()),
+		"search.js":    []byte(searchJS),
+		"girlpages.js": []byte(girlpagesJS),
+	}
+	for name, data := range icons {
+		files[name] = data
+	}
+	// What the service worker keeps for offline use. Changing any of it
+	// changes its version, so browsers fetch the new ones.
+	shell := []string{"", "search/", "offline/", "manifest.webmanifest"}
+	h := sha256.New()
+	io.WriteString(h, b.o.Version)
+	io.WriteString(h, serviceWorkerJS)
+	for _, name := range sortedKeys(files) {
+		if err := b.write(filepath.Join(b.o.Out, "static", name), files[name]); err != nil {
+			return err
+		}
+		shell = append(shell, "static/"+name)
+		h.Write(files[name])
+	}
+
+	manifest, err := json.MarshalIndent(map[string]any{
+		"name":             "girlpages",
+		"short_name":       "girlpages",
+		"description":      "the manual, but make it girly 💅",
+		"start_url":        b.o.Base,
+		"scope":            b.o.Base,
+		"display":          "standalone",
+		"background_color": "#fff6fb",
+		"theme_color":      "#ff3e9a",
+		"icons": []map[string]string{
+			{"src": "static/icon-192.png", "sizes": "192x192", "type": "image/png"},
+			{"src": "static/icon-512.png", "sizes": "512x512", "type": "image/png"},
+			{"src": "static/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
+			{"src": "static/icon.svg", "sizes": "any", "type": "image/svg+xml"},
+		},
+		"shortcuts": []map[string]string{{"name": "search", "url": b.o.Base + "search/"}},
+	}, "", "  ")
+	if err != nil {
 		return err
 	}
-	if err := b.write(filepath.Join(b.o.Out, "static", "search.js"), []byte(searchJS)); err != nil {
+	h.Write(manifest)
+	if err := b.write(filepath.Join(b.o.Out, "manifest.webmanifest"), manifest); err != nil {
 		return err
 	}
+	if err := b.render(b.o.Base+"offline/", "offline", &view{Title: "offline", NoIndex: true}); err != nil {
+		return err
+	}
+
+	js := func(v any) string {
+		out, _ := json.Marshal(v)
+		return string(out)
+	}
+	sw := strings.NewReplacer(
+		`/*BASE*/"/"`, js(b.o.Base),
+		`/*VERSION*/"dev"`, js(hex.EncodeToString(h.Sum(nil))[:16]),
+		`/*SHELL*/[]`, js(shell),
+	).Replace(serviceWorkerJS)
+	if err := b.write(filepath.Join(b.o.Out, "sw.js"), []byte(sw)); err != nil {
+		return err
+	}
+
 	// GitHub Pages would otherwise hide files starting with _ or .
 	if err := b.write(filepath.Join(b.o.Out, ".nojekyll"), nil); err != nil {
 		return err
@@ -279,6 +348,15 @@ func (b *builder) static() error {
 		return err
 	}
 	return b.render(b.o.Base+"404.html", "notfound", &view{Title: "not found", NoIndex: true})
+}
+
+func sortedKeys(m map[string][]byte) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func mainKey(sec string) string { return sec[:1] }
@@ -562,7 +640,7 @@ func pageTitle(name, sec, desc string) string {
 }
 
 func (b *builder) search() error {
-	return b.render(b.o.Base+"search/", "search", &view{Title: "search", NoIndex: true})
+	return b.render(b.o.Base+"search/", "search", &view{Title: "search", NoIndex: true, Search: true})
 }
 
 func (b *builder) sitemap(pages []repo.PageRef) error {

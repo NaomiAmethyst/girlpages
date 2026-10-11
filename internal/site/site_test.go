@@ -7,13 +7,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -263,5 +266,203 @@ for (const q of %s) {
 			}
 			t.Errorf("JS and Go disagree:\n  go: %s\n  js: %s", want[i], g)
 		}
+	}
+}
+
+func TestPWAFiles(t *testing.T) {
+	out := t.TempDir()
+	build(t, out, specs, Options{Base: "/girlpages/", Version: "test"})
+	var m struct {
+		StartURL string `json:"start_url"`
+		Scope    string
+		Icons    []struct{ Src, Sizes, Purpose string }
+	}
+	if err := json.Unmarshal([]byte(read(t, filepath.Join(out, "manifest.webmanifest"))), &m); err != nil {
+		t.Fatal(err)
+	}
+	if m.StartURL != "/girlpages/" || m.Scope != "/girlpages/" || len(m.Icons) != 4 {
+		t.Errorf("web app manifest: %+v", m)
+	}
+	for _, ic := range m.Icons {
+		f, err := os.Open(filepath.Join(out, ic.Src))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.HasSuffix(ic.Src, ".png") {
+			cfg, err := png.DecodeConfig(f)
+			if err != nil || fmt.Sprintf("%dx%d", cfg.Width, cfg.Height) != ic.Sizes {
+				t.Errorf("%s: %+v, %v", ic.Src, cfg, err)
+			}
+		}
+		f.Close()
+	}
+	sw := read(t, filepath.Join(out, "sw.js"))
+	if strings.Contains(sw, "/*") && strings.Contains(sw, `/*BASE*/`) || !strings.Contains(sw, `const BASE = "/girlpages/";`) ||
+		!strings.Contains(sw, `"static/girlpages.js"`) || !strings.Contains(sw, `"offline/"`) {
+		t.Errorf("service worker constants not filled in:\n%s", sw[:600])
+	}
+	home := read(t, filepath.Join(out, "index.html"))
+	for _, want := range []string{`<link rel="manifest" href="/girlpages/manifest.webmanifest">`,
+		`data-repo="/girlpages/repo/"`, `<script type="module" src="/girlpages/static/girlpages.js">`} {
+		if !strings.Contains(home, want) {
+			t.Errorf("home page lacks %q", want)
+		}
+	}
+	if strings.Contains(read(t, filepath.Join(out, "search", "index.html")), "girlpages.js") {
+		t.Error("the search page should only load search.js, which imports girlpages.js")
+	}
+	if !strings.Contains(read(t, filepath.Join(out, "offline", "index.html")), "offline") {
+		t.Error("no offline page")
+	}
+}
+
+// TestRepoCacheJS runs the browser's localStorage cache in node against a
+// repository that can be republished or taken down.
+func TestRepoCacheJS(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not installed")
+	}
+	v1, v2 := t.TempDir(), t.TempDir()
+	build(t, v1, specs, Options{})
+	more := append([]pageSpec{}, specs...)
+	for i := 0; i < 30; i++ {
+		more = append(more, pageSpec{name: fmt.Sprintf("new%02d", i), sec: "8", desc: "a page added later"})
+	}
+	build(t, v2, more, Options{})
+	var current atomic.Pointer[string]
+	current.Store(&v1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/switch":
+			current.Store(&v2)
+			return
+		}
+		http.FileServer(http.Dir(*current.Load())).ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+
+	gp, _ := filepath.Abs("static/girlpages.js")
+	sj, _ := filepath.Abs("static/search.js")
+	script := fmt.Sprintf(`
+const { RepoCache } = await import(%q);
+const { Searcher } = await import(%q);
+class Mem {
+  constructor(limit) { this.m = new Map(); this.limit = limit; }
+  get length() { return this.m.size; }
+  key(i) { return [...this.m.keys()][i] ?? null; }
+  getItem(k) { return this.m.has(k) ? this.m.get(k) : null; }
+  setItem(k, v) {
+    let size = k.length + String(v).length;
+    for (const [a, b] of this.m) if (a !== k) size += a.length + b.length;
+    if (size > this.limit) { const e = new Error("full"); e.name = "QuotaExceededError"; throw e; }
+    this.m.set(k, String(v));
+  }
+  removeItem(k) { this.m.delete(k); }
+  size() { let n = 0; for (const [a, b] of this.m) n += a.length + b.length; return n; }
+}
+const repo = %q;
+let fetched = [], down = false;
+const counting = async (url, init) => {
+  if (down) throw new TypeError("fetch failed");
+  fetched.push(url.slice(repo.length));
+  const r = await fetch(url, init);
+  if (!r.ok) { const e = new Error(url + ": " + r.status); e.status = r.status; throw e; }
+  return r.text();
+};
+const out = {};
+const storage = new Mem(1e9);
+const names = async (c, q) => (await new Searcher(repo, c).search(q, 5)).map(h => h.name + "(" + h.section + ")");
+
+out.first = await names(new RepoCache(repo, { storage, fetch: counting }), "list");
+out.firstFetches = fetched.length;
+fetched = [];
+out.again = await names(new RepoCache(repo, { storage, fetch: counting }), "list");
+out.againFetches = [...fetched];
+down = true;
+out.offline = await names(new RepoCache(repo, { storage, fetch: counting }), "list");
+try { await names(new RepoCache(repo, { storage, fetch: counting }), "zebra"); out.offlineNew = "worked?"; }
+catch (e) { out.offlineNew = e.constructor.name; }
+down = false;
+
+// Republish; a check notices and collects garbage.
+await fetch(repo.replace(/repo\/$/, "switch"));
+const c = new RepoCache(repo, { storage, fetch: counting });
+let collected;
+c.onNewManifest = (m) => { collected = c.gc(m); };
+await c.check(true);
+out.removed = collected ? await collected : -1;
+out.kept = [...storage.m.keys()].filter(k => k.includes(":file:")).map(k => k.slice(k.indexOf("repo/") + 5));
+c.onNewManifest = () => { out.secondGC = true; };
+await c.check(true);
+out.after = await names(c, "added later");
+
+// A small quota: everything still works, and it stays within it.
+const small = new Mem(40000);
+out.small = await names(new RepoCache(repo, { storage: small, fetch: counting }), "list directory");
+out.smallSize = small.size();
+console.log(JSON.stringify(out));
+`, "file://"+gp, "file://"+sj, srv.URL+"/repo/")
+	cmd := exec.Command(node, "--input-type=module", "-e", script)
+	b, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("node: %v\n%s", err, b)
+	}
+	var got struct {
+		First, Again, Offline, After, Small []string
+		FirstFetches                        int
+		AgainFetches                        []string
+		OfflineNew                          string
+		Removed                             int
+		Kept                                []string
+		SecondGC                            bool
+		SmallSize                           int
+	}
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("%v: %s", err, b)
+	}
+	if len(got.First) == 0 || !reflect.DeepEqual(got.First, got.Again) || !reflect.DeepEqual(got.First, got.Offline) {
+		t.Errorf("results differ: %v / %v / %v", got.First, got.Again, got.Offline)
+	}
+	if got.FirstFetches < 5 || !reflect.DeepEqual(got.AgainFetches, []string{"manifest.json"}) {
+		t.Errorf("fetched %d files at first, then %v (want only the manifest)", got.FirstFetches, got.AgainFetches)
+	}
+	if got.OfflineNew != "TypeError" {
+		t.Errorf("an uncached search offline gave %q", got.OfflineNew)
+	}
+	if got.Removed < 1 || got.SecondGC {
+		t.Errorf("GC removed %d entries; ran again for the same manifest: %v", got.Removed, got.SecondGC)
+	}
+	// Everything kept is something the new manifest uses.
+	s2, _ := repo.Open(filepath.Join(v2, "repo"))
+	m2, _ := s2.Manifest()
+	live := map[string]bool{"manifest.json": true}
+	for _, kind := range []string{"words", "grams", "docs"} {
+		sha := map[string]string{"words": m2.Index.Words, "grams": m2.Index.Grams, "docs": m2.Index.Docs}[kind]
+		live[repo.IndexManifestPath(kind, sha)] = true
+		if kind == "docs" {
+			var dm repo.DocsManifest
+			s2.Read(repo.IndexManifestPath(kind, sha), &dm)
+			for _, sh := range dm.Shards {
+				live[repo.ShardPath(kind, sh)] = true
+			}
+			continue
+		}
+		var sm repo.ShardManifest
+		s2.Read(repo.IndexManifestPath(kind, sha), &sm)
+		for _, r := range sm.Shards {
+			live[repo.ShardPath(kind, r.SHA256)] = true
+		}
+	}
+	for _, k := range got.Kept {
+		if !live[k] {
+			t.Errorf("GC kept %s, which the new manifest doesn't use", k)
+		}
+	}
+	if len(got.After) == 0 || !strings.HasPrefix(got.After[0], "new") {
+		t.Errorf("search after republishing: %v", got.After)
+	}
+	if len(got.Small) == 0 || got.SmallSize > 40000 {
+		t.Errorf("small quota: %v, %d bytes used", got.Small, got.SmallSize)
 	}
 }

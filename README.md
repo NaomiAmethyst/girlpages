@@ -149,7 +149,11 @@ a website around it with an HTML page per man page (so search engines can
 find them), section listings, old versions, which packages each page came
 from, and search. Search runs in the browser against a sharded index in the
 repo, fetching only the shards a query needs (typos and all: `grpe` finds
-`grep`). Each page version is stored once however many packages, distros or
+`grep`). The site installs as an app (a PWA) and works offline: pages you've
+read are kept by a service worker, and every index shard fetched is kept in
+localStorage, so searches you've done before work without a network. When it
+notices a newly published repository it clears out the shards that aren't
+used any more, in the background. Each page version is stored once however many packages, distros or
 aliases share it, and everything but a few pointer files is content-addressed,
 so it caches forever and syncs cheaply. The format is in `girlrepo(1)`.
 

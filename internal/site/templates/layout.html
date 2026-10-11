@@ -1,5 +1,5 @@
 {{define "layout"}}<!doctype html>
-<html lang="en">
+<html lang="en" data-base="{{.Base}}" data-repo="{{.Base}}repo/">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -13,7 +13,12 @@
 {{if .Canonical}}<link rel="canonical" href="{{.Canonical}}">
 <meta property="og:url" content="{{.Canonical}}">{{end}}
 {{if .NoIndex}}<meta name="robots" content="noindex, follow">{{end}}
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%92%85%3C/text%3E%3C/svg%3E">
+<link rel="icon" href="{{.Base}}static/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="{{.Base}}static/apple-touch-icon.png">
+<link rel="manifest" href="{{.Base}}manifest.webmanifest">
+<meta name="theme-color" content="#ff3e9a" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#170d22" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-title" content="girlpages">
 <script>try{var t=localStorage.getItem("girlpages-theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
 <link rel="stylesheet" href="{{.Base}}static/style.css?v={{.Version}}">
 </head>
@@ -27,6 +32,7 @@
 {{template "content" .}}
 </main>
 <footer>made with 💖 by <a href="https://github.com/NaomiAmethyst/girlpages">girlpages</a> {{.Version}} · rewritten by an LLM, so check the original when it really matters</footer>
+{{if not .Search}}<script type="module" src="{{.Base}}static/girlpages.js"></script>{{end}}
 <script>function girlTheme(){var r=document.documentElement,c=r.dataset.theme,d=c?c==="dark":matchMedia("(prefers-color-scheme: dark)").matches,n=d?"light":"dark";r.dataset.theme=n;try{localStorage.setItem("girlpages-theme",n)}catch(e){}}</script>
 </body>
 </html>

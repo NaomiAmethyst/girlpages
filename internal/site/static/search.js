@@ -5,6 +5,8 @@
 // browser, fetching only the shards a query needs. This is the same
 // algorithm as Searcher in internal/repo/search.go; keep them in step.
 
+import { repoCache } from "./girlpages.js";
+
 const PREFIX_WEIGHT = 0.5;
 const FUZZY_WEIGHT = 0.3;
 const MAX_PREFIX_WORDS = 50;
@@ -95,18 +97,15 @@ function findRange(ranges, key) {
 }
 
 export class Searcher {
-  constructor(repo, fetchJSON) {
-    this.repo = repo.endsWith("/") ? repo : repo + "/";
-    this.fetchJSON = fetchJSON || (async (url) => {
-      const r = await fetch(url);
-      if (!r.ok) throw new Error(`${url}: ${r.status}`);
-      return r.json();
-    });
+  // cache is anything with get(path) returning parsed JSON; by default the
+  // page's localStorage cache for repo.
+  constructor(repo, cache = repoCache(repo)) {
+    this.cache = cache;
     this.shards = new Map();
     this.loaded = null;
   }
 
-  get(path) { return this.fetchJSON(this.repo + path); }
+  get(path) { return this.cache.get(path); }
 
   load() {
     if (!this.loaded) {
@@ -286,7 +285,10 @@ async function page() {
       list.append(li);
     }
   } catch (e) {
-    status.textContent = `search broke 💔 ${e.message}`;
+    // fetch fails with a TypeError when there's no network at all.
+    status.textContent = e instanceof TypeError && e.status === undefined
+      ? "you're offline 📵 and this search needs bits that aren't saved yet. ones you've done before still work!"
+      : `search broke 💔 ${e.message}`;
   }
 }
 
