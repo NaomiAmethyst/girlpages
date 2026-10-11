@@ -27,10 +27,12 @@ import (
 	"github.com/NaomiAmethyst/girlpages/internal/cache"
 	"github.com/NaomiAmethyst/girlpages/internal/config"
 	"github.com/NaomiAmethyst/girlpages/internal/core"
+	"github.com/NaomiAmethyst/girlpages/internal/ingest"
 	"github.com/NaomiAmethyst/girlpages/internal/llm"
 	"github.com/NaomiAmethyst/girlpages/internal/manpage"
 	"github.com/NaomiAmethyst/girlpages/internal/pager"
 	"github.com/NaomiAmethyst/girlpages/internal/render"
+	"github.com/NaomiAmethyst/girlpages/internal/repo"
 	"github.com/NaomiAmethyst/girlpages/internal/web"
 )
 
@@ -56,6 +58,7 @@ type flags struct {
 	jobs, limit                                   int
 	refresh, cachedOnly, raw, doctor, html, serve bool
 	color, backend, model, listen, repo, batch    string
+	importSrc, exportDir                          string
 }
 
 func newFlagSet(f *flags) *pflag.FlagSet {
@@ -86,6 +89,8 @@ func newFlagSet(f *flags) *pflag.FlagSet {
 	fs.BoolVar(&f.noWait, "no-wait", false, "")
 	fs.BoolVar(&f.noBatch, "no-batch", false, "")
 	fs.StringVar(&f.batch, "batch", "", "")
+	fs.StringVar(&f.importSrc, "import", "", "")
+	fs.StringVar(&f.exportDir, "export", "", "")
 	fs.BoolVarP(&f.quiet, "quiet", "q", false, "")
 	fs.IntVarP(&f.jobs, "jobs", "j", 0, "")
 	fs.IntVar(&f.limit, "limit", 0, "")
@@ -120,6 +125,8 @@ const usage = `usage: girl [options] [section] page ...
        girl -k regexp ...      search page descriptions (like apropos)
        girl -f page ...        one-line descriptions (like whatis)
        girl --bulk [options]   girlify every page on the system
+       girl --import SOURCE    fill the cache from a girlpages repository
+       girl --export DIR       write the cache out as a girlpages repository
 
 girl is man, but she's ✨ that girl ✨. Pages are rewritten by an LLM with
 every detail kept, then cached so the next read is instant. 💅
@@ -170,6 +177,15 @@ bulk options:
   -j, --jobs=N            LLM requests at once (default from config, 4)
       --limit=N           stop after the first N pages
   -q, --quiet             only report errors
+
+repository options:
+      --import=SOURCE     cache every installed page the repository (a URL or
+                          directory) has, without asking a model; takes
+                          sections like --bulk, and -j, --limit, -n, -q
+      --export=DIR        write every up-to-date cached page, with the package
+                          it came from, into a repository in DIR/repo, ready
+                          to import or serve (girlrepo -d DIR publish makes
+                          the website)
 
 Full details: girl girl (or man girl, if you're boring).
 `
@@ -223,6 +239,16 @@ func run(args []string) int {
 
 	if f.doctor {
 		return doctor(ctx, &cfg, g)
+	}
+	if f.importSrc != "" && f.exportDir != "" {
+		fmt.Fprintln(os.Stderr, "girl: --import or --export, bestie, not both at once")
+		return exitUsage
+	}
+	if f.exportDir != "" {
+		return runExport(ctx, f, g, mo)
+	}
+	if f.importSrc != "" {
+		return runImport(ctx, f, &cfg, g, mo, rest)
 	}
 	if f.bulk || f.update {
 		return runBulk(ctx, f, &cfg, g, mo, rest)
@@ -339,6 +365,82 @@ func runServe(ctx context.Context, f flags, g *core.Girl) int {
 	if err := srv.ListenAndServe(ctx, f.listen, os.Stderr); err != nil {
 		fmt.Fprintf(os.Stderr, "girl: %v\n", err)
 		return exitFailed
+	}
+	return exitOK
+}
+
+// runImport fills the cache from a repository: a bulk run that only
+// fetches.
+func runImport(ctx context.Context, f flags, cfg *config.Config, g *core.Girl, mo manpage.Options, rest []string) int {
+	sections := splitList(f.sections)
+	for _, a := range rest {
+		if !manpage.IsSection(a) {
+			fmt.Fprintf(os.Stderr, "girl: --import takes sections, not %q\n", a)
+			return exitUsage
+		}
+		sections = append(sections, a)
+	}
+	c, err := repo.Find(ctx, f.importSrc, cfg.Repo.Timeout.Duration, "girlpages/"+getVersion())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "girl: %v\n", err)
+		return exitFailed
+	}
+	if cfg.ExtraInstructions != "" && !f.quiet {
+		fmt.Fprintln(os.Stderr, "girl: heads up, these pages weren't made with your extra_instructions")
+	}
+	mo.Sections = ""
+	_, err = bulk.Run(ctx, bulk.Options{
+		Sections:  sections,
+		Force:     f.force,
+		DryRun:    f.dryRun,
+		Quiet:     f.quiet,
+		Jobs:      max(cfg.Jobs, 8),
+		Limit:     f.limit,
+		Man:       mo,
+		FetchOnly: true,
+		Fetch: func(ctx context.Context, p manpage.Page) (string, string, error) {
+			markup, gen, err := core.FetchFrom(ctx, c, p)
+			if err != nil {
+				return "", "", err
+			}
+			return markup, gen.Model, nil
+		},
+	}, g.Caches, nil, os.Stderr)
+	switch {
+	case errors.Is(err, bulk.ErrLocked):
+		fmt.Fprintln(os.Stderr, "girl: a bulk run is using the cache; try again when it's done 💅")
+		return exitFailed
+	case err != nil:
+		fmt.Fprintf(os.Stderr, "girl: %v\n", err)
+		return exitFailed
+	}
+	return exitOK
+}
+
+// runExport writes the cache out as a repository.
+func runExport(ctx context.Context, f flags, g *core.Girl, mo manpage.Options) int {
+	s, err := repo.Open(filepath.Join(f.exportDir, "repo"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "girl: %v\n", err)
+		return exitFailed
+	}
+	mo.Sections = ""
+	start := time.Now()
+	st, m, err := ingest.Export(ctx, s, g.Caches, ingest.Options{Sections: splitList(f.sections), Man: mo,
+		DryRun: f.dryRun, Quiet: f.quiet, Log: os.Stderr, Jobs: f.jobs})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "girl: %v\n", err)
+		return exitFailed
+	}
+	if f.dryRun {
+		fmt.Fprintf(os.Stderr, "📤 would export %d pages to %s\n", st.New+st.Known, s.Dir)
+		return exitOK
+	}
+	if !f.quiet {
+		fmt.Fprintf(os.Stderr, "📤 %d pages exported to %s (%d new versions); it has %d pages, %d girlified (%s)\n",
+			st.Pages-st.Skipped, s.Dir, st.New, m.Pages, m.Girlified, time.Since(start).Round(time.Second))
+		fmt.Fprintf(os.Stderr, "   import it with girl --import %s or girlrepo import, or make a website with girlrepo -d %s publish ✨\n",
+			f.exportDir, f.exportDir)
 	}
 	return exitOK
 }

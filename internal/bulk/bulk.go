@@ -47,13 +47,17 @@ type Options struct {
 	// NoWait leaves submitted batches running instead of waiting for them;
 	// a later run collects them.
 	NoWait bool
+	// FetchOnly is for runs that only take what Fetch has (girl --import):
+	// pages it doesn't have are counted, not failures.
+	FetchOnly bool
 }
 
 // Stats summarises a run.
 type Stats struct {
 	Pages, Fresh, Linked, Converted, Failed, Pruned, Removed int
-	// Fetched pages came ready-made from a repository.
-	Fetched int
+	// Fetched pages came ready-made from a repository; NotInRepo pages
+	// weren't there, in a FetchOnly run.
+	Fetched, NotInRepo int
 	// Batched pages were sent off in a batch; Pending ones were already in
 	// a batch that hasn't finished.
 	Batched, Pending int
@@ -196,14 +200,22 @@ func Run(ctx context.Context, o Options, caches cache.Set, b llm.Backend, log io
 	if o.DryRun {
 		for _, h := range order {
 			j := byHash[h]
-			logf("✨ would girlify %s", j.pages[0].Title())
+			if o.FetchOnly {
+				logf("🔎 would look for %s in the repo", j.pages[0].Title())
+			} else {
+				logf("✨ would girlify %s", j.pages[0].Title())
+			}
 			if len(j.pages) > 1 {
 				logf(" (+%d aliases)", len(j.pages)-1)
 			}
 			logf("\n")
 		}
-		logf("%d pages: %d up to date, %d linked to existing conversions, %d unrenderable, %d to convert (%d unique)",
-			st.Pages, st.Fresh, st.Linked, st.Skipped, countPages(byHash), len(order))
+		verb := "to convert"
+		if o.FetchOnly {
+			verb = "to look for"
+		}
+		logf("%d pages: %d up to date, %d linked to existing conversions, %d unrenderable, %d %s (%d unique)",
+			st.Pages, st.Fresh, st.Linked, st.Skipped, countPages(byHash), verb, len(order))
 		if o.Batch != nil {
 			logf(", in a batch")
 		}
@@ -226,8 +238,12 @@ func Run(ctx context.Context, o Options, caches cache.Set, b llm.Backend, log io
 				with = "the repo and " + with
 			}
 		}
-		logf("💅 girlifying %d pages (%d unique) with %s, %d at a time\n",
-			countPages(byHash), len(order), with, max(o.Jobs, 1))
+		if o.FetchOnly {
+			logf("📥 looking for %d pages (%d unique) in the repo, %d at a time\n", countPages(byHash), len(order), max(o.Jobs, 1))
+		} else {
+			logf("💅 girlifying %d pages (%d unique) with %s, %d at a time\n",
+				countPages(byHash), len(order), with, max(o.Jobs, 1))
+		}
 	}
 
 	// Pass 2: convert.
@@ -244,11 +260,13 @@ func Run(ctx context.Context, o Options, caches cache.Set, b llm.Backend, log io
 				var markup string
 				var err error
 				backend, model := "", ""
-				fetched := false
+				fetched, missing := false, false
 				if o.Fetch != nil {
 					if markup, model, err = o.Fetch(ctx, j.pages[0]); err == nil {
 						fetched, backend = true, "repo"
-					} else if !errors.Is(err, repo.ErrNotFound) {
+					} else if errors.Is(err, repo.ErrNotFound) {
+						missing = true
+					} else {
 						fmt.Fprintf(log, "girl: couldn't fetch %s from the repo: %v\n", j.name(), err)
 					}
 				}
@@ -276,7 +294,9 @@ func Run(ctx context.Context, o Options, caches cache.Set, b llm.Backend, log io
 				}
 				n := done.Add(1)
 				mu.Lock()
-				if err != nil {
+				if missing && b == nil && o.FetchOnly {
+					st.NotInRepo += len(j.pages)
+				} else if err != nil {
 					st.Failed++
 					if ctx.Err() == nil {
 						fmt.Fprintf(log, "[%*d/%d] 💔 %s: %v\n", width(total), n, total, j.pages[0].Title(), err)
@@ -314,15 +334,22 @@ func Run(ctx context.Context, o Options, caches cache.Set, b llm.Backend, log io
 			return st, err
 		}
 	}
-	if full && !o.Update {
+	// An import isn't a full run: update runs mustn't start converting
+	// everything new because of one.
+	if full && !o.Update && !o.FetchOnly {
 		if f, err := os.Create(dir.MarkerPath()); err == nil {
 			f.Close()
 		}
 	}
-	logf("✨ done: %d pages, %d already cute, %d linked, %d girlified, ",
-		st.Pages, st.Fresh, st.Linked, st.Converted)
+	logf("✨ done: %d pages, %d already cute, %d linked, ", st.Pages, st.Fresh, st.Linked)
+	if !o.FetchOnly {
+		logf("%d girlified, ", st.Converted)
+	}
 	if o.Fetch != nil {
 		logf("%d from the repo, ", st.Fetched)
+	}
+	if o.FetchOnly {
+		logf("%d not in it, ", st.NotInRepo)
 	}
 	if o.Batch != nil {
 		logf("%d in batches still running, ", st.Pending+st.Batched)

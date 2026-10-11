@@ -125,3 +125,25 @@ func (c *Client) Manifest(ctx context.Context) (*Manifest, error) {
 	}
 	return &m, nil
 }
+
+// Find finds a published repository at src (a URL or a directory): the
+// repository itself, or a site with it in repo/.
+func Find(ctx context.Context, src string, timeout time.Duration, userAgent string) (*Client, error) {
+	src = strings.TrimSuffix(src, "/")
+	var firstErr error
+	for _, base := range []string{src, src + "/repo"} {
+		c := NewClient(base, timeout)
+		c.UserAgent = userAgent
+		_, err := c.Manifest(ctx)
+		if err == nil {
+			return c, nil
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+		if !errors.Is(err, ErrNotFound) {
+			return nil, err
+		}
+	}
+	return nil, fmt.Errorf("no published girlpages repository at %s (%v)", src, firstErr)
+}

@@ -253,3 +253,28 @@ func TestBatch(t *testing.T) {
 		t.Errorf("batches left behind: %v", files)
 	}
 }
+
+func TestFetchOnly(t *testing.T) {
+	if _, err := exec.LookPath("man"); err != nil {
+		t.Skip("man not installed")
+	}
+	mp := t.TempDir()
+	write(t, filepath.Join(mp, "man1", "foo.1"), page("foo", "1", "does foo"))
+	write(t, filepath.Join(mp, "man1", "bar.1"), page("bar", "1", "does bar"))
+	dir := cache.Dir(t.TempDir())
+	o := Options{Jobs: 2, Quiet: true, Man: manpage.Options{ManPath: mp}, FetchOnly: true,
+		Fetch: func(_ context.Context, p manpage.Page) (string, string, error) {
+			if p.Name == "foo" {
+				return "# NAME\n\nfoo from the repo 💅\n", "m", nil
+			}
+			return "", "", repo.ErrNotFound
+		}}
+	// Missing pages aren't failures, and it isn't a full run.
+	st, err := Run(context.Background(), o, cache.Set{dir}, nil, io.Discard)
+	if err != nil || st.Fetched != 1 || st.NotInRepo != 1 || st.Failed != 0 {
+		t.Fatalf("import: %+v, %v", st, err)
+	}
+	if _, err := os.Stat(dir.MarkerPath()); err == nil {
+		t.Error("an import shouldn't count as a full bulk run")
+	}
+}

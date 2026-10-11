@@ -413,23 +413,11 @@ func (a *app) importRepo(ctx context.Context, args []string) error {
 // remote finds a published repository at src: the repository itself, or
 // a site with it in repo/.
 func (a *app) remote(ctx context.Context, src string) (*repo.Client, error) {
-	src = strings.TrimSuffix(src, "/")
-	var firstErr error
-	for _, base := range []string{src, src + "/repo"} {
-		c := repo.NewClient(base, 2*time.Minute)
-		c.UserAgent = "girlrepo/" + getVersion()
-		_, err := c.Manifest(ctx)
-		if err == nil {
-			return c, nil
-		}
-		if firstErr == nil {
-			firstErr = err
-		}
-		if !errors.Is(err, repo.ErrNotFound) {
-			return nil, err
-		}
+	c, err := repo.Find(ctx, src, 2*time.Minute, "girlrepo/"+getVersion())
+	if err != nil {
+		return nil, fmt.Errorf("%w; run girlrepo publish there first", err)
 	}
-	return nil, fmt.Errorf("no published girlpages repository at %s (%v); run girlrepo publish there first", src, firstErr)
+	return c, nil
 }
 
 func absPath(p string) string {

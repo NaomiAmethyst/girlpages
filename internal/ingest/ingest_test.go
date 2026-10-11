@@ -464,3 +464,49 @@ func TestGit(t *testing.T) {
 		t.Error("a missing ref should fail")
 	}
 }
+
+func TestExport(t *testing.T) {
+	needTools(t)
+	mp := filepath.Join(t.TempDir(), "man")
+	write(t, filepath.Join(mp, "man1", "foo.1"), []byte(roff("foo", "1", "does foo")))
+	write(t, filepath.Join(mp, "man1", "bar.1"), []byte(roff("bar", "1", "does bar")))
+	write(t, filepath.Join(mp, "man1", "stale.1"), []byte(roff("stale", "1", "changed since")))
+	ctx := context.Background()
+	cdir := cache.Dir(t.TempDir())
+	// foo is cached and fresh; stale's entry no longer matches its file;
+	// bar isn't cached.
+	for _, name := range []string{"foo", "stale"} {
+		path := filepath.Join(mp, "man1", name+".1")
+		text, err := manpage.Text(ctx, path, manpage.Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		cdir.PutObject(cache.Hash(text), "# NAME\n\n"+name+" slays\n")
+		e := &cache.Entry{Source: path, Name: name, Section: "1", Hash: cache.Hash(text), Backend: "openai", Model: "m1"}
+		e.Stamp()
+		cdir.PutEntry(e)
+	}
+	write(t, filepath.Join(mp, "man1", "stale.1"), []byte(roff("stale", "1", "changed since, again")))
+	s, _ := repo.Open(filepath.Join(t.TempDir(), "repo"))
+	st, m, err := Export(ctx, s, cache.Set{cdir}, Options{Quiet: true, Log: io.Discard})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Pages != 1 || st.FromCache != 1 || m.Pages != 1 || m.Girlified != 1 {
+		t.Fatalf("export: %+v %+v", st, m)
+	}
+	l, _, _ := s.Listing("foo", "1")
+	g, err := s.Variant(l.Current, repo.VariantGirl)
+	if err != nil || !strings.Contains(g.Text(), "foo slays") || g.Generator.Model != "m1" {
+		t.Fatalf("foo: %+v, %v", g, err)
+	}
+	// It's published, so a client can read it.
+	c, err := repo.Find(ctx, filepath.Dir(s.Dir), time.Second, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, _ := manpage.SourceHash(filepath.Join(mp, "man1", "foo.1"), nil)
+	if v, err := c.Variant(ctx, src, repo.VariantGirl); err != nil || !strings.Contains(v.Text(), "foo slays") {
+		t.Errorf("reading the export: %v", err)
+	}
+}

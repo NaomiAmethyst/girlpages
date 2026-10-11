@@ -173,6 +173,13 @@ func System(ctx context.Context, s *repo.Store, o Options) (Stats, error) {
 	if err != nil {
 		return Stats{}, err
 	}
+	return InstalledPages(ctx, s, pages, dirs, o)
+}
+
+// InstalledPages ingests some of the system's man pages, recording which
+// installed package each came from; roots are the manual roots to find
+// .so includes in.
+func InstalledPages(ctx context.Context, s *repo.Store, pages []manpage.Page, roots []string, o Options) (Stats, error) {
 	distro, release := OSRelease("/")
 	if o.Package.Distro == "" {
 		o.Package.Distro, o.Package.Release = distro, release
@@ -188,7 +195,7 @@ func System(ctx context.Context, s *repo.Store, o Options) (Stats, error) {
 				pkg.Name, pkg.Version, pkg.Arch = own.Name, own.Version, own.Arch
 			}
 		}
-		cands = append(cands, candidate{path: p.Path, name: p.Name, section: p.Section, pkg: pkg, roots: dirs})
+		cands = append(cands, candidate{path: p.Path, name: p.Name, section: p.Section, pkg: pkg, roots: roots})
 	}
 	return run(ctx, s, cands, o)
 }

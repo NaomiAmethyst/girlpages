@@ -166,6 +166,45 @@ listens, as
 .IR host : port .
 The default is
 .BR localhost:1989 .
+.SS "Repository options"
+.TP
+.BR \-\-import =\fIsource\fR
+Fill the cache with every installed page the girlpages repository
+.I source
+(a URL or a directory: the repository, or a site with it in
+.BR repo/ )
+has, without asking a model.
+Pages it doesn't have are counted, not treated as failures, and an import
+doesn't count as a full
+.B \-\-bulk
+run.
+Sections can be given as for
+.BR \-\-bulk ,
+along with
+.BR \-j ", " \-\-limit ", " \-\-force ", " \-n
+and
+.BR \-q .
+The pages are used even if
+.B extra_instructions
+is set, since you asked for them.
+.TP
+.BR \-\-export =\fIdir\fR
+Write every cached page that's up to date with the installed page into a
+girlpages repository in
+.IR dir /repo
+(adding to one already there), with the installed package each came from,
+and publish it, ready for
+.BR "girl \-\-import" ,
+.BR "girlrepo import" ,
+or serving as it is;
+.B girlrepo \-d
+.I dir
+.B publish
+adds a website.
+.B \-s
+limits it to some sections, and
+.B \-n
+says what would be exported.
 .SS "Bulk options"
 .TP
 .BR \-\-batch =\fIapi\fR
@@ -597,6 +636,10 @@ as a web page.
 .B girl \-\-serve
 Browse the manual at
 .BR http://localhost:1989/ .
+.TP
+.B girl \-\-export ~/girlpages && girl \-\-import ~/girlpages
+Share conversions between machines: export on one, import on the others
+(the directory can be anywhere they can read, or a web server).
 .TP
 .B girl \-\-repo https://example.org/repo \-\-bulk
 Fill the cache with every page the repository has girlified, converting the

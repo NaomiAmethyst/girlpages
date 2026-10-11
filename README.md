@@ -130,7 +130,10 @@ url = "https://example.org/repo"
 Pages are matched by the hash of their roff source, so you only ever get a
 conversion of exactly the version you have installed; anything else is
 converted as usual. With a repo set, `girl --bulk` works even with no model
-at all, caching everything the repo has.
+at all, caching everything the repo has. `girl --import URL-or-dir` does the
+same for a repo you name, and `girl --export DIR` writes your own cache out as
+a repo, with the package each page came from, for other machines to import
+or for `girlrepo` to publish.
 
 ### Running one
 

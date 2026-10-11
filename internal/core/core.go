@@ -183,11 +183,17 @@ func (g *Girl) FromRepo(ctx context.Context, p manpage.Page) (string, *repo.Gene
 	if g.Repo == nil || g.Cfg.ExtraInstructions != "" {
 		return "", nil, errNoRepo
 	}
+	return FetchFrom(ctx, g.Repo, p)
+}
+
+// FetchFrom fetches a page's conversion from a repository, whatever the
+// configuration says.
+func FetchFrom(ctx context.Context, c *repo.Client, p manpage.Page) (string, *repo.Generator, error) {
 	src, err := manpage.SourceHash(p.Path, nil)
 	if err != nil {
 		return "", nil, err
 	}
-	v, err := g.Repo.Variant(ctx, src, repo.VariantGirl)
+	v, err := c.Variant(ctx, src, repo.VariantGirl)
 	if err != nil {
 		return "", nil, err
 	}
