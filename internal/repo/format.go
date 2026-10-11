@@ -61,23 +61,26 @@ const (
 
 // Manifest is manifest.json, the root of a repository.
 type Manifest struct {
-	Format    int            `json:"format"`
-	Generated time.Time      `json:"generated"`
-	Pages     int            `json:"pages"`
-	Girlified int            `json:"girlified"`
-	Variants  []string       `json:"variants"`
-	Sections  []SectionEntry `json:"sections"`
-	Index     IndexEntry     `json:"index"`
+	Format    int       `json:"format"`
+	Generated time.Time `json:"generated"`
+	Pages     int       `json:"pages"`
+	// Variants counts, for each variant there is, the pages whose latest
+	// version has it.
+	Variants map[string]int `json:"variants"`
+	Sections []SectionEntry `json:"sections"`
+	Index    IndexEntry     `json:"index"`
 	// Sources are the distributions (and releases) pages come from.
 	Sources []SourceEntry `json:"sources,omitempty"`
 }
 
 // SectionEntry is a section in the manifest.
 type SectionEntry struct {
-	Section   string `json:"section"`
-	SHA256    string `json:"sha256"`
-	Pages     int    `json:"pages"`
-	Girlified int    `json:"girlified"`
+	Section string `json:"section"`
+	SHA256  string `json:"sha256"`
+	Pages   int    `json:"pages"`
+	// Variants counts, for each variant, the section's pages whose latest
+	// version has it.
+	Variants map[string]int `json:"variants,omitempty"`
 }
 
 // IndexEntry names the index manifests.
@@ -291,9 +294,10 @@ type IndexPage struct {
 	Description string `json:"description,omitempty"`
 	// Page is the SHA-256 of the page's Listing.
 	Page string `json:"page"`
-	// Source is the latest version's source hash.
-	Source    string `json:"source"`
-	Girlified bool   `json:"girlified,omitempty"`
+	// Source is the latest version's source hash, and Variants the
+	// variants it has.
+	Source   string   `json:"source"`
+	Variants []string `json:"variants,omitempty"`
 	// Version is the latest version's upstream version number, if known.
 	Version string `json:"version,omitempty"`
 	// Versions is how many versions the page has.

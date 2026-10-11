@@ -492,7 +492,7 @@ func TestExport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.Pages != 1 || st.FromCache != 1 || m.Pages != 1 || m.Girlified != 1 {
+	if st.Pages != 1 || st.FromCache != 1 || m.Pages != 1 || m.Variants["girl"] != 1 {
 		t.Fatalf("export: %+v %+v", st, m)
 	}
 	l, _, _ := s.Listing("foo", "1")

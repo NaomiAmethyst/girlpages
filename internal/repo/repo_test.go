@@ -165,7 +165,7 @@ func TestPublishAndGC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.Pages != 37 || m.Girlified != 3 || len(m.Sections) != 2 {
+	if m.Pages != 37 || m.Variants["girl"] != 3 || len(m.Sections) != 2 {
 		t.Fatalf("manifest: %+v", m)
 	}
 	var p Pointer
@@ -176,7 +176,7 @@ func TestPublishAndGC(t *testing.T) {
 	if err := s.Read(SectionIndexPath("1", p.SHA256), &si); err != nil {
 		t.Fatal(err)
 	}
-	if len(si.Pages) != 6 || si.Pages[0].Name != "[" || !si.Pages[3].Girlified {
+	if len(si.Pages) != 6 || si.Pages[0].Name != "[" || fmt.Sprint(si.Pages[3].Variants) != "[girl man]" {
 		t.Errorf("section 1: %+v", si.Pages)
 	}
 	// Content-addressed files really are named after their contents.
@@ -321,18 +321,19 @@ func TestVariantIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(m.Variants, " ") != "girl man pirate" || len(m.Index.Variants) != 3 {
+	if fmt.Sprint(m.Variants) != "map[girl:3 man:37 pirate:1]" || len(m.Index.Variants) != 3 {
 		t.Fatalf("variants: %v %v", m.Variants, m.Index.Variants)
 	}
 	c := NewClient(s.Dir, time.Second)
 	idx := map[string]*VariantIndex{}
-	for _, v := range m.Variants {
+	names := []string{"girl", "man", "pirate"}
+	for _, v := range names {
 		idx[v] = c.VariantIndex(v)
 	}
 	counts := map[string]int{}
 	for _, p := range pages {
 		for _, ver := range p.Listing.Versions {
-			for _, variant := range m.Variants {
+			for _, variant := range names {
 				has, err := idx[variant].Has(ctx, ver.Source)
 				if err != nil {
 					t.Fatal(err)

@@ -137,7 +137,7 @@ async function sourceSection(src, key, sub) {
       subs.set(si.section, (subs.get(si.section) || 0) + 1);
       if (sub && si.section !== sub) continue;
       const other = src && p.other ? p.other[src] : "";
-      items.push({ name: p.name, sec: si.section, desc: p.description || "", girl: !other && p.girlified,
+      items.push({ name: p.name, sec: si.section, desc: p.description || "", girl: !other && (p.variants || []).includes("girl"),
         url: browse({ page: p.name, sec: si.section, src }) });
     }
   }

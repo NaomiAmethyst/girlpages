@@ -434,7 +434,7 @@ func runExport(ctx context.Context, f flags, g *core.Girl, mo manpage.Options) i
 	}
 	if !f.quiet {
 		fmt.Fprintf(os.Stderr, "📤 %d pages exported to %s (%d new versions); it has %d pages, %d girlified (%s)\n",
-			st.Pages-st.Skipped, s.Dir, st.New, m.Pages, m.Girlified, time.Since(start).Round(time.Second))
+			st.Pages-st.Skipped, s.Dir, st.New, m.Pages, m.Variants[repo.VariantGirl], time.Since(start).Round(time.Second))
 		fmt.Fprintf(os.Stderr, "   import it with girl --import %s or girlrepo import, or make a website with girlrepo -d %s publish ✨\n",
 			f.exportDir, f.exportDir)
 	}
@@ -618,7 +618,7 @@ func doctor(ctx context.Context, cfg *config.Config, g *core.Girl) int {
 		if err != nil {
 			fmt.Printf("  💔 %v\n", err)
 		} else {
-			fmt.Printf("  %d pages, %d girlified, published %s ✓\n", m.Pages, m.Girlified, m.Generated.Local().Format(time.DateOnly))
+			fmt.Printf("  %d pages, %d girlified, published %s ✓\n", m.Pages, m.Variants[repo.VariantGirl], m.Generated.Local().Format(time.DateOnly))
 		}
 		if cfg.ExtraInstructions != "" {
 			fmt.Println("  (not used: you have extra_instructions, so pages are made just for you)")

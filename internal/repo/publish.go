@@ -22,6 +22,18 @@ type PageRef struct {
 // Current is the page's current version.
 func (p *PageRef) Current() *Version { return p.Listing.CurrentVersion() }
 
+// variantNames lists a version's variants, sorted.
+func variantNames(v *Version) []string {
+	var out []string
+	for name := range v.Variants {
+		if ValidVariant(name) {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // Girlified reports whether the current version has a girl variant.
 func (p *PageRef) Girlified() bool {
 	v := p.Current()
@@ -59,7 +71,7 @@ func (s *Store) AllPages() ([]PageRef, error) {
 // Publish writes the section indexes, the search index and finally
 // manifest.json from the pages in the store. The caller must hold Lock.
 func (s *Store) Publish(pages []PageRef) (*Manifest, error) {
-	m := &Manifest{Format: Format, Generated: now(), Sources: Sources(pages)}
+	m := &Manifest{Format: Format, Generated: now(), Sources: Sources(pages), Variants: map[string]int{}}
 
 	// The search index wants all of every page's text: every version's,
 	// as people may be looking for an option only an old one has.
@@ -117,7 +129,7 @@ func (s *Store) Publish(pages []PageRef) (*Manifest, error) {
 		keys, other := p.Listing.SourceKeys()
 		ip := IndexPage{
 			Name: p.Pointer.Name, Title: v.Title, Description: v.Description,
-			Page: p.Pointer.SHA256, Source: v.Source, Girlified: p.Girlified(),
+			Page: p.Pointer.SHA256, Source: v.Source, Variants: variantNames(v),
 			Version: v.Upstream(), Sources: keys, Other: other,
 		}
 		if n := len(p.Listing.Versions); n > 1 {
@@ -125,8 +137,8 @@ func (s *Store) Publish(pages []PageRef) (*Manifest, error) {
 		}
 		si.Pages = append(si.Pages, ip)
 		m.Pages++
-		if p.Girlified() {
-			m.Girlified++
+		for _, variant := range variantNames(v) {
+			m.Variants[variant]++
 		}
 	}
 
@@ -142,8 +154,11 @@ func (s *Store) Publish(pages []PageRef) (*Manifest, error) {
 		}
 		e := SectionEntry{Section: sec, SHA256: sha, Pages: len(si.Pages)}
 		for _, ip := range si.Pages {
-			if ip.Girlified {
-				e.Girlified++
+			for _, variant := range ip.Variants {
+				if e.Variants == nil {
+					e.Variants = map[string]int{}
+				}
+				e.Variants[variant]++
 			}
 		}
 		m.Sections = append(m.Sections, e)
@@ -172,10 +187,6 @@ func (s *Store) Publish(pages []PageRef) (*Manifest, error) {
 	if m.Index.Variants, err = s.writeVariantIndexes(pages); err != nil {
 		return nil, err
 	}
-	for v := range m.Index.Variants {
-		m.Variants = append(m.Variants, v)
-	}
-	sort.Strings(m.Variants)
 
 	if _, _, err := s.Write(ManifestPath(), m); err != nil {
 		return nil, err

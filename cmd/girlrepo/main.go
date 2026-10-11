@@ -574,7 +574,7 @@ func (a *app) publish(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "📚 published %d pages in %d sections (%d girlified)\n", m.Pages, len(m.Sections), m.Girlified)
+	fmt.Fprintf(os.Stderr, "📚 published %d pages in %d sections (%d girlified)\n", m.Pages, len(m.Sections), m.Variants[repo.VariantGirl])
 	if !*noSite {
 		st, err := site.Build(s, pages, m, site.Options{Out: a.dir, Base: *base, URL: *siteURL,
 			Version: getVersion(), Log: os.Stderr})
