@@ -156,8 +156,11 @@ type view struct {
 	// list
 	Heading, Sub string
 	Chips        []chip
-	Letters      []string
-	Groups       []group
+	// SaveSection, on a section's listing, is the section a button saves
+	// for offline reading (in browsers that can).
+	SaveSection string
+	Letters     []string
+	Groups      []group
 
 	// page
 	Page *pageView
@@ -498,6 +501,7 @@ func (b *builder) sections(pages []repo.PageRef) error {
 				Sub:         pluralPages(len(ps)),
 				Chips:       chipsFor(sec),
 				Sources:     b.sourceChips(key),
+				SaveSection: label,
 			}
 			var items []item
 			for _, p := range ps {

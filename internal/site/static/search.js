@@ -5,7 +5,9 @@
 // browser, fetching only the shards a query needs. This is the same
 // algorithm as Searcher in internal/repo/search.go; keep them in step.
 
-import { repoCache } from "./girlpages.js";
+import { repoCache, escapeName } from "./girlpages.js";
+
+export { escapeName };
 
 const PREFIX_WEIGHT = 0.5;
 const PREFIX_CAP = 100; // as in search.go
@@ -66,20 +68,6 @@ export function queryGrams(t) {
 export function maxTypos(w) {
   const n = [...w].length;
   return n <= 2 ? 0 : n <= 5 ? 1 : 2;
-}
-
-// escapeName matches repo.EscapeName: how names become file names.
-export function escapeName(s) {
-  const bytes = new TextEncoder().encode(s);
-  let out = "";
-  for (let i = 0; i < bytes.length; i++) {
-    const c = bytes[i];
-    const ch = String.fromCharCode(c);
-    const ok = /[A-Za-z0-9_+\-.,:@]/.test(ch) && c < 0x80;
-    if (!ok || (i === 0 && ch === ".")) out += "%" + c.toString(16).toUpperCase().padStart(2, "0");
-    else out += ch;
-  }
-  return out;
 }
 
 // segmentName matches site.SegmentName: the directory a name gets.

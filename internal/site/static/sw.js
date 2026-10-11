@@ -1,17 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Naomi Persephone Amethyst <naomi@amethyst.name>
 //
-// girlpages service worker: keeps the app shell and the pages you've read
-// available offline. Repository files aren't touched here; the pages cache
-// those in localStorage themselves (static/girlpages.js).
+// girlpages service worker: keeps the app shell (the scripts, styles, and
+// the browse, search and offline pages) for offline use. Repository files
+// aren't touched here; the pages cache those themselves
+// (static/girlpages.js). Static pages aren't kept either: offline, they're
+// sent to the browse app, which renders the same thing from the cached
+// repository.
 
 const BASE = /*BASE*/"/";
 const VERSION = /*VERSION*/"dev";
 const SHELL = /*SHELL*/[];
 const SHELL_CACHE = "girlpages-shell-" + VERSION;
-const PAGE_CACHE = "girlpages-pages";
-const MAX_PAGES = 300;
 const NETWORK_TIMEOUT = 4000;
+// Pages of the shell, served from it first.
+const APP_PAGES = ["browse/", "search/", "offline/"].map(p => BASE + p);
 
 self.addEventListener("install", (event) => {
   event.waitUntil((async () => {
@@ -24,7 +27,8 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil((async () => {
     for (const name of await caches.keys()) {
-      if (name.startsWith("girlpages-shell-") && name !== SHELL_CACHE) await caches.delete(name);
+      // girlpages-pages held static pages read, in earlier versions.
+      if ((name.startsWith("girlpages-shell-") && name !== SHELL_CACHE) || name === "girlpages-pages") await caches.delete(name);
     }
     await self.clients.claim();
   })());
@@ -34,36 +38,58 @@ self.addEventListener("fetch", (event) => {
   const req = event.request;
   const url = new URL(req.url);
   if (req.method !== "GET" || url.origin !== location.origin || !url.pathname.startsWith(BASE)) return;
-  if (url.pathname.startsWith(BASE + "repo/")) return; // localStorage's job
+  if (url.pathname.startsWith(BASE + "repo/")) return; // the pages' job
   if (req.mode === "navigate") {
-    event.respondWith(page(event, req));
+    event.respondWith(APP_PAGES.includes(url.pathname) ? asset(event, req) : page(req, url));
   } else if (url.pathname.startsWith(BASE + "static/") || url.pathname === BASE + "manifest.webmanifest") {
     event.respondWith(asset(event, req));
   }
 });
 
-// page tries the network (briefly), then pages read before, then the
-// offline page.
-async function page(event, req) {
-  const cache = await caches.open(PAGE_CACHE);
+// page tries the network (briefly). Failing that, a man page or section
+// listing goes to the browse app, the home page comes from the shell, and
+// anything else gets the offline page.
+async function page(req, url) {
   try {
-    const res = await withTimeout(fetch(req), NETWORK_TIMEOUT);
-    if (res.ok) event.waitUntil(remember(cache, req, res.clone()));
-    return res;
+    return await withTimeout(fetch(req), NETWORK_TIMEOUT);
   } catch {
-    const hit = await cache.match(req, { ignoreSearch: true }) ||
-      await caches.match(req, { ignoreSearch: true });
-    if (hit) return hit;
+    const there = offlineView(url);
+    if (there) return Response.redirect(there, 302);
+    if (url.pathname === BASE) {
+      const home = await caches.match(BASE);
+      if (home) return home;
+    }
     return (await caches.match(BASE + "offline/")) || Response.error();
   }
 }
 
-// remember stores a page, dropping the oldest beyond MAX_PAGES.
-async function remember(cache, req, res) {
-  await cache.delete(req, { ignoreSearch: true }); // so it moves to the end
-  await cache.put(req, res);
-  const keys = await cache.keys();
-  for (const k of keys.slice(0, Math.max(0, keys.length - MAX_PAGES))) await cache.delete(k);
+// offlineView is the browse app's view of a static page, if it has one:
+// man/<sec>/<name>/ is a page, section/<key>/ and section/<key>/<sec>/ a
+// listing.
+function offlineView(url) {
+  let parts;
+  try {
+    parts = url.pathname.slice(BASE.length).split("/").filter(Boolean).map(decodeURIComponent).map(unsegment);
+  } catch {
+    return "";
+  }
+  const q = new URLSearchParams();
+  if (parts[0] === "man" && parts.length === 3) {
+    q.set("page", parts[2]);
+    q.set("sec", parts[1]);
+  } else if (parts[0] === "section" && (parts.length === 2 || parts.length === 3)) {
+    q.set("section", parts[1]);
+    if (parts[2]) q.set("sub", parts[2]);
+  } else {
+    return "";
+  }
+  return `${BASE}browse/?${q}${url.hash}`;
+}
+
+// unsegment undoes site.SegmentName, which escapes names starting with a
+// dot as file names are.
+function unsegment(s) {
+  return s.startsWith("%") ? decodeURIComponent(s) : s;
 }
 
 // asset serves the shell from its cache (it's refreshed whenever the site

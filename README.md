@@ -163,11 +163,13 @@ OpenGraph, JSON-LD and a sitemap, plus section listings. Everything else runs
 in the browser straight from the repo: originals, older versions, browsing
 just Debian, just Debian trixie, just Arch or upstream git, and search over
 every page and version from every source (typos and all: `grpe` finds
-`grep`). The site installs as an app (a PWA) and works offline: pages you've
-read are kept by a service worker, and every repo file fetched is kept in
-localStorage, so searches you've done before work without a network. When it
-notices a newly published repository it clears out the files that aren't
-used any more, in the background. Each page version is stored once however
+`grep`). The site installs as an app (a PWA) and works offline: every repo file
+fetched is kept (in the browser's Cache API), so pages you've read and
+searches you've done work without a network, and offline the app renders
+any page from them. Each section listing has a "save for offline" button
+that fetches all its pages, and the search page one that fetches the whole
+search index. When it notices a newly published repository it clears out the
+search index files that aren't used any more, in the background. Each page version is stored once however
 many packages, distros or aliases share it, and everything but a few pointer
 files is content-addressed, so it caches forever and syncs cheaply. The format is specified in [doc/repo-format.md](doc/repo-format.md), for anyone building tools against it.
 

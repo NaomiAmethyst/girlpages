@@ -342,3 +342,8 @@ ul.pages .done { flex: none; }
 .card .chips.sources { justify-content: flex-start; margin-top: 0; }
 .chips.sources .pill { font-size: 0.85rem; }
 .meta .in { color: var(--muted); }
+
+/* saving sections and search for offline reading */
+.pagehead .save { margin: 0.6rem 0 0; }
+button.pill { font: inherit; cursor: pointer; }
+button.pill:disabled { cursor: progress; opacity: 0.8; }

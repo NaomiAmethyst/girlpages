@@ -440,7 +440,7 @@ func TestPWAFiles(t *testing.T) {
 	}
 }
 
-// TestRepoCacheJS runs the browser's localStorage cache in node against a
+// TestRepoCacheJS runs the browser's repository cache in node against a
 // repository that can be republished or taken down.
 func TestRepoCacheJS(t *testing.T) {
 	node, err := exec.LookPath("node")
@@ -469,21 +469,12 @@ func TestRepoCacheJS(t *testing.T) {
 	gp, _ := filepath.Abs("static/girlpages.js")
 	sj, _ := filepath.Abs("static/search.js")
 	script := fmt.Sprintf(`
-const { RepoCache } = await import(%q);
+const { RepoCache, MemoryStore, escapeName } = await import(%q);
 const { Searcher } = await import(%q);
-class Mem {
-  constructor(limit) { this.m = new Map(); this.limit = limit; }
-  get length() { return this.m.size; }
-  key(i) { return [...this.m.keys()][i] ?? null; }
+class Local {
+  constructor() { this.m = new Map(); }
   getItem(k) { return this.m.has(k) ? this.m.get(k) : null; }
-  setItem(k, v) {
-    let size = k.length + String(v).length;
-    for (const [a, b] of this.m) if (a !== k) size += a.length + b.length;
-    if (size > this.limit) { const e = new Error("full"); e.name = "QuotaExceededError"; throw e; }
-    this.m.set(k, String(v));
-  }
-  removeItem(k) { this.m.delete(k); }
-  size() { let n = 0; for (const [a, b] of this.m) n += a.length + b.length; return n; }
+  setItem(k, v) { this.m.set(k, String(v)); }
 }
 const repo = %q;
 let fetched = [], down = false;
@@ -495,35 +486,53 @@ const counting = async (url, init) => {
   return r.text();
 };
 const out = {};
-const storage = new Mem(1e9);
+const store = new MemoryStore(), storage = new Local();
+const cache = (s = store) => new RepoCache(repo, { store: s, storage, fetch: counting });
 const names = async (c, q) => (await new Searcher(repo, c).search(q, 5)).map(h => h.name + "(" + h.section + ")");
 
-out.first = await names(new RepoCache(repo, { storage, fetch: counting }), "list");
+out.first = await names(cache(), "list");
 out.firstFetches = fetched.length;
 fetched = [];
-out.again = await names(new RepoCache(repo, { storage, fetch: counting }), "list");
+out.again = await names(cache(), "list");
 out.againFetches = [...fetched];
 down = true;
-out.offline = await names(new RepoCache(repo, { storage, fetch: counting }), "list");
-try { await names(new RepoCache(repo, { storage, fetch: counting }), "zebra"); out.offlineNew = "worked?"; }
+out.offline = await names(cache(), "list");
+try { await names(cache(), "zebra"); out.offlineNew = "worked?"; }
 catch (e) { out.offlineNew = e.constructor.name; }
+down = false;
+
+// Save section 1, then read one of its pages offline, as the browse app
+// does.
+const saver = cache();
+let progress = [];
+out.saved = await saver.save("1", { progress: (d, n) => progress.push(d + "/" + n) });
+out.progress = progress[progress.length - 1];
+out.savedState = saver.saved("1");
+down = true;
+const c1 = cache();
+const ptr = await c1.get("page/name-1/" + escapeName("ls") + ".json");
+const l = await c1.get("page/page-" + ptr.sha256.slice(0, 2) + "/" + ptr.sha256 + ".json");
+const ver = l.versions.find(v => v.source === l.current);
+const body = await c1.get("contents/" + l.current.slice(0, 2) + "/" + l.current + "/girl-" + ver.variants.girl.sha256 + ".json");
+out.offlinePage = body.variant + " " + body.title;
 down = false;
 
 // Republish; a check notices and collects garbage.
 await fetch(repo.replace(/repo\/$/, "switch"));
-const c = new RepoCache(repo, { storage, fetch: counting });
+const c = cache();
 let collected;
 c.onNewManifest = (m) => { collected = c.gc(m); };
 await c.check(true);
 out.removed = collected ? await collected : -1;
-out.kept = [...storage.m.keys()].filter(k => k.includes(":file:")).map(k => k.slice(k.indexOf("repo/") + 5));
+out.kept = [...store.m.keys()];
 c.onNewManifest = () => { out.secondGC = true; };
 await c.check(true);
 out.after = await names(c, "added later");
+out.savedAfter = (await c.get("manifest.json")).generated !== out.savedState.generated;
 
-// A small quota: everything still works, and it stays within it.
-const small = new Mem(40000);
-out.small = await names(new RepoCache(repo, { storage: small, fetch: counting }), "list directory");
+// A small store: everything still works, and it stays within it.
+const small = new MemoryStore(40000);
+out.small = await names(cache(small), "list directory");
 out.smallSize = small.size();
 console.log(JSON.stringify(out));
 `, "file://"+gp, "file://"+sj, srv.URL+"/repo/")
@@ -537,6 +546,10 @@ console.log(JSON.stringify(out));
 		FirstFetches                        int
 		AgainFetches                        []string
 		OfflineNew                          string
+		Saved                               struct{ Pages, Failed int }
+		Progress                            string
+		SavedState                          struct{ Pages int }
+		OfflinePage                         string
 		Removed                             int
 		Kept                                []string
 		SecondGC                            bool
@@ -554,13 +567,31 @@ console.log(JSON.stringify(out));
 	if got.OfflineNew != "TypeError" {
 		t.Errorf("an uncached search offline gave %q", got.OfflineNew)
 	}
+	s1, _ := repo.Open(filepath.Join(v1, "repo"))
+	pages, _ := s1.AllPages()
+	n1 := 0
+	for _, p := range pages {
+		if p.Pointer.Section[0] == '1' {
+			n1++
+		}
+	}
+	if got.Saved.Pages != n1 || got.Saved.Failed != 0 || got.Progress != fmt.Sprintf("%d/%d", n1, n1) || got.SavedState.Pages != n1 {
+		t.Errorf("saving section 1 (%d pages): %+v, progress %s, state %+v", n1, got.Saved, got.Progress, got.SavedState)
+	}
+	if got.OfflinePage != "girl LS(1)" {
+		t.Errorf("a saved page offline: %q", got.OfflinePage)
+	}
 	if got.Removed < 1 || got.SecondGC {
 		t.Errorf("GC removed %d entries; ran again for the same manifest: %v", got.Removed, got.SecondGC)
 	}
-	// Everything kept is something the new manifest uses.
+	// The search index and section indexes kept are the new manifest's;
+	// pages saved stay.
 	s2, _ := repo.Open(filepath.Join(v2, "repo"))
 	m2, _ := s2.Manifest()
-	live := map[string]bool{"manifest.json": true}
+	live := map[string]bool{}
+	for _, e := range m2.Sections {
+		live[repo.SectionIndexPath(e.Section, e.SHA256)] = true
+	}
 	for _, kind := range []string{"words", "grams", "docs"} {
 		sha := map[string]string{"words": m2.Index.Words, "grams": m2.Index.Grams, "docs": m2.Index.Docs}[kind]
 		live[repo.IndexManifestPath(kind, sha)] = true
@@ -578,16 +609,23 @@ console.log(JSON.stringify(out));
 			live[repo.ShardPath(kind, r.SHA256)] = true
 		}
 	}
+	contents := 0
 	for _, k := range got.Kept {
-		if !live[k] {
+		if (strings.HasPrefix(k, "index/") || strings.HasPrefix(k, "section/")) && !live[k] {
 			t.Errorf("GC kept %s, which the new manifest doesn't use", k)
 		}
+		if strings.HasPrefix(k, "contents/") {
+			contents++
+		}
+	}
+	if contents < n1 {
+		t.Errorf("GC removed saved pages: %d variants left", contents)
 	}
 	if len(got.After) == 0 || !strings.HasPrefix(got.After[0], "new") {
 		t.Errorf("search after republishing: %v", got.After)
 	}
 	if len(got.Small) == 0 || got.SmallSize > 40000 {
-		t.Errorf("small quota: %v, %d bytes used", got.Small, got.SmallSize)
+		t.Errorf("small store: %v, %d bytes used", got.Small, got.SmallSize)
 	}
 }
 

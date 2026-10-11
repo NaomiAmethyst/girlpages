@@ -6,6 +6,8 @@
 //
 //   ?src=debian/trixie                      a source's home
 //   ?src=debian/trixie&section=1            its section 1 (&sub=1ssl for one subsection)
+//   ?home=1, ?section=1                     the same for everything (the latest of every
+//                                           page): where static pages go when offline
 //   ?page=ls&sec=1                          a page (its latest version)
 //   …&v=<source hash>                       a particular version
 //   …&variant=man                           another variant: man is the original;
@@ -13,7 +15,7 @@
 //   …&mono=1                                the original as man prints it, not reflowed
 //   …&src=debian/trixie                     the version a source has, and links that stay in it
 
-import { repoCache } from "./girlpages.js";
+import { repoCache, saveButton } from "./girlpages.js";
 import { renderHTML, renderOriginalHTML, esc } from "./render.js";
 import { escapeName, segmentName } from "./search.js";
 
@@ -37,7 +39,7 @@ function browse(params) {
   for (const [k, v] of Object.entries(params)) if (v) q.set(k, v);
   return `${base}browse/?${q}`;
 }
-const sourceLabel = (key) => key.replace("/", " ");
+const sourceLabel = (key) => (key ? key.replace("/", " ") : "everything");
 
 // How variants are offered. Others (made with other prompts) get their name.
 function variantLabel(v) {
@@ -108,9 +110,17 @@ function sourceChips(m, on, section) {
   return `<nav class="chips sources" aria-label="Browse by source">${out}</nav>`;
 }
 
+// everything is the whole repository as a source: the latest version of
+// every page.
+function everything(m) {
+  const sections = {};
+  for (const e of m.sections || []) sections[e.section[0]] = (sections[e.section[0]] || 0) + e.pages;
+  return { pages: m.pages, sections };
+}
+
 async function sourceHome(src) {
   const m = await manifest();
-  const s = (m.sources || []).find(x => (x.release ? `${x.distro}/${x.release}` : x.distro) === src);
+  const s = src ? (m.sources || []).find(x => (x.release ? `${x.distro}/${x.release}` : x.distro) === src) : everything(m);
   if (!s) return oops("there's no source called that here 🤔");
   document.title = `${sourceLabel(src)} · girlpages 💅`;
   const keys = Object.keys(s.sections || {}).sort((a, b) => (/\d/.test(a[0]) !== /\d/.test(b[0]) ? (/\d/.test(a[0]) ? -1 : 1) : a < b ? -1 : 1));
@@ -120,7 +130,7 @@ async function sourceHome(src) {
     cards += `<a class="section-card" href="${esc(browse({ src, section: k }))}"><span class="emoji">${emoji}</span>` +
       `<div class="num">${esc(k)}</div><div class="name">${esc(name)}</div><div class="count">${plural(s.sections[k])}</div></a>`;
   }
-  h(`<section class="hero"><h1>✨ girlpages ✨</h1><p>the <strong>${esc(sourceLabel(src))}</strong> manual, but make it girly 💅</p>` +
+  h(`<section class="hero"><h1>✨ girlpages ✨</h1><p>the ${src ? `<strong>${esc(sourceLabel(src))}</strong> ` : ""}manual, but make it girly 💅</p>` +
     `<div class="stats">${plural(s.pages)} in ${esc(sourceLabel(src))}</div></section>` +
     sourceChips(m, src, "") + `<div class="sections">${cards}</div>`);
 }
@@ -166,9 +176,13 @@ async function sourceSection(src, key, sub) {
       `<span class="desc">${esc(it.desc)}</span>${it.girl ? '<span class="done" title="girlified">✨</span>' : ""}</li>`).join("") + "</ul>";
   }
   if (!items.length) body = '<div class="empty">nothing here, bestie 😭</div>';
-  h(`<div class="card"><nav class="crumbs"><a href="${esc(base)}">home</a> › <a href="${esc(browse({ src }))}">${esc(sourceLabel(src))}</a> › section ${esc(label)}</nav>` +
-    `<div class="pagehead"><h1>section ${esc(label)} · ${esc(name)} ${emoji}</h1><p class="sub">${plural(items.length)} in ${esc(sourceLabel(src))}</p></div>` +
+  const crumbs = `<a href="${esc(base)}">home</a> › ` + (src ? `<a href="${esc(browse({ src }))}">${esc(sourceLabel(src))}</a> › ` : "");
+  const save = "caches" in globalThis ? '<p class="save"><button type="button" class="pill" id="save"></button></p>' : "";
+  h(`<div class="card"><nav class="crumbs">${crumbs}section ${esc(label)}</nav>` +
+    `<div class="pagehead"><h1>section ${esc(label)} · ${esc(name)} ${emoji}</h1><p class="sub">${plural(items.length)}${src ? " in " + esc(sourceLabel(src)) : ""}</p>${save}</div>` +
     sourceChips(m, src, key[0]) + chips + body + "</div>");
+  const button = document.getElementById("save");
+  if (button) saveButton(button, cache, sub || key, src);
 }
 
 async function pageView(name, sec, v, which, src, mono) {
@@ -176,6 +190,7 @@ async function pageView(name, sec, v, which, src, mono) {
   try {
     l = await listing(name, sec);
   } catch (e) {
+    if (e instanceof TypeError) return oops(`you're offline, and ${name}(${sec}) isn't saved 📵`);
     return oops(`there's no ${name}(${sec}) here 😭`);
   }
   const ver = l.versions.find(x => x.source === v) ||
@@ -251,8 +266,8 @@ async function main() {
   const page = q.get("page"), sec = q.get("sec"), src = q.get("src") || "", section = q.get("section");
   try {
     if (page && sec) await pageView(page, sec, q.get("v"), q.get("variant"), src, q.get("mono") === "1");
-    else if (src && section) await sourceSection(src, section, q.get("sub") || "");
-    else if (src) await sourceHome(src);
+    else if (section) await sourceSection(src, section, q.get("sub") || "");
+    else if (src || q.get("home")) await sourceHome(src);
     else location.replace(base);
   } catch (e) {
     oops(e instanceof TypeError ? "you're offline, and this isn't saved yet 📵" : `something broke 💔 ${e.message}`);

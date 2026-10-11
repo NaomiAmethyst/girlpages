@@ -4,6 +4,7 @@
 <div class="pagehead">
 <h1>{{.Heading}}</h1>
 <p class="sub">{{.Sub}}</p>
+{{if .SaveSection}}<p class="save"><button type="button" class="pill" data-save-section="{{.SaveSection}}" hidden>⬇️ save for offline</button></p>{{end}}
 </div>
 {{if .Sources}}<nav class="chips sources" aria-label="Browse by source">{{range .Sources}}<a class="pill{{if .On}} on{{end}}" href="{{.URL}}">{{.Label}}</a>{{end}}</nav>{{end}}
 {{if .Chips}}<div class="chips">{{range .Chips}}<a class="pill{{if .On}} on{{end}}" href="{{.URL}}">{{.Label}}</a>{{end}}</div>{{end}}

@@ -410,18 +410,22 @@ for none): see
 Only new and changed files are compressed, and copies of removed files go.
 .PP
 The website is a progressive web app: it can be installed, and a service
-worker keeps the pages someone has read (up to 300) and the app itself for
-offline use.
-Repository files fetched by the browser are kept in
-.BR localStorage :
-content-addressed ones forever, until space runs out (the least recently used
-go first), and
-.B manifest.json
-as a fallback for when there's no network.
+worker keeps the app itself (scripts, styles, and the browse, search and
+offline pages) for offline use.
+Repository files fetched by the browser are kept in its Cache API:
+content-addressed ones are read from there without asking the network, and
+the files that change are kept as a fallback for when there's no network.
+Offline, the service worker sends static pages to the browse app, which
+renders them from those files: every page read before, every page of a
+section saved with its listing's
+.B save for offline
+button, and any search, once the search page's
+.B save search for offline
+button has fetched the whole index.
 Every half hour while a page is open, the browser looks at
 .BR manifest.json ;
-when it has changed, the shards the new one doesn't use are deleted from
-localStorage in idle time.
+when it has changed, the search index files and section indexes the new one
+doesn't use are deleted in idle time.
 .SS gc
 Deletes files nothing refers to any more: superseded listings, section indexes
 and index shards, and the contents of versions no listing mentions.
