@@ -515,34 +515,62 @@ function forgetLocalStorage() {
 }
 
 // startApp lets any page become the browse app (static/app.js) without
-// loading another: following a link to a route (#/…) shows it in place,
-// and history leads back. The app's scripts load in idle time, and a route's
-// files are fetched as soon as a link to it is pointed at or touched.
+// loading another. Following a link to a route (#/…) shows it in place,
+// and once the app has loaded (in idle time), so does following any link
+// within the site, or searching: from then on the static pages are only
+// what the first visit, search engines, and browsers without JavaScript
+// see. History leads back. A link's files are fetched as soon as it's
+// pointed at or touched.
 function startApp(base) {
   const isRoute = (h) => /^#\/./.test(h);
-  let loading = null;
-  const load = () => (loading ||= import(new URL(base + "static/app.js", location.href).href));
+  let loading = null, app = null;
+  const load = () => (loading ||= import(new URL(base + "static/app.js", location.href).href).then(m => {
+    app = m;
+    // Its links are followed in place now; prerendering them is waste.
+    for (const s of document.querySelectorAll('script[type="speculationrules"]')) s.remove();
+    return m;
+  }));
   const open = () => load().then(m => m.start());
-  // A link to a route, from an event on it, or null.
-  const routeLink = (e) => {
+  const go = (href) => {
+    // Remember where this was, and whether it's the page's own (static)
+    // view, to come back to.
+    const own = !document.documentElement.classList.contains("routed");
+    history.replaceState({ ...(history.state || {}), y: scrollY, own }, "");
+    history.pushState({}, "", href);
+    open();
+  };
+  // A link the app shows, from an event on it, or null: routes always,
+  // anything else once the app has loaded (but not links within a page).
+  const appLink = (e) => {
     const a = e.target.closest?.("a[href]");
-    if (!a || a.target) return null;
+    if (!a || a.target || a.hasAttribute("download")) return null;
     const u = new URL(a.href, location.href);
-    return u.origin === location.origin && u.pathname === base && isRoute(u.hash) ? u : null;
+    if (u.origin !== location.origin) return null;
+    if (u.pathname === base && isRoute(u.hash)) return u;
+    if (u.hash && u.pathname === location.pathname && u.search === location.search) return null;
+    return app && app.handles(u.href) ? u : null;
   };
   if (location.pathname === base || location.pathname === base + "browse/") open();
   document.addEventListener("click", (e) => {
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-    const u = routeLink(e);
+    const u = appLink(e);
     if (!u) return;
     e.preventDefault();
-    history.replaceState({ ...(history.state || {}), y: scrollY }, "");
-    history.pushState({}, "", u.href);
-    open();
+    go(u.href);
+  });
+  document.addEventListener("submit", (e) => {
+    const f = e.target;
+    if (!app || e.defaultPrevented || f.method.toLowerCase() !== "get") return;
+    const u = new URL(f.action, location.href);
+    u.search = new URLSearchParams(new FormData(f)).toString();
+    if (!app.handles(u.href)) return;
+    e.preventDefault();
+    f.querySelector("input")?.blur();
+    go(u.href);
   });
   const warmed = new Set();
   const warm = (e) => {
-    const u = routeLink(e);
+    const u = appLink(e);
     if (!u || warmed.has(u.href)) return;
     warmed.add(u.href);
     load().then(m => m.prefetch(u.href)).catch(() => {});

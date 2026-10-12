@@ -263,18 +263,26 @@ function addBest(m, id, score) {
   if (!m.has(id) || score > m.get(id)) m.set(id, score);
 }
 
-// The search page: ?q=words, and &src=debian/trixie to keep to a source.
-async function page() {
-  const box = document.getElementById("search");
-  if (!box) return;
-  const status = document.getElementById("search-status");
-  const list = document.getElementById("search-results");
+// searchers keeps one Searcher per repository, so the index files a search
+// has loaded serve the next.
+const searchers = new Map();
+export function searcher(repo) {
+  if (!searchers.has(repo)) searchers.set(repo, new Searcher(repo));
+  return searchers.get(repo);
+}
+
+// searchPage runs the search page in box (the static one, or the app's):
+// ?q=words, and &src=debian/trixie to keep to a source. current() says
+// whether it's still wanted.
+export async function searchPage(box, params, { current = () => true } = {}) {
+  const $ = (id) => box.querySelector("#" + id);
+  const status = $("search-status");
+  const list = $("search-results");
   const base = box.dataset.base;
-  const params = new URLSearchParams(location.search);
   const q = params.get("q") || "", src = params.get("src") || "";
   // Only pages saved for offline: asked for, or by default when offline.
   const savedOnly = params.has("saved") ? params.get("saved") === "1" : navigator.onLine === false;
-  const toggle = document.getElementById("search-saved");
+  const toggle = $("search-saved");
   if (toggle && "caches" in globalThis) {
     const u = new URLSearchParams(params);
     u.set("saved", savedOnly ? "0" : "1");
@@ -284,10 +292,10 @@ async function page() {
     toggle.hidden = false;
   }
   for (const input of document.querySelectorAll('input[name="q"]')) input.value = q;
-  const s = new Searcher(box.dataset.repo);
+  const s = searcher(box.dataset.repo);
   try {
     await s.load();
-    const chips = document.getElementById("search-sources");
+    const chips = $("search-sources");
     const link = (key, label) => {
       const a = document.createElement("a");
       a.className = "pill" + (key === src ? " on" : "");
@@ -298,7 +306,7 @@ async function page() {
       return a;
     };
     if (chips && s.manifest.sources && s.manifest.sources.length) {
-      chips.append(link("", "✨ everywhere"));
+      chips.replaceChildren(link("", "✨ everywhere"));
       for (const e of s.manifest.sources) {
         chips.append(link(e.release ? `${e.distro}/${e.release}` : e.distro, e.release ? "· " + e.release : e.distro));
       }
@@ -308,11 +316,12 @@ async function page() {
   }
   if (!q.trim()) return;
   const where = src ? ` in ${src.replace("/", " ")}` : "";
-  document.title = `${q}${where} · search · girlpages 💅`;
+  if (current()) document.title = `${q}${where} · search · girlpages 💅`;
   status.textContent = "looking… 🔎";
   try {
     const accept = savedOnly ? (h) => s.cache.hasPage(h.name, h.section, src) : null;
     const hits = await s.search(q, 100, src, accept);
+    if (!current()) return;
     list.replaceChildren();
     const saved = savedOnly ? " saved" : "";
     const typos = s.missedTypos ? " (typo matching isn't saved, so typos won't be caught)" : "";
@@ -348,4 +357,8 @@ async function page() {
   }
 }
 
-if (typeof document !== "undefined") page();
+// The static search page runs itself.
+if (typeof document !== "undefined") {
+  const box = document.querySelector(".static-view #search");
+  if (box) searchPage(box, new URLSearchParams(location.search));
+}

@@ -21,7 +21,7 @@
 import { repoCache, saveButton, browseURL } from "./girlpages.js";
 import { VirtualList } from "./vlist.js";
 import { renderHTML, renderOriginalHTML, esc } from "./render.js";
-import { escapeName, segmentName } from "./search.js";
+import { escapeName, segmentName, searchPage } from "./search.js";
 
 const SECTIONS = {
   "1": ["User commands", "💻"], "2": ["System calls", "📞"], "3": ["Library functions", "📚"],
@@ -95,9 +95,12 @@ function sourceKeys(v) {
   return [...out].sort();
 }
 
-// h shows a view, unless the address has moved on since it was asked for.
+// h puts a view in place, unless the address has moved on since it was
+// asked for. It's shown when it's ready (see main), or by reveal.
 function h(html) {
-  if (location.href === routingFor) app.innerHTML = html;
+  if (location.href !== routingFor) return;
+  app.innerHTML = html;
+  renderedFor = routingFor;
 }
 
 function sourceChips(m, on, section) {
@@ -128,17 +131,22 @@ async function sourceHome(src) {
   let cards = "";
   for (const k of keys) {
     const [name, emoji] = sectionName(k);
-    cards += `<a class="section-card" href="${esc(browse({ src, section: k }))}"><span class="emoji">${emoji}</span>` +
+    cards += `<a class="section-card" href="${esc(src ? browse({ src, section: k }) : listingURL(k, "", 1))}"><span class="emoji">${emoji}</span>` +
       `<div class="num">${esc(k)}</div><div class="name">${esc(name)}</div><div class="count">${plural(s.sections[k])}</div></a>`;
   }
+  document.title = src ? document.title : "the manual, but make it girly · girlpages 💅";
+  const search = src ? "" : `<form class="hero-search" action="${esc(base)}search/" role="search"><input type="search" name="q" placeholder="what are we reading today? 🔎" aria-label="Search manual pages"></form>`;
   h(`<section class="hero"><h1>✨ girlpages ✨</h1><p>the ${src ? `<strong>${esc(sourceLabel(src))}</strong> ` : ""}manual, but make it girly 💅</p>` +
-    `<div class="stats">${plural(s.pages)} in ${esc(sourceLabel(src))}</div></section>` +
+    search + `<div class="stats">${plural(s.pages)}${src ? " in " + esc(sourceLabel(src)) : ""}</div></section>` +
     sourceChips(m, src, "") + `<div class="sections">${cards}</div>`);
 }
 
 const plural = (n) => (n === 1 ? "1 page" : `${n} pages`);
 
-async function sourceSection(src, key, sub) {
+// sourceSection shows a section's listing (or a subsection's), from one
+// source or all; start is the chunk to start at, and pageURL(n), if given,
+// the static listing page the address follows as it scrolls.
+async function sourceSection(src, key, sub, { start = 1, pageURL = null } = {}) {
   const m = await manifest();
   const [name, emoji] = sectionName(key);
   const entries = m.sections.filter(e => e.section.startsWith(key[0]) && e.section[0] === key[0]);
@@ -152,10 +160,12 @@ async function sourceSection(src, key, sub) {
       if (sub && si.section !== sub) continue;
       const other = src && p.other ? p.other[src] : "";
       items.push({ name: p.name, sec: si.section, desc: p.description || "", girl: !other && (p.variants || []).includes("girl"),
-        url: browse({ page: p.name, sec: si.section, src }) });
+        url: src ? browse({ page: p.name, sec: si.section, src }) : staticPage(p.name, si.section) });
     }
   }
-  items.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()) || (a.sec < b.sec ? -1 : 1));
+  // In the static listings' order, so chunks are their pages.
+  const lower = (x) => x.name.toLowerCase();
+  items.sort((a, b) => (lower(a) < lower(b) ? -1 : lower(a) > lower(b) ? 1 : a.sec < b.sec ? -1 : a.sec > b.sec ? 1 : 0));
   const label = sub || key;
   document.title = `${sourceLabel(src)} · section ${label} · girlpages 💅`;
   let chips = "";
@@ -186,19 +196,22 @@ async function sourceSection(src, key, sub) {
     return open ? out + "</ul>" : out;
   };
   const chunks = Math.max(1, Math.ceil(items.length / CHUNK));
+  const first = Math.min(Math.max(1, start), chunks);
   let body = `<nav class="letters" aria-label="Jump to letter">${[...starts.keys()].map(l => `<a href="#letter-${esc(l)}" data-chunk="${starts.get(l)}">${esc(l)}</a>`).join("")}</nav>` +
-    `<div class="listing"><div class="chunk" data-chunk="1">${chunkHTML(1)}</div></div>`;
+    `<div class="listing"><div class="chunk" data-chunk="${first}">${chunkHTML(first)}</div></div>`;
   if (!items.length) body = '<div class="empty">nothing here, bestie 😭</div>';
   const crumbs = `<a href="${esc(base)}">home</a> › ` + (src ? `<a href="${esc(browse({ src }))}">${esc(sourceLabel(src))}</a> › ` : "");
   const save = "caches" in globalThis ? '<p class="save"><button type="button" class="pill" id="save"></button></p>' : "";
   h(`<div class="card"><nav class="crumbs">${crumbs}section ${esc(label)}</nav>` +
     `<div class="pagehead"><h1>section ${esc(label)} · ${esc(name)} ${emoji}</h1><p class="sub">${plural(items.length)}${src ? " in " + esc(sourceLabel(src)) : ""}</p>${save}</div>` +
     sourceChips(m, src, key[0]) + chips + body + "</div>");
-  const button = document.getElementById("save");
+  if (location.href !== routingFor) return;
+  const button = app.querySelector("#save");
   if (button) saveButton(button, cache, sub || key, src);
-  const listing = location.href === routingFor && app.querySelector(".listing");
+  const listing = app.querySelector(".listing");
   if (listing && chunks > 1 && "IntersectionObserver" in globalThis) {
-    const list = new VirtualList(listing, { count: chunks, load: async (n) => chunkHTML(n) });
+    const list = new VirtualList(listing, { count: chunks, load: async (n) => chunkHTML(n),
+      onChunk: pageURL ? (n) => { if (location.href === routingFor) { history.replaceState(history.state, "", pageURL(n)); shown = routingFor = renderedFor = revealedFor = location.href; } } : undefined });
     current = list;
     app.querySelector(".letters").addEventListener("click", (e) => {
       const a = e.target.closest("a[data-chunk]");
@@ -209,7 +222,7 @@ async function sourceSection(src, key, sub) {
     });
     list.fill();
   } else if (listing) {
-    for (let n = 2; n <= chunks; n++) listing.insertAdjacentHTML("beforeend", `<div class="chunk" data-chunk="${n}">${chunkHTML(n)}</div>`);
+    for (let n = first + 1; n <= chunks; n++) listing.insertAdjacentHTML("beforeend", `<div class="chunk" data-chunk="${n}">${chunkHTML(n)}</div>`);
   }
 }
 
@@ -320,7 +333,80 @@ async function pageView(name, sec, rest, src) {
     toc.map(t => `<li${t.level === 2 ? ' class="sub"' : ""}><a href="#${esc(t.id)}">${esc(t.text)}</a></li>`).join("") + "</ul></nav>" : "";
   h(`<div class="layout"><article class="card manpage">${crumbs}<h1>${esc(title)}${esc(suffix)}</h1>` +
     `<div class="meta">${meta}</div>${inLine}${notice}${body}${vlist}</article>${tocHTML}</div>`);
-  if (at) afterShow = () => document.getElementById(at)?.scrollIntoView();
+  if (at) afterShow = () => app.querySelector(`[id="${at}"]`)?.scrollIntoView();
+}
+
+// staticListing shows a listing by its static pages (which are smaller than
+// the section indexes they're made from, and so the same as what's served),
+// scrolling through them as the static page itself does. Offline, it's made
+// from the section indexes saved, if they are.
+async function staticListing(key, sub, start) {
+  const pageURL = (n) => listingURL(key, sub, n);
+  const fetchPage = async (n) => {
+    const r = await fetch(pageURL(n));
+    if (!r.ok) {
+      const e = new Error(`${pageURL(n)}: ${r.status}`);
+      e.status = r.status;
+      throw e;
+    }
+    return new DOMParser().parseFromString(await r.text(), "text/html");
+  };
+  let doc;
+  try {
+    doc = await fetchPage(start);
+  } catch (e) {
+    if (e instanceof TypeError) return sourceSection("", key, sub, { start, pageURL });
+    throw e;
+  }
+  const card = doc.querySelector(".static-view > .card");
+  if (!card) return oops("that listing's broken 💔");
+  h(card.outerHTML);
+  if (location.href !== routingFor) return;
+  document.title = doc.title;
+  app.querySelector(".pager")?.setAttribute("hidden", "");
+  for (const b of app.querySelectorAll("button[data-save-section]")) {
+    b.hidden = !("caches" in globalThis);
+    saveButton(b, cache, b.dataset.saveSection);
+  }
+  const listing = app.querySelector(".listing[data-pages]");
+  const pages = listing ? +listing.dataset.pages : 1;
+  if (pages < 2 || !("IntersectionObserver" in globalThis)) return;
+  const list = new VirtualList(listing, {
+    count: pages,
+    load: async (n) => (await fetchPage(n)).querySelector(".listing .chunk")?.innerHTML || "",
+    onChunk: (n) => {
+      if (location.href !== routingFor) return;
+      history.replaceState(history.state, "", pageURL(n));
+      shown = routingFor = renderedFor = revealedFor = location.href;
+    },
+  });
+  current = list;
+  app.querySelector(".letters")?.addEventListener("click", (e) => {
+    const a = e.target.closest("a[href]");
+    if (!a) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const u = new URL(a.href);
+    const m = u.pathname.match(/\/page\/(\d+)\/$/);
+    list.jump(m ? +m[1] : 1, decodeURIComponent(u.hash.slice(1)));
+  });
+  list.fill();
+  (globalThis.requestIdleCallback || ((f) => setTimeout(f, 200)))(() => list.prefetch());
+}
+
+// searchView is the search page, in the app.
+async function searchView(params) {
+  document.title = "search · girlpages 💅";
+  const save = "caches" in globalThis ? '<p class="save"><button type="button" class="pill" data-save-search="words"></button>' +
+    '<button type="button" class="pill" data-save-search="typos"></button><a class="pill" id="search-saved" hidden></a></p>' : "";
+  h(`<div class="card" id="search" data-repo="${esc(app.dataset.repo)}" data-base="${esc(base)}"><div class="crumbs"><a href="${esc(base)}">home</a> › search</div>` +
+    `<div class="pagehead"><h1>🔎 search</h1><p class="sub" id="search-status">type something up there, bestie</p>${save}</div>` +
+    '<nav class="chips sources" id="search-sources" aria-label="Search within a source"></nav><ul class="pages" id="search-results"></ul></div>');
+  if (location.href !== routingFor) return;
+  for (const b of app.querySelectorAll("button[data-save-search]")) saveButton(b, cache, "search:" + b.dataset.saveSearch);
+  reveal();
+  const url = routingFor;
+  await searchPage(app.querySelector("#search"), params, { current: () => location.href === url });
 }
 
 function oops(msg) {
@@ -337,6 +423,18 @@ const isRoute = (h) => /^#\/./.test(h);
 let shown = "";          // the address last shown
 let routingFor = "";     // the address being shown; views for others are dropped
 let afterShow = null;    // where a view wants scrolling to, once it's shown
+let renderedFor = "";    // the address whose view is in place
+let revealedFor = "";    // the address whose view is shown
+
+// reveal shows the view in place, if it's still wanted: views that go on
+// working once they're showing something (search) call it early.
+function reveal() {
+  if (location.href !== routingFor || revealedFor === routingFor) return;
+  revealedFor = routingFor;
+  showApp();
+  if (afterShow) afterShow();
+  else scrollTo(0, history.state?.y ?? 0);
+}
 
 // legacyRoute turns a /browse/?… query from earlier versions into a route.
 function legacyRoute(q) {
@@ -384,9 +482,47 @@ async function parse(h) {
   return { kind: "page", src, sec: segs[0], name: segs[1], rest: segs.slice(2) };
 }
 
+// viewOf is the view an address shows in the app: a route, or one of the
+// static site's pages (which, once the app is running, it shows itself).
+function viewOf(u) {
+  if (u.origin !== location.origin || !u.pathname.startsWith(base)) return null;
+  if (u.pathname === base && isRoute(u.hash)) return { kind: "route", hash: u.hash };
+  if (u.pathname === base) return { kind: "home" };
+  let parts;
+  try {
+    parts = u.pathname.slice(base.length).split("/").filter(Boolean).map(decodeURIComponent).map(unsegment);
+  } catch {
+    return null;
+  }
+  if (parts[0] === "man" && parts.length === 3) return { kind: "page", sec: parts[1], name: parts[2] };
+  if (parts[0] === "search" && parts.length === 1) return { kind: "search", params: u.searchParams };
+  if (parts[0] === "section") {
+    let page = 1;
+    if (parts.length >= 4 && parts[parts.length - 2] === "page") page = +parts.splice(-2)[1] || 1;
+    if (parts.length === 2 || parts.length === 3) return { kind: "section", key: parts[1], sub: parts[2] || "", page };
+  }
+  return null;
+}
+
+// unsegment undoes site.SegmentName (names starting with a dot are escaped).
+const unsegment = (s) => (s.startsWith("%") ? decodeURIComponent(s) : s);
+
+// listingURL is a static listing's page n.
+function listingURL(key, sub, n) {
+  const u = `${base}section/${encodeURIComponent(segmentName(key))}/${sub ? encodeURIComponent(segmentName(sub)) + "/" : ""}`;
+  return n > 1 ? `${u}page/${n}/` : u;
+}
+
 async function route() {
   current?.destroy();
   current = null;
+  const v = viewOf(new URL(location.href));
+  switch (v && v.kind) {
+    case "home": return sourceHome("");
+    case "page": return pageView(v.name, v.sec, [], "");
+    case "search": return searchView(v.params);
+    case "section": return staticListing(v.key, v.sub, v.page);
+  }
   const r = await parse(location.hash);
   switch (r.kind) {
     case "source": return sourceHome(r.src);
@@ -405,15 +541,12 @@ async function main() {
   const url = location.href;
   if (url === shown) return;
   shown = url;
-  if (!isRoute(location.hash)) {
-    // Back to the page the app started on, or somewhere else to load.
-    if (location.pathname + location.search === docURL) return showStatic();
-    return location.reload();
-  }
+  if (history.state?.own || (location.pathname + location.search === docURL && !isRoute(location.hash))) return showStatic();
+  if (!viewOf(new URL(url))) return location.reload();
   routingFor = url;
   afterShow = null;
   const slow = setTimeout(() => {
-    if (routingFor !== url) return;
+    if (routingFor !== url || renderedFor === url) return;
     app.innerHTML = '<div class="card waiting"><div class="spinner">💅</div><p>getting it ready, bestie…</p></div>';
     showApp();
   }, 300);
@@ -431,10 +564,7 @@ async function main() {
     if (e) oops(e instanceof TypeError ? "you're offline, and this isn't saved yet 📵" : `something broke 💔 ${e.message}`);
   }
   clearTimeout(slow);
-  if (location.href !== url) return;
-  showApp();
-  if (afterShow) afterShow();
-  else scrollTo(0, history.state?.y ?? 0);
+  reveal();
 }
 
 let started = false;
@@ -452,7 +582,8 @@ export function start() {
       const a = e.target.closest("a[href^='#']");
       if (!a || a.getAttribute("href").startsWith("#/")) return;
       e.preventDefault();
-      document.getElementById(decodeURIComponent(a.getAttribute("href").slice(1)))?.scrollIntoView();
+      // (The page's own view, hidden, may have the same ids.)
+      app.querySelector(`[id="${CSS.escape(decodeURIComponent(a.getAttribute("href").slice(1)))}"]`)?.scrollIntoView();
     });
     addEventListener("popstate", main);
     addEventListener("hashchange", main);
@@ -460,10 +591,16 @@ export function start() {
   return main();
 }
 
-// prefetch fetches what a route will need, so following it is quick.
+// prefetch fetches what a view will need, so following a link to it is
+// quick.
 export async function prefetch(href) {
-  const u = new URL(href, location.href);
-  if (!isRoute(u.hash)) return;
-  const r = await parse(u.hash);
+  const v = viewOf(new URL(href, location.href));
+  if (!v) return;
+  if (v.kind === "page") return loadPage(v.name, v.sec, [], "");
+  if (v.kind !== "route") return;
+  const r = await parse(v.hash);
   if (r.kind === "page") await loadPage(r.name, r.sec, r.rest, r.src);
 }
+
+// handles reports whether the app shows an address itself.
+export const handles = (href) => !!viewOf(new URL(href, location.href));

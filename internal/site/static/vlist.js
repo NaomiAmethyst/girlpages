@@ -202,7 +202,7 @@ export class VirtualList {
       this.earlier.hidden = n <= 1;
     }
     this.restore(c);
-    (id && document.getElementById(id) || c).scrollIntoView();
+    (id && this.el.querySelector(`[id="${CSS.escape(id)}"]`) || c).scrollIntoView();
     this.track();
     this.fill();
   }
