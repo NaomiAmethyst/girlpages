@@ -95,8 +95,9 @@ function sourceKeys(v) {
   return [...out].sort();
 }
 
+// h shows a view, unless the address has moved on since it was asked for.
 function h(html) {
-  app.innerHTML = html;
+  if (location.href === routingFor) app.innerHTML = html;
 }
 
 function sourceChips(m, on, section) {
@@ -195,7 +196,7 @@ async function sourceSection(src, key, sub) {
     sourceChips(m, src, key[0]) + chips + body + "</div>");
   const button = document.getElementById("save");
   if (button) saveButton(button, cache, sub || key, src);
-  const listing = app.querySelector(".listing");
+  const listing = location.href === routingFor && app.querySelector(".listing");
   if (listing && chunks > 1 && "IntersectionObserver" in globalThis) {
     const list = new VirtualList(listing, { count: chunks, load: async (n) => chunkHTML(n) });
     current = list;
@@ -218,16 +219,17 @@ const CHUNK = 200;
 // current is the listing on screen, stopped when the route changes.
 let current = null;
 
-// pageView shows a page; rest is what follows its name in the route:
-// [version] [variant] [mono] [versions].
-async function pageView(name, sec, rest, src) {
+// loadPage fetches what a page view needs; rest is what follows its name
+// in the route: [version] [variant] [mono] [versions]. It resolves to the
+// view's data, or {error} to show instead.
+async function loadPage(name, sec, rest, src) {
   let l;
   try {
     l = await listing(name, sec);
   } catch (e) {
-    if (e instanceof TypeError) return oops(`you're offline, and ${name}(${sec}) isn't saved 📵`);
+    if (e instanceof TypeError) return { error: `you're offline, and ${name}(${sec}) isn't saved 📵` };
     if (e.status !== 404) throw e;
-    return oops(`there's no ${name}(${sec}) here 😭`);
+    return { error: `there's no ${name}(${sec}) here 😭` };
   }
   rest = [...rest];
   const at = rest[rest.length - 1] === "versions" ? rest.pop() : "";
@@ -250,14 +252,22 @@ async function pageView(name, sec, rest, src) {
   // One word that's neither a version nor a variant is a version that isn't here.
   const isVariant = (k) => l.versions.some(x => x.variants && x.variants[k]);
   if (!ver && (rest.length >= 2 || (rest.length === 1 && !isVariant(rest[0])))) {
-    return oops(`there's no version ${rest[0]} of ${name}(${sec}) here 🤔`);
+    return { error: `there's no version ${rest[0]} of ${name}(${sec}) here 🤔` };
   }
   ver = ver || versions.find(x => x.source === fallback) || versions[0];
-  if (!ver) return oops("that page has no versions 🤔");
+  if (!ver) return { error: "that page has no versions 🤔" };
   const has = (k) => ver.variants && ver.variants[k];
   const variants = Object.keys(ver.variants || {}).filter(k => /^[a-z][a-z0-9-]{0,31}$/.test(k)).sort(variantOrder);
   if (!which || !has(which)) which = variants[0] || "man";
   const doc = await variant(ver.source, which, ver.variants[which].sha256);
+  return { l, ver, which, variants, versions, slug, doc, at, mono };
+}
+
+// pageView shows a page.
+async function pageView(name, sec, rest, src) {
+  const d = await loadPage(name, sec, rest, src);
+  if (d.error) return oops(d.error);
+  const { l, ver, which, variants, versions, slug, doc, at, mono } = d;
   const title = ver.title || `${name.toUpperCase()}(${sec})`;
   const latest = ver.source === l.current;
   const suffix = which === "girl" ? "" : which === "man" ? " · original" : " · " + which;
@@ -310,19 +320,23 @@ async function pageView(name, sec, rest, src) {
     toc.map(t => `<li${t.level === 2 ? ' class="sub"' : ""}><a href="#${esc(t.id)}">${esc(t.text)}</a></li>`).join("") + "</ul></nav>" : "";
   h(`<div class="layout"><article class="card manpage">${crumbs}<h1>${esc(title)}${esc(suffix)}</h1>` +
     `<div class="meta">${meta}</div>${inLine}${notice}${body}${vlist}</article>${tocHTML}</div>`);
-  if (at) document.getElementById(at)?.scrollIntoView();
+  if (at) afterShow = () => document.getElementById(at)?.scrollIntoView();
 }
 
 function oops(msg) {
   h(`<div class="card waiting"><div class="spinner">😭</div><h1>${esc(msg)}</h1><p><a href="${esc(base)}">home</a> · <a href="${esc(base)}search/">search</a></p></div>`);
 }
 
-// The page the app is on: the home page, whose static content it hides
-// while showing a route, or /browse/ (from earlier versions), which
-// redirects.
+// The app runs in whatever page it's started on, hiding that page's own
+// (static) view while it shows a route, and showing it again when history
+// comes back to it. /browse/ (from earlier versions) redirects.
 const root = document.documentElement;
-const home = document.querySelector(".home-static");
-const homeTitle = document.title;
+const docURL = location.pathname + location.search;
+const docTitle = document.title;
+const isRoute = (h) => /^#\/./.test(h);
+let shown = "";          // the address last shown
+let routingFor = "";     // the address being shown; views for others are dropped
+let afterShow = null;    // where a view wants scrolling to, once it's shown
 
 // legacyRoute turns a /browse/?… query from earlier versions into a route.
 function legacyRoute(q) {
@@ -335,72 +349,121 @@ function legacyRoute(q) {
   return browse({ src });
 }
 
-function showHome() {
+function showStatic() {
   root.classList.remove("routed");
   app.hidden = true;
-  document.title = homeTitle;
+  document.title = docTitle;
+  if (history.state?.y != null) scrollTo(0, history.state.y);
+}
+
+function showApp() {
+  root.classList.add("routed");
+  app.hidden = false;
+}
+
+// parse reads a route, resolving to what it shows.
+async function parse(h) {
+  let segs;
+  try {
+    segs = h.slice(2).split("/").filter(x => x !== "").map(decodeURIComponent);
+  } catch {
+    return { kind: "bad" };
+  }
+  let src = "";
+  // Only a word that isn't a section or "section" can start a source.
+  if (segs.length && segs[0] !== "section" && !/^[0-9]/.test(segs[0])) {
+    const sources = (await manifest()).sources || [];
+    if (sources.some(s => s.distro === segs[0])) {
+      src = segs.shift();
+      if (segs.length && sources.some(s => s.distro === src && s.release === segs[0])) src += "/" + segs.shift();
+    }
+  }
+  if (!segs.length) return { kind: "source", src };
+  if (segs[0] === "section") return segs[1] ? { kind: "section", src, key: segs[1], sub: segs[2] || "" } : { kind: "source", src };
+  if (segs.length < 2) return { kind: "bad" };
+  return { kind: "page", src, sec: segs[0], name: segs[1], rest: segs.slice(2) };
 }
 
 async function route() {
   current?.destroy();
   current = null;
-  const h = location.hash;
-  if (!h.startsWith("#/") || h === "#/") {
-    if (home) return showHome();
-    return sourceHome("");
+  const r = await parse(location.hash);
+  switch (r.kind) {
+    case "source": return sourceHome(r.src);
+    case "section": return sourceSection(r.src, r.key, r.sub);
+    case "page": return pageView(r.name, r.sec, r.rest, r.src);
   }
-  root.classList.add("routed");
-  app.hidden = false;
-  let segs;
-  try {
-    segs = h.slice(2).split("/").filter(x => x !== "").map(decodeURIComponent);
-  } catch {
-    return oops("that link's broken 🤔");
-  }
-  const m = await manifest();
-  const sources = m.sources || [];
-  let src = "";
-  if (segs.length && sources.some(s => s.distro === segs[0])) {
-    src = segs.shift();
-    if (segs.length && sources.some(s => s.distro === src && s.release === segs[0])) src += "/" + segs.shift();
-  }
-  if (!segs.length) return sourceHome(src);
-  if (segs[0] === "section") return segs[1] ? sourceSection(src, segs[1], segs[2] || "") : sourceHome(src);
-  if (segs.length < 2) return oops("there's nothing here 🤔");
-  return pageView(segs[1], segs[0], segs.slice(2), src);
+  return oops(r.kind === "bad" ? "there's nothing here 🤔" : "that link's broken 🤔");
 }
 
-// main shows the route. Files that change are shown from the cache while
-// they're refreshed, so if one turns out to be stale enough to point at
-// something since removed, it's refreshed and shown again.
+// main shows the address. A route is rendered out of sight, and shown
+// once it's ready (with a spinner in the meantime, if that's a while), so
+// moving between views doesn't flash. Files that change are shown from the
+// cache while they're refreshed, so if one turns out to be stale enough to
+// point at something since removed, it's refreshed and shown again.
 async function main() {
+  const url = location.href;
+  if (url === shown) return;
+  shown = url;
+  if (!isRoute(location.hash)) {
+    // Back to the page the app started on, or somewhere else to load.
+    if (location.pathname + location.search === docURL) return showStatic();
+    return location.reload();
+  }
+  routingFor = url;
+  afterShow = null;
+  const slow = setTimeout(() => {
+    if (routingFor !== url) return;
+    app.innerHTML = '<div class="card waiting"><div class="spinner">💅</div><p>getting it ready, bestie…</p></div>';
+    showApp();
+  }, 300);
   try {
     await route();
   } catch (e) {
     if (e.status === 404 && await cache.revalidate()) {
       try {
-        return await route();
+        await route();
+        e = null;
       } catch (e2) {
         e = e2;
       }
     }
-    oops(e instanceof TypeError ? "you're offline, and this isn't saved yet 📵" : `something broke 💔 ${e.message}`);
+    if (e) oops(e instanceof TypeError ? "you're offline, and this isn't saved yet 📵" : `something broke 💔 ${e.message}`);
   }
+  clearTimeout(slow);
+  if (location.href !== url) return;
+  showApp();
+  if (afterShow) afterShow();
+  else scrollTo(0, history.state?.y ?? 0);
 }
 
-if (location.pathname !== base) {
-  location.replace(location.search ? legacyRoute(new URLSearchParams(location.search)) : base + location.hash);
-} else {
-  // Links within a page (contents, letters) scroll rather than route.
-  app.addEventListener("click", (e) => {
-    const a = e.target.closest("a[href^='#']");
-    if (!a || a.getAttribute("href").startsWith("#/")) return;
-    e.preventDefault();
-    document.getElementById(decodeURIComponent(a.getAttribute("href").slice(1)))?.scrollIntoView();
-  });
-  window.addEventListener("hashchange", () => {
-    window.scrollTo(0, 0);
-    main();
-  });
-  main();
+let started = false;
+
+// start shows the address, and from then on follows it.
+export function start() {
+  if (!started) {
+    started = true;
+    if (location.pathname === base + "browse/") {
+      location.replace(location.search ? legacyRoute(new URLSearchParams(location.search)) : base + location.hash);
+      return;
+    }
+    // Links within a view (contents, letters) scroll rather than route.
+    app.addEventListener("click", (e) => {
+      const a = e.target.closest("a[href^='#']");
+      if (!a || a.getAttribute("href").startsWith("#/")) return;
+      e.preventDefault();
+      document.getElementById(decodeURIComponent(a.getAttribute("href").slice(1)))?.scrollIntoView();
+    });
+    addEventListener("popstate", main);
+    addEventListener("hashchange", main);
+  }
+  return main();
+}
+
+// prefetch fetches what a route will need, so following it is quick.
+export async function prefetch(href) {
+  const u = new URL(href, location.href);
+  if (!isRoute(u.hash)) return;
+  const r = await parse(u.hash);
+  if (r.kind === "page") await loadPage(r.name, r.sec, r.rest, r.src);
 }

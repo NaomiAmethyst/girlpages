@@ -514,6 +514,43 @@ function forgetLocalStorage() {
   }
 }
 
+// startApp lets any page become the browse app (static/app.js) without
+// loading another: following a link to a route (#/…) shows it in place,
+// and history leads back. The app's scripts load in idle time, and a route's
+// files are fetched as soon as a link to it is pointed at or touched.
+function startApp(base) {
+  const isRoute = (h) => /^#\/./.test(h);
+  let loading = null;
+  const load = () => (loading ||= import(new URL(base + "static/app.js", location.href).href));
+  const open = () => load().then(m => m.start());
+  // A link to a route, from an event on it, or null.
+  const routeLink = (e) => {
+    const a = e.target.closest?.("a[href]");
+    if (!a || a.target) return null;
+    const u = new URL(a.href, location.href);
+    return u.origin === location.origin && u.pathname === base && isRoute(u.hash) ? u : null;
+  };
+  if (location.pathname === base || location.pathname === base + "browse/") open();
+  document.addEventListener("click", (e) => {
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    const u = routeLink(e);
+    if (!u) return;
+    e.preventDefault();
+    history.replaceState({ ...(history.state || {}), y: scrollY }, "");
+    history.pushState({}, "", u.href);
+    open();
+  });
+  const warmed = new Set();
+  const warm = (e) => {
+    const u = routeLink(e);
+    if (!u || warmed.has(u.href)) return;
+    warmed.add(u.href);
+    load().then(m => m.prefetch(u.href)).catch(() => {});
+  };
+  for (const ev of ["pointerover", "touchstart", "focusin"]) document.addEventListener(ev, warm, { passive: true });
+  idle(() => load().catch(() => {}));
+}
+
 // boot runs on every page: it registers the service worker, starts
 // watching the repository for updates, and wires up save buttons.
 function boot() {
@@ -525,6 +562,7 @@ function boot() {
   }
   forgetLocalStorage();
   if (!repo) return;
+  startApp(base);
   const cache = repoCache(repo);
   cache.watch();
   // A static page read (or listing seen) is kept, so the browse app can

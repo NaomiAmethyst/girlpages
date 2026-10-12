@@ -212,8 +212,15 @@ func TestBuild(t *testing.T) {
 			t.Error(err)
 		}
 	}
-	if b := read(t, filepath.Join(out, "browse", "index.html")); !strings.Contains(b, "noindex") || !strings.Contains(b, "static/app.js") {
+	if b := read(t, filepath.Join(out, "browse", "index.html")); !strings.Contains(b, "noindex") || !strings.Contains(b, `id="app"`) {
 		t.Error("the browse app shouldn't be indexed")
+	}
+	// Every page can become the app in place, and prerenders the static
+	// pages it links to (but not routes, or the repository).
+	if ls := read(t, filepath.Join(out, "man", "1", "ls", "index.html")); !strings.Contains(ls, `<div class="static-view">`) ||
+		!strings.Contains(ls, `<div id="app" data-repo="/girlpages/repo/" data-base="/girlpages/" hidden>`) ||
+		!strings.Contains(ls, `<script type="speculationrules">`) || !strings.Contains(ls, `repo/*`) {
+		t.Error("ls page should be able to host the app, and prerender links")
 	}
 
 	// Rebuilding the same thing writes nothing.

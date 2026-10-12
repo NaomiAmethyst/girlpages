@@ -350,7 +350,7 @@ button.pill { font: inherit; cursor: pointer; }
 button.pill:disabled { cursor: progress; opacity: 0.8; }
 
 /* the browse app, in the home page's hash */
-.routed .home-static { display: none; }
+.routed .static-view { display: none; }
 .routed #app[hidden] { display: block; }
 
 /* long listings: a pager without JavaScript, one long list with it */
@@ -365,3 +365,6 @@ button.pill:disabled { cursor: progress; opacity: 0.8; }
 /* display rules would otherwise show what's hidden */
 .pager[hidden], .pill[hidden] { display: none; }
 .listing .earlier { margin: 0.5rem auto; }
+
+/* Long pages: only what's near the screen is laid out and painted. */
+.content > *, .original > * { content-visibility: auto; contain-intrinsic-size: auto 3em; }
