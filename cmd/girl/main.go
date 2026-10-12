@@ -50,15 +50,15 @@ const (
 func main() { os.Exit(run(os.Args[1:])) }
 
 type flags struct {
-	all, apropos, whatis, where, local            bool
-	sections, manPath, locale, pager, configFile  string
-	help, version                                 bool
-	bulk, update, force, dryRun, prune, quiet     bool
-	noWait, noBatch, reprompt                     bool
-	jobs, limit                                   int
-	refresh, cachedOnly, raw, doctor, html, serve bool
-	color, backend, model, listen, repo, batch    string
-	importSrc, exportDir                          string
+	all, apropos, whatis, where, local                     bool
+	sections, manPath, locale, pager, configFile           string
+	help, version                                          bool
+	bulk, update, force, dryRun, prune, quiet              bool
+	noWait, noBatch, reprompt                              bool
+	jobs, limit                                            int
+	refresh, noCache, cachedOnly, raw, doctor, html, serve bool
+	color, backend, model, listen, repo, batch             string
+	importSrc, exportDir                                   string
 }
 
 func newFlagSet(f *flags) *pflag.FlagSet {
@@ -96,6 +96,7 @@ func newFlagSet(f *flags) *pflag.FlagSet {
 	fs.IntVarP(&f.jobs, "jobs", "j", 0, "")
 	fs.IntVar(&f.limit, "limit", 0, "")
 	fs.BoolVar(&f.refresh, "refresh", false, "")
+	fs.BoolVar(&f.noCache, "no-cache", false, "")
 	fs.BoolVar(&f.cachedOnly, "cached-only", false, "")
 	fs.BoolVar(&f.raw, "raw", false, "")
 	fs.BoolVar(&f.doctor, "doctor", false, "")
@@ -148,6 +149,7 @@ man options:
 
 girl options:
       --refresh           re-girlify the page even if it's cached
+      --no-cache          always ask the LLM: skip the cache and repo, save nothing
       --cached-only       never call the LLM; only show cached (or repo) pages
       --raw               print the stored markup instead of rendering it
       --html              write the page as a standalone HTML document
@@ -209,6 +211,16 @@ func run(args []string) int {
 		return exitOK
 	}
 	rest := fs.Args()
+	if f.noCache {
+		switch {
+		case f.cachedOnly:
+			fmt.Fprintln(os.Stderr, "girl: --no-cache or --cached-only, bestie, not both at once")
+			return exitUsage
+		case f.bulk || f.update || f.serve || f.importSrc != "" || f.exportDir != "" || f.doctor:
+			fmt.Fprintln(os.Stderr, "girl: --no-cache is just for reading pages, bestie")
+			return exitUsage
+		}
+	}
 
 	if f.apropos || f.whatis || f.where {
 		return execMan(f, rest)
@@ -265,6 +277,10 @@ func run(args []string) int {
 	}
 
 	if sec, name, ok := seriesDoc(rest); ok {
+		if f.noCache {
+			fmt.Fprintln(os.Stderr, "girl: documents like that only come from the repo, so --no-cache can't skip it")
+			return exitUsage
+		}
 		return runDocument(ctx, f, &cfg, g, sec, name)
 	}
 
@@ -305,6 +321,7 @@ func run(args []string) int {
 	for _, p := range pages {
 		r, err := g.Get(ctx, p, core.GetOptions{
 			Refresh:    f.refresh,
+			NoCache:    f.noCache,
 			CachedOnly: f.cachedOnly,
 			Started: func(b llm.Backend) func() {
 				return ui.spin(core.DisplayTitle(p, ""), b)

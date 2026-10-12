@@ -46,6 +46,9 @@ type GetOptions struct {
 	Refresh bool
 	// CachedOnly never calls the model.
 	CachedOnly bool
+	// NoCache always calls the model, looking in neither the cache nor the
+	// repository, and saves nothing.
+	NoCache bool
 	// Started, if set, is called just before a conversion begins and
 	// returns a function called when it ends.
 	Started func(b llm.Backend) (done func())
@@ -100,7 +103,8 @@ func (g *Girl) Cached(p manpage.Page) (Result, bool) {
 
 // Get fetches a page, converting it if necessary.
 func (g *Girl) Get(ctx context.Context, p manpage.Page, o GetOptions) (Result, error) {
-	if !o.Refresh {
+	reuse := !o.Refresh && !o.NoCache
+	if reuse {
 		if r, ok := g.Cached(p); ok {
 			return r, nil
 		}
@@ -114,7 +118,7 @@ func (g *Girl) Get(ctx context.Context, p manpage.Page, o GetOptions) (Result, e
 	dir := g.Caches.Writable()
 	entry := &cache.Entry{Source: p.Path, Name: p.Name, Section: p.Section, Title: title, Hash: hash,
 		PromptVersion: llm.PromptVersion, Generated: time.Now().UTC().Truncate(time.Second)}
-	if !o.Refresh {
+	if reuse {
 		if markup, ok := g.Caches.Object(hash); ok {
 			// Same text as a page that's already done (an alias, usually).
 			if entry.Stamp() == nil {
@@ -123,7 +127,7 @@ func (g *Girl) Get(ctx context.Context, p manpage.Page, o GetOptions) (Result, e
 			return Result{Markup: markup, Title: title, Entry: entry}, nil
 		}
 	}
-	if !o.Refresh {
+	if reuse {
 		if markup, gen, err := g.FromRepo(ctx, p); err == nil {
 			// Record the prompt that made it, not ours (0 if it doesn't say).
 			entry.Backend, entry.Model, entry.PromptVersion = BackendRepo, gen.Model, gen.PromptVersion
@@ -158,6 +162,9 @@ func (g *Girl) Get(ctx context.Context, p manpage.Page, o GetOptions) (Result, e
 		return Result{}, err
 	}
 	entry.Backend, entry.Model = b.Name(), b.Model()
+	if o.NoCache {
+		return Result{Markup: markup, Title: title, Entry: entry}, nil
+	}
 	if err := dir.PutObject(hash, markup); err != nil {
 		fmt.Fprintf(os.Stderr, "girl: couldn't save to cache: %v\n", err)
 	} else if err := entry.Stamp(); err == nil {

@@ -102,6 +102,24 @@ func TestRepo(t *testing.T) {
 	if res, err := g.Get(ctx, bar, GetOptions{}); err != nil || !strings.Contains(res.Markup, "from-model") {
 		t.Errorf("bar converted: %q, %v", res.Markup, err)
 	}
+	// No cache asks the model, though foo is cached, and leaves the cache be.
+	if res, err := g.Get(ctx, foo, GetOptions{NoCache: true}); err != nil || !strings.Contains(res.Markup, "from-model") {
+		t.Errorf("no cache: %q, %v", res.Markup, err)
+	}
+	if r, ok := g.Cached(foo); !ok || !strings.Contains(r.Markup, "from-repo") {
+		t.Errorf("no cache changed the cache: %q %v", r.Markup, ok)
+	}
+	// Nor does it look in the repo, or save anything for an uncached page.
+	fresh := newGirl()
+	if res, err := fresh.Get(ctx, foo, GetOptions{NoCache: true}); err != nil || !strings.Contains(res.Markup, "from-model") {
+		t.Errorf("no cache, uncached: %q, %v", res.Markup, err)
+	}
+	if r, ok := fresh.Cached(foo); ok {
+		t.Errorf("no cache saved %q", r.Markup)
+	}
+	if _, err := fresh.Get(ctx, foo, GetOptions{CachedOnly: true}); err != nil {
+		t.Errorf("repo after no cache: %v", err)
+	}
 	// Refreshing asks the model, not the repo.
 	if res, err := g.Get(ctx, foo, GetOptions{Refresh: true}); err != nil || !strings.Contains(res.Markup, "from-model") {
 		t.Errorf("refresh: %q, %v", res.Markup, err)

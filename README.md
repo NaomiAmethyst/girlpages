@@ -227,6 +227,7 @@ Plus:
 ```sh
 girl --refresh tar      # convert again
 girl --model opus tar   # with a different model
+girl --no-cache tar     # ask the LLM fresh, without saving it
 girl --cached-only ls   # never call the LLM
 girl --repo URL ls      # try a girlpages repository first
 girl --raw ls           # the stored markup

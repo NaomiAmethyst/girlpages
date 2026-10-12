@@ -116,6 +116,15 @@ Show the version.
 .B \-\-refresh
 Convert the page again even if it is cached, replacing the cached copy.
 .TP
+.B \-\-no\-cache
+Always convert the page with the model, without looking in the cache or the
+repository, and save nothing: the cache stays as it was. Only for reading
+pages, not with
+.BR \-\-cached\-only ,
+.BR \-\-bulk ,
+.BR \-\-serve
+and the like.
+.TP
 .B \-\-cached\-only
 Never contact the model; fail for pages that are neither cached nor in the
 repository (see
