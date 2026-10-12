@@ -25,7 +25,9 @@ type OpenAI struct {
 	Temperature *float64
 	MaxTokens   int
 	Headers     map[string]string
-	Client      *http.Client
+	// Extra is added to each request's body (OpenRouter's "provider", say).
+	Extra  map[string]any
+	Client *http.Client
 	// Retries is how many times a rate-limited or failed request is retried.
 	Retries int
 }
@@ -61,7 +63,7 @@ func (o *OpenAI) Complete(ctx context.Context, system, user string) (string, err
 	if o.ModelName == "" {
 		return "", errors.New("openai backend needs a model: set openai.model in the config or GIRLPAGES_MODEL")
 	}
-	body, err := json.Marshal(chatRequest{
+	body, err := withExtra(chatRequest{
 		Model: o.ModelName,
 		Messages: []chatMessage{
 			{Role: "system", Content: system},
@@ -69,7 +71,7 @@ func (o *OpenAI) Complete(ctx context.Context, system, user string) (string, err
 		},
 		Temperature: o.Temperature,
 		MaxTokens:   o.MaxTokens,
-	})
+	}, o.Extra)
 	if err != nil {
 		return "", err
 	}
@@ -101,6 +103,25 @@ func (o *OpenAI) Complete(ctx context.Context, system, user string) (string, err
 		}
 	}
 	return "", lastErr
+}
+
+// withExtra encodes v, a JSON object, with extra's fields added (or
+// replacing its own).
+func withExtra(v any, extra map[string]any) ([]byte, error) {
+	b, err := json.Marshal(v)
+	if err != nil || len(extra) == 0 {
+		return b, err
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, err
+	}
+	for k, x := range extra {
+		if m[k], err = json.Marshal(x); err != nil {
+			return nil, fmt.Errorf("extra %s: %w", k, err)
+		}
+	}
+	return json.Marshal(m)
 }
 
 type httpError struct {

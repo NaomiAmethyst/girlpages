@@ -272,6 +272,7 @@ func NewBackend(cfg *config.Config) (llm.Backend, error) {
 			Temperature: cfg.OpenAI.Temperature,
 			MaxTokens:   cfg.OpenAI.MaxTokens,
 			Headers:     cfg.OpenAI.Headers,
+			Extra:       cfg.OpenAI.Extra,
 			Client:      &http.Client{Timeout: cfg.OpenAI.Timeout.Duration},
 			Retries:     3,
 		}, nil
@@ -301,7 +302,7 @@ func NewBatcher(cfg *config.Config, dir string, live llm.Backend) (*llm.Batcher,
 		}
 		api = &llm.OpenRouterBatch{
 			URL: u, APIKey: key, Headers: cfg.OpenAI.Headers, Model: cfg.OpenAI.Model,
-			Temperature: cfg.OpenAI.Temperature, MaxTokens: cfg.OpenAI.MaxTokens,
+			Temperature: cfg.OpenAI.Temperature, MaxTokens: cfg.OpenAI.MaxTokens, Extra: cfg.OpenAI.Extra,
 			Client: &http.Client{Timeout: cfg.OpenAI.Timeout.Duration}, Retries: 3,
 		}
 	case config.BatchAnthropic:

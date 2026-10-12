@@ -466,6 +466,10 @@ batch_poll = "1m"
 [openai.headers]
 "X\-Example" = "value"
 
+[openai.extra]           # added to each request's body, e.g. OpenRouter's
+provider = { only = ["deepinfra"], allow_fallbacks = false }
+reasoning = { enabled = false }
+
 [anthropic]
 api_key = ""             # or ANTHROPIC_API_KEY; for batch = "anthropic"
 api_key_file = ""

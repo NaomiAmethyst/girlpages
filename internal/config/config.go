@@ -88,6 +88,10 @@ type OpenAIConfig struct {
 	MaxTokens   int               `toml:"max_tokens"`
 	Timeout     Duration          `toml:"timeout"`
 	Headers     map[string]string `toml:"headers"`
+	// Extra is added to every request's body, for what a server takes
+	// beyond the usual: OpenRouter's provider routing, or turning
+	// reasoning off, say.
+	Extra map[string]any `toml:"extra"`
 	// BatchURL is an OpenRouter batch endpoint, such as
 	// https://openrouter.ai/api/v1/batches. When set, bulk runs send their
 	// pages as batches: slower, about half the price.

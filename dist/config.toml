@@ -65,6 +65,12 @@
 #[openai.headers]
 #"HTTP-Referer" = "https://github.com/NaomiAmethyst/girlpages"
 
+# Added to every request (batches too), for what a server takes beyond the
+# usual. With OpenRouter: which providers to use, and no thinking.
+#[openai.extra]
+#provider = { only = ["deepinfra"], allow_fallbacks = false }
+#reasoning = { enabled = false }
+
 [repo]
 # A girlpages repository (made with girlrepo) to fetch ready-made pages from
 # before asking a model: an https:// URL, a file:// URL or a directory. Only

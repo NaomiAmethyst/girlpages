@@ -175,18 +175,25 @@ func TestOpenAI(t *testing.T) {
 			r.Header.Get("X-Extra") != "yes" {
 			t.Errorf("bad request: %s %v", r.URL.Path, r.Header)
 		}
-		var req chatRequest
+		var req struct {
+			chatRequest
+			Provider struct {
+				Only []string `json:"only"`
+			} `json:"provider"`
+		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Error(err)
 		}
-		if req.Model != "girlboss-1" || len(req.Messages) != 2 || req.Messages[0].Role != "system" {
+		if req.Model != "girlboss-1" || len(req.Messages) != 2 || req.Messages[0].Role != "system" ||
+			len(req.Provider.Only) != 1 || req.Provider.Only[0] != "decart" {
 			t.Errorf("bad body: %+v", req)
 		}
 		fmt.Fprint(w, `{"choices":[{"message":{"content":"# hiii"},"finish_reason":"stop"}]}`)
 	}))
 	defer srv.Close()
 	o := &OpenAI{BaseURL: srv.URL + "/v1/", APIKey: "sk-test", ModelName: "girlboss-1",
-		Headers: map[string]string{"X-Extra": "yes"}, Retries: 2}
+		Headers: map[string]string{"X-Extra": "yes"}, Retries: 2,
+		Extra: map[string]any{"provider": map[string]any{"only": []any{"decart"}}}}
 	got, err := o.Complete(context.Background(), "sys", "user")
 	if err != nil || got != "# hiii" {
 		t.Fatalf("got %q, %v", got, err)

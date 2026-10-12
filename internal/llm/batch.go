@@ -44,7 +44,9 @@ type OpenRouterBatch struct {
 	Model       string
 	Temperature *float64
 	MaxTokens   int
-	Client      *http.Client
+	// Extra is added to each request's body (OpenRouter's "provider", say).
+	Extra  map[string]any
+	Client *http.Client
 	// Retries is how many times a rate-limited or failed call is retried.
 	Retries int
 }
@@ -96,8 +98,8 @@ type batchBody struct {
 }
 
 type batchItem struct {
-	CustomID string    `json:"custom_id"`
-	Body     batchBody `json:"body"`
+	CustomID string          `json:"custom_id"`
+	Body     json.RawMessage `json:"body"`
 }
 
 // The batch API wants endpoint and model before requests, so field order
@@ -144,11 +146,15 @@ func (c *OpenRouterBatch) Submit(ctx context.Context, reqs []BatchRequest) (*Bat
 	}
 	sub := batchSubmit{Endpoint: "/v1/chat/completions", Model: c.Model}
 	for _, r := range reqs {
-		sub.Requests = append(sub.Requests, batchItem{CustomID: r.CustomID, Body: batchBody{
+		b, err := withExtra(batchBody{
 			Messages:    []chatMessage{{Role: "system", Content: r.Part.System}, {Role: "user", Content: r.Part.User}},
 			Temperature: c.Temperature,
 			MaxTokens:   c.MaxTokens,
-		}})
+		}, c.Extra)
+		if err != nil {
+			return nil, err
+		}
+		sub.Requests = append(sub.Requests, batchItem{CustomID: r.CustomID, Body: b})
 	}
 	body, err := json.Marshal(sub)
 	if err != nil {
