@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"unicode/utf8"
+
+	"github.com/NaomiAmethyst/girlpages/internal/manpage"
 )
 
 // Hit is a search result.
@@ -61,7 +63,7 @@ func (s *Searcher) SearchIn(ctx context.Context, query, source string, limit int
 	if err := s.load(ctx); err != nil {
 		return nil, err
 	}
-	terms := dedupe(Tokens(query))
+	terms := dedupe(SeriesTerms(Tokens(query), s.man))
 	whole := strings.ToLower(strings.TrimSpace(query))
 	if len(terms) == 0 && whole == "" {
 		return nil, nil
@@ -148,6 +150,39 @@ func (s *Searcher) SearchIn(ctx context.Context, query, source string, limit int
 		hits = append(hits, Hit{Name: d[0], Section: d[1], Description: d[2], Sources: srcs, Score: r.score})
 	}
 	return hits, nil
+}
+
+// SeriesTerms joins a series' name and the number after it in a query
+// ("rfc 9110") into one word, as documents in a series are indexed
+// (rfc9110).
+func SeriesTerms(terms []string, m *Manifest) []string {
+	series := map[string]bool{}
+	if m != nil {
+		for _, e := range m.Sections {
+			if manpage.IsSeries(e.Section) {
+				series[strings.ToLower(e.Section)] = true
+			}
+		}
+	}
+	var out []string
+	for i := 0; i < len(terms); i++ {
+		if series[terms[i]] && i+1 < len(terms) && isDigits(terms[i+1]) {
+			out = append(out, terms[i]+strings.TrimLeft(terms[i+1], "0"))
+			i++
+			continue
+		}
+		out = append(out, terms[i])
+	}
+	return out
+}
+
+func isDigits(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return s != ""
 }
 
 func contains(ss []string, s string) bool {

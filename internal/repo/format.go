@@ -306,11 +306,16 @@ type Generator struct {
 	Generated     time.Time `json:"generated"`
 }
 
-// SectionIndex lists every page in one section.
+// SectionIndex lists every page in one section, sorted by name. A long
+// section's index has no Pages, but Shards: ranges of names (and how many
+// pages each has), each another SectionIndex with those pages. See
+// Store.SectionPages and Client.SectionPages.
 type SectionIndex struct {
-	Format  int         `json:"format"`
-	Section string      `json:"section"`
-	Pages   []IndexPage `json:"pages"`
+	Format  int          `json:"format"`
+	Section string       `json:"section"`
+	Pages   []IndexPage  `json:"pages"`
+	Count   int          `json:"count,omitempty"`
+	Shards  []ShardRange `json:"shards,omitempty"`
 }
 
 // IndexPage is a page in a SectionIndex.
@@ -350,6 +355,8 @@ type ShardRange struct {
 	// Bytes is the shard's size, so clients can say how much fetching
 	// every shard would be (0 if not known).
 	Bytes int64 `json:"bytes,omitempty"`
+	// Count, for section index shards, is how many pages the shard has.
+	Count int `json:"count,omitempty"`
 }
 
 // WordShard maps words to the pages they appear in. Postings are
@@ -434,6 +441,12 @@ func SectionPointerPath(section string) string {
 
 func SectionIndexPath(section, sha string) string {
 	return path.Join("section", EscapeName(section)+"-"+sha+".json")
+}
+
+// SectionShardPath is section/shard-ab/<sha>.json, a shard of a long
+// section's index.
+func SectionShardPath(sha string) string {
+	return path.Join("section", "shard-"+sha[:2], sha+".json")
 }
 
 // IndexManifestPath is index/<kind>/manifest-<sha>.json; kind is

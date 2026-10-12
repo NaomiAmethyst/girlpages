@@ -368,3 +368,6 @@ button.pill:disabled { cursor: progress; opacity: 0.8; }
 
 /* Long pages: only what's near the screen is laid out and painted. */
 .content > *, .original > * { content-visibility: auto; contain-intrinsic-size: auto 3em; }
+
+/* a document's title, under its number */
+.manpage .lede { font-size: 1.15rem; font-weight: 600; margin: -0.4rem 0 0.6rem; }

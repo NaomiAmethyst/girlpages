@@ -33,6 +33,7 @@ import (
 	"github.com/NaomiAmethyst/girlpages/internal/llm"
 	"github.com/NaomiAmethyst/girlpages/internal/precompress"
 	"github.com/NaomiAmethyst/girlpages/internal/repo"
+	"github.com/NaomiAmethyst/girlpages/internal/rfc"
 	"github.com/NaomiAmethyst/girlpages/internal/site"
 )
 
@@ -274,7 +275,8 @@ func (a *app) fetcher() *crawl.Fetcher {
 }
 
 func (a *app) crawl(ctx context.Context, args []string) error {
-	fs := flags("crawl", "apt URL SUITE | rpm URL | pacman URL [options]")
+	fs := flags("crawl", "apt URL SUITE | rpm URL | pacman URL | rfc [URL] [options]")
+	numbers := fs.String("rfcs", "", "rfc: only these RFCs (comma separated numbers)")
 	components := fs.String("components", "", "apt: components to crawl (default: all the suite has)")
 	arch := fs.String("arch", "", "apt: architecture (default amd64)")
 	dbName := fs.String("repo", "", "pacman: database name (default: from the URL, e.g. core)")
@@ -295,6 +297,9 @@ func (a *app) crawl(ctx context.Context, args []string) error {
 		return err
 	}
 	rest := fs.Args()
+	if len(rest) >= 1 && rest[0] == "rfc" {
+		return a.crawlRFC(ctx, rest[1:], *numbers, *limit, *jobs, *again, *dry, *quiet)
+	}
 	if len(rest) < 2 {
 		fs.Usage()
 		return errUsage
@@ -343,6 +348,42 @@ func (a *app) crawl(ctx context.Context, args []string) error {
 			time.Since(start).Round(time.Second))
 		if err == nil && st.Pages.New > 0 {
 			fmt.Fprintln(os.Stderr, "   next: girlrepo girlify, then girlrepo publish ✨")
+		}
+	}
+	return err
+}
+
+// crawlRFC crawls the RFC Editor (or a mirror at a URL) for RFCs.
+func (a *app) crawlRFC(ctx context.Context, rest []string, numbers string, limit, jobs int, again, dry, quiet bool) error {
+	if len(rest) > 1 {
+		return fmt.Errorf("crawl rfc takes at most a URL, like: crawl rfc %s", rfc.DefaultURL)
+	}
+	s, err := a.store()
+	if err != nil {
+		return err
+	}
+	o := rfc.Options{Fetcher: a.fetcher(), Limit: limit, Jobs: jobs, Again: again, DryRun: dry, Log: os.Stderr, Quiet: quiet,
+		State: filepath.Join(config.UserCacheDir(), "girlrepo-crawl", repo.Hash([]byte(absPath(s.Dir)))[:16]+"-rfc.json")}
+	if len(rest) == 1 {
+		o.URL = rest[0]
+	}
+	if numbers != "" {
+		o.Numbers = map[int]bool{}
+		for _, f := range strings.FieldsFunc(numbers, func(r rune) bool { return r == ',' || r == ' ' }) {
+			n, err := strconv.Atoi(strings.TrimPrefix(strings.ToLower(f), "rfc"))
+			if err != nil {
+				return fmt.Errorf("--rfcs: %q isn't an RFC number", f)
+			}
+			o.Numbers[n] = true
+		}
+	}
+	start := time.Now()
+	st, err := rfc.Crawl(ctx, s, o)
+	if !dry {
+		fmt.Fprintf(os.Stderr, "🕷️  %d RFCs fetched (%s), %d failed, %d new (%s)\n",
+			st.Fetched, humanBytes(st.Bytes), st.Failed, st.New, time.Since(start).Round(time.Second))
+		if err == nil && st.New > 0 {
+			fmt.Fprintln(os.Stderr, "   next: girlrepo girlify -s rfc, then girlrepo publish ✨")
 		}
 	}
 	return err
@@ -556,6 +597,8 @@ func (a *app) publish(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	pr := newProgress(os.Stderr)
+	s.Progress = pr.report
 	unlock, err := s.Lock()
 	if err != nil {
 		return err
@@ -569,7 +612,7 @@ func (a *app) publish(ctx context.Context, args []string) error {
 	if n, err := s.Refresh(pages); err != nil {
 		return err
 	} else if n > 0 {
-		fmt.Fprintf(os.Stderr, "🔄 brought %d listings up to date\n", n)
+		pr.say("🔄 brought %d listings up to date\n", n)
 		if pages, err = s.AllPages(); err != nil {
 			return err
 		}
@@ -578,21 +621,21 @@ func (a *app) publish(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "📚 published %d pages in %d sections (%d girlified)\n", m.Pages, len(m.Sections), m.Variants[repo.VariantGirl])
+	pr.say("📚 published %d pages in %d sections (%d girlified)\n", m.Pages, len(m.Sections), m.Variants[repo.VariantGirl])
 	if !*noSite {
 		st, err := site.Build(s, pages, m, site.Options{Out: a.dir, Base: *base, URL: *siteURL,
-			Version: getVersion(), Log: os.Stderr})
+			Version: getVersion(), Log: os.Stderr, Progress: pr.report})
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(os.Stderr, "🌸 website: %d files written, %d unchanged, %d removed\n", st.Written, st.Unchanged, st.Removed)
+		pr.say("🌸 website: %d files written, %d unchanged, %d removed\n", st.Written, st.Unchanged, st.Removed)
 	}
 	if *gc {
 		st, err := s.GC(false)
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(os.Stderr, "🧹 removed %d unused files (%s)\n", st.Files, humanBytes(st.Bytes))
+		pr.say("🧹 removed %d unused files (%s)\n", st.Files, humanBytes(st.Bytes))
 	}
 	encodings, err := precompress.Parse(*compress)
 	if err != nil {
@@ -605,15 +648,15 @@ func (a *app) publish(ctx context.Context, args []string) error {
 	if *noSite {
 		root = s.Dir
 	}
-	pst, err := precompress.Sweep(root, encodings)
+	pst, err := precompress.SweepProgress(root, encodings, func(done, total int) { pr.report("compressing", done, total) })
 	if err != nil {
 		return err
 	}
 	if pst.Compressed+pst.Removed > 0 {
-		fmt.Fprintf(os.Stderr, "🗜️  compressed %d files (%s smaller), removed %d stale copies\n",
+		pr.say("🗜️  compressed %d files (%s smaller), removed %d stale copies\n",
 			pst.Compressed, humanBytes(pst.Saved), pst.Removed)
 	}
-	fmt.Fprintf(os.Stderr, "✨ done in %s\n", time.Since(start).Round(time.Millisecond))
+	pr.say("✨ done in %s\n", time.Since(start).Round(time.Millisecond))
 	return ctx.Err()
 }
 

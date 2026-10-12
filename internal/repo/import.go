@@ -66,11 +66,11 @@ func (s *Store) Import(ctx context.Context, c *Client, o ImportOptions) (ImportS
 		if !manpage.SectionMatches(se.Section, o.Sections) {
 			continue
 		}
-		var si SectionIndex
-		if err := c.Get(ctx, SectionIndexPath(se.Section, se.SHA256), &si); err != nil {
+		pages, err := c.SectionPages(ctx, se)
+		if err != nil {
 			return st, err
 		}
-		for _, p := range si.Pages {
+		for _, p := range pages {
 			if o.Match != nil && !o.Match.MatchString(p.Name) {
 				continue
 			}

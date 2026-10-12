@@ -241,6 +241,44 @@ const SectionCount = 13
 // bulk runs do the most useful sections first.
 var sectionOrder = []string{"1", "n", "l", "8", "3", "0", "2", "5", "4", "9", "6", "7"}
 
+// Chapter is the part of the manual a section belongs to: for man's
+// numbered sections, the number (3 for 3, 3p and 3ssl); any other section
+// (n, l, or a series of documents such as rfc) is its own.
+func Chapter(sec string) string {
+	if sec != "" && sec[0] >= '0' && sec[0] <= '9' {
+		return sec[:1]
+	}
+	return sec
+}
+
+// NameLess orders page names: numbers (as series of documents have) by
+// value, anything else as text.
+func NameLess(a, b string) bool {
+	if isNumber(a) && isNumber(b) && len(a) != len(b) {
+		return len(strings.TrimLeft(a, "0")) < len(strings.TrimLeft(b, "0"))
+	}
+	return a < b
+}
+
+func isNumber(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// IsSeries reports whether a section is a series of documents with
+// numbers for names (rfc), rather than a section of the manual: it doesn't
+// start with a digit and is longer than a letter.
+func IsSeries(sec string) bool {
+	return len(sec) > 1 && (sec[0] < '0' || sec[0] > '9')
+}
+
 // SectionRank is where a section comes in man's search order.
 func SectionRank(sec string) int { return sectionRank(sec) }
 

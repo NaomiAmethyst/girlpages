@@ -14,7 +14,7 @@
 {{range .Groups}}
 {{if .Cont}}<h2 class="letter cont">{{.Letter}} <span class="sub">(continued)</span></h2>{{else}}<h2 class="letter" id="letter-{{.Letter}}">{{.Letter}}</h2>{{end}}
 <ul class="pages">
-{{range .Items}}<li><a href="{{.URL}}"><span class="name">{{.Name}}</span><span class="sec">({{.Section}})</span></a><span class="desc">{{.Desc}}</span>{{if .Girlified}}<span class="done" title="girlified">✨</span>{{end}}</li>
+{{range .Items}}<li><a href="{{.URL}}"><span class="name">{{.Prefix}}{{.Name}}</span>{{if not .Series}}<span class="sec">({{.Section}})</span>{{end}}</a><span class="desc">{{.Desc}}</span>{{if .Girlified}}<span class="done" title="girlified">✨</span>{{end}}</li>
 {{end}}</ul>
 {{else}}<div class="empty">nothing here, bestie 😭</div>
 {{end}}

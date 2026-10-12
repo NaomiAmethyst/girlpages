@@ -20,9 +20,17 @@ type Heading struct {
 
 // HTMLOptions controls HTML rendering.
 type HTMLOptions struct {
-	// Link returns the URL for a reference such as ls(1), or "" to leave it
-	// as text. Nil means no man page links.
+	// Link returns the URL for a reference such as ls(1) (or RFC 9110, as
+	// 9110 in section rfc), or "" to leave it as text. Nil means no links
+	// but URLs.
 	Link func(name, section string) string
+	// Indent and Width, for originals, are where text starts and the last
+	// column it's filled to, if not man's (the start found from the
+	// layout, and 79). RFCs are 3 and 72.
+	Indent, Width int
+	// TitleBlock, for originals, shows what comes before the first heading
+	// as it's laid out (an RFC's title block, in columns).
+	TitleBlock bool
 }
 
 // HTML renders markup as an HTML fragment, returning it with the page's
@@ -198,7 +206,8 @@ func (h *htmlWriter) inline(s string) string {
 }
 
 var linkRE = regexp.MustCompile("(https?://[^\\s<>()\"'`]*[^\\s<>()\"'`.,;:!?])" +
-	`|([A-Za-z_][A-Za-z0-9_.:+-]*)\(([0-9][a-z0-9]*|n|l)\)`)
+	`|([A-Za-z_][A-Za-z0-9_.:+-]*)\(([0-9][a-z0-9]*|n|l)\)` +
+	`|\bRFC ?0*([1-9][0-9]{0,4})\b`)
 
 // linkify escapes text, turning URLs and man page references into links.
 func (h *htmlWriter) linkify(s string) string {
@@ -206,9 +215,13 @@ func (h *htmlWriter) linkify(s string) string {
 	last := 0
 	for _, m := range linkRE.FindAllStringSubmatchIndex(s, -1) {
 		var href string
-		if m[2] >= 0 {
+		switch {
+		case m[2] >= 0:
 			href = s[m[2]:m[3]]
-		} else if h.o.Link != nil {
+		case h.o.Link == nil:
+		case m[8] >= 0: // RFC 9110
+			href = h.o.Link(s[m[8]:m[9]], "rfc")
+		default:
 			href = h.o.Link(s[m[4]:m[5]], s[m[6]:m[7]])
 		}
 		if href == "" {

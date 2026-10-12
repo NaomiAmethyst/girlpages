@@ -35,8 +35,10 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/NaomiAmethyst/girlpages/internal/manpage"
 	"github.com/NaomiAmethyst/girlpages/internal/render"
 	"github.com/NaomiAmethyst/girlpages/internal/repo"
+	"github.com/NaomiAmethyst/girlpages/internal/rfc"
 	"github.com/NaomiAmethyst/girlpages/internal/web"
 )
 
@@ -85,6 +87,8 @@ type Options struct {
 	URL     string
 	Version string
 	Log     io.Writer
+	// Progress, if set, is told how the build is going.
+	Progress repo.Progress
 }
 
 // Stats summarises a build.
@@ -214,6 +218,49 @@ func listPageURL(u string, n int) string {
 type item struct {
 	Name, Section, Desc, URL string
 	Girlified                bool
+	// Series items are shown by Prefix and name ("RFC 791"), not with
+	// their section.
+	Series bool
+	Prefix string
+}
+
+// sectionTitle names a section in titles: "section 3", or for a series of
+// documents, nothing but its name follows.
+func sectionTitle(sec string) string {
+	if manpage.IsSeries(sec) {
+		name, _ := web.SectionName(sec)
+		return name
+	}
+	return "section " + sec
+}
+
+// listTitle titles a listing: "section 3 · Library functions 📚", or a
+// series' name alone.
+func listTitle(sec, name, emoji string) string {
+	t := name
+	if !manpage.IsSeries(sec) {
+		t = "section " + sec + " · " + name
+	}
+	if emoji != "" {
+		t += " " + emoji
+	}
+	return t
+}
+
+// seriesPrefix is how a series' documents are named before their number.
+func seriesPrefix(sec string) string {
+	if manpage.IsSeries(sec) {
+		return strings.ToUpper(sec) + " "
+	}
+	return ""
+}
+
+// published is a "2022-06" date as "June 2022".
+func published(d string) string {
+	if t, err := time.Parse("2006-01", d); err == nil {
+		return t.Format("January 2006")
+	}
+	return d
 }
 
 type pageView struct {
@@ -229,9 +276,16 @@ type pageView struct {
 	Packages        []string
 	// In lists the sources this version is in, each linking to the page as
 	// that source has it; Versions is how many versions there are.
-	In       []chip
-	Versions int
-	Version  string // upstream version number
+	In []chip
+	// SectionLabel names the page's section in breadcrumbs ("section 1",
+	// "Requests for Comments"). A document in a series shows its
+	// description under its title, and when it was published, not a
+	// version (Published: "June 2022").
+	SectionLabel string
+	Series       bool
+	Published    string
+	Versions     int
+	Version      string // upstream version number
 }
 
 func (b *builder) url(parts ...string) string {
@@ -252,15 +306,35 @@ func SegmentName(s string) string {
 	return s
 }
 
-func (b *builder) pageURL(name, sec string) string { return b.url("man", sec, name) }
+// pageURL is a page's: man/<sec>/<name>/, or <series>/<name>/ for a
+// series of documents (rfc/9110/).
+func (b *builder) pageURL(name, sec string) string {
+	if manpage.IsSeries(sec) {
+		return b.url(sec, name)
+	}
+	return b.url("man", sec, name)
+}
 
-// sectionURL is the listing a page's section is on: section/3/ for 3, and
-// section/3/3ssl/ for 3ssl.
-func (b *builder) sectionURL(sec string) string {
-	if key := mainKey(sec); key != sec {
+// listURL is a listing: a chapter's (section/3/, for sec ""), one of its
+// sections' (section/3/3ssl/, or section/3/3/ for just 3), or a series'
+// (rfc/).
+func (b *builder) listURL(key, sec string) string {
+	switch {
+	case manpage.IsSeries(key):
+		return b.url(key)
+	case sec != "":
 		return b.url("section", key, sec)
 	}
-	return b.url("section", sec)
+	return b.url("section", key)
+}
+
+// sectionURL is the listing a page's section is on: its chapter's, or for
+// a section like 3ssl, its own.
+func (b *builder) sectionURL(sec string) string {
+	if key := mainKey(sec); key != sec {
+		return b.listURL(key, sec)
+	}
+	return b.listURL(sec, "")
 }
 
 // browseURL is a view in the browse app, which lives in the home page's
@@ -426,7 +500,7 @@ func sortedKeys(m map[string][]byte) []string {
 	return keys
 }
 
-func mainKey(sec string) string { return sec[:1] }
+func mainKey(sec string) string { return manpage.Chapter(sec) }
 
 func girlified(v *repo.Version) bool {
 	_, ok := v.Variants[repo.VariantGirl]
@@ -440,7 +514,7 @@ func (b *builder) sourceChips(section string) []chip {
 	}
 	cs := []chip{{Label: "✨ latest of everything", URL: b.url(), On: true}}
 	if section != "" {
-		cs[0].URL = b.url("section", section)
+		cs[0].URL = b.listURL(section, "")
 	}
 	for _, src := range b.m.Sources {
 		if section != "" && src.Sections[section] == 0 {
@@ -469,7 +543,7 @@ func (b *builder) home(pages []repo.PageRef) error {
 		c := cards[key]
 		if c == nil {
 			name, emoji := web.SectionName(key)
-			c = &card{Key: key, Name: name, Emoji: emoji, URL: b.url("section", key)}
+			c = &card{Key: key, Name: name, Emoji: emoji, URL: b.listURL(key, "")}
 			cards[key] = c
 		}
 		c.Count++
@@ -520,21 +594,21 @@ func (b *builder) sections(pages []repo.PageRef) error {
 			if len(secs) < 2 {
 				return nil
 			}
-			cs := []chip{{Label: "all", URL: b.url("section", key), On: on == ""}}
+			cs := []chip{{Label: "all", URL: b.listURL(key, ""), On: on == ""}}
 			for _, s := range secs {
-				cs = append(cs, chip{Label: fmt.Sprintf("%s (%d)", s, subs[key][s]), URL: b.url("section", key, s), On: on == s})
+				cs = append(cs, chip{Label: fmt.Sprintf("%s (%d)", s, subs[key][s]), URL: b.listURL(key, s), On: on == s})
 			}
 			return cs
 		}
 		list := func(sec string, ps []repo.PageRef) error {
-			label, u := key, b.url("section", key)
+			label, u := key, b.listURL(key, "")
 			if sec != "" {
-				label, u = sec, b.url("section", key, sec)
+				label, u = sec, b.listURL(key, sec)
 			}
 			v := &view{
-				Title:       "section " + label + " · " + strings.ToLower(name),
+				Title:       listTitle(label, strings.ToLower(name), ""),
 				Description: fmt.Sprintf("%s: every page in section %s of the manual, girlified.", name, label),
-				Heading:     "section " + label + " · " + name + " " + emoji,
+				Heading:     listTitle(label, name, emoji),
 				Sub:         pluralPages(len(ps)),
 				Chips:       chipsFor(sec),
 				Sources:     b.sourceChips(key),
@@ -544,12 +618,13 @@ func (b *builder) sections(pages []repo.PageRef) error {
 			for _, p := range ps {
 				cur := p.Current()
 				items = append(items, item{Name: p.Pointer.Name, Section: p.Pointer.Section, Desc: cur.Description,
+					Series: manpage.IsSeries(p.Pointer.Section), Prefix: seriesPrefix(p.Pointer.Section),
 					URL: b.pageURL(p.Pointer.Name, p.Pointer.Section), Girlified: p.Girlified()})
 			}
 			sort.SliceStable(items, func(i, j int) bool {
 				a, c := strings.ToLower(items[i].Name), strings.ToLower(items[j].Name)
 				if a != c {
-					return a < c
+					return manpage.NameLess(a, c)
 				}
 				return items[i].Section < items[j].Section
 			})
@@ -612,7 +687,15 @@ func pluralPages(n int) string {
 	return fmt.Sprintf("%d pages", n)
 }
 
+// letterOf is the group a name is listed under: its first letter, or for
+// a number (an RFC's), its thousand.
 func letterOf(name string) string {
+	if n, err := strconv.Atoi(name); err == nil && n >= 0 {
+		if n < 1000 {
+			return "1–999"
+		}
+		return fmt.Sprintf("%ds", n/1000*1000)
+	}
 	if r := []rune(name); len(r) > 0 && unicode.IsLetter(r[0]) && r[0] < 0x80 {
 		return strings.ToUpper(string(r[0]))
 	}
@@ -682,7 +765,13 @@ func (b *builder) link(name, sec string) string {
 // pages writes each page's latest version.
 func (b *builder) pages(pages []repo.PageRef) error {
 	errs := make([]error, len(pages))
-	var next atomic.Int64
+	var next, done atomic.Int64
+	report := func(n int) {
+		if b.o.Progress != nil {
+			b.o.Progress("writing pages", n, len(pages))
+		}
+	}
+	report(0)
 	var wg sync.WaitGroup
 	for w := 0; w < runtime.NumCPU(); w++ {
 		wg.Add(1)
@@ -694,6 +783,7 @@ func (b *builder) pages(pages []repo.PageRef) error {
 					return
 				}
 				err := b.page(pages[i])
+				report(int(done.Add(1)))
 				if errors.Is(err, repo.ErrNotFound) {
 					b.mu.Lock()
 					fmt.Fprintf(b.o.Log, "💔 %s(%s): %v\n", pages[i].Pointer.Name, pages[i].Pointer.Section, err)
@@ -726,7 +816,11 @@ func (b *builder) page(p repo.PageRef) error {
 	}
 	pv := &pageView{Name: name, Section: sec, Title: title, Description: ver.Description,
 		SectionURL: b.sectionURL(sec), URL: u, BrowseURL: b.browseURL("", sec, name),
-		Versions: len(p.Listing.Versions), Version: ver.Upstream()}
+		Versions: len(p.Listing.Versions), Version: ver.Upstream(),
+		SectionLabel: sectionTitle(sec), Series: manpage.IsSeries(sec)}
+	if pv.Series && len(ver.Packages) > 0 {
+		pv.Published = published(ver.Packages[0].Version)
+	}
 	for _, pk := range ver.Packages {
 		pv.Packages = append(pv.Packages, pk.String())
 	}
@@ -756,7 +850,11 @@ func (b *builder) page(p repo.PageRef) error {
 			}
 		}
 	} else {
-		body, toc := render.OriginalHTML(man.Header, man.Footer, originalSections(man), render.HTMLOptions{Link: b.link})
+		o := render.HTMLOptions{Link: b.link}
+		if sec == rfc.Section {
+			o.Indent, o.Width, o.TitleBlock = rfc.Indent, rfc.Width, true
+		}
+		body, toc := render.OriginalHTML(man.Header, man.Footer, originalSections(man), o)
 		pv.Body, pv.TOC = template.HTML(body), toc // so does OriginalHTML
 	}
 	if !modified.IsZero() {
@@ -857,10 +955,10 @@ func (b *builder) sitemap(pages []repo.PageRef) error {
 		}
 	}
 	for _, key := range keys {
-		listing(b.url("section", key), count[key])
+		listing(b.listURL(key, ""), count[key])
 		if len(subs[key]) > 1 {
 			for _, sec := range subs[key] {
-				listing(b.url("section", key, sec), count[key+"/"+sec])
+				listing(b.listURL(key, sec), count[key+"/"+sec])
 			}
 		}
 	}
@@ -875,7 +973,13 @@ func (b *builder) sitemap(pages []repo.PageRef) error {
 // the per-version, per-original and per-source pages earlier versions of
 // girlrepo made).
 func (b *builder) prune() error {
-	for _, dir := range []string{"man", "section", "src"} {
+	dirs := []string{"man", "section", "src"}
+	for _, e := range b.m.Sections {
+		if manpage.IsSeries(e.Section) {
+			dirs = append(dirs, SegmentName(e.Section))
+		}
+	}
+	for _, dir := range dirs {
 		root := filepath.Join(b.o.Out, dir)
 		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {

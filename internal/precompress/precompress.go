@@ -176,6 +176,12 @@ func IsCopy(name string) (string, bool) {
 // it's no older than its original), and removing copies whose originals
 // are gone, or that encodings no longer includes.
 func Sweep(root string, encodings []Encoding) (Stats, error) {
+	return SweepProgress(root, encodings, nil)
+}
+
+// SweepProgress is Sweep, telling progress (if not nil) how many files
+// it's been through of how many.
+func SweepProgress(root string, encodings []Encoding, progress func(done, total int)) (Stats, error) {
 	var st Stats
 	want := map[string]bool{}
 	for _, e := range encodings {
@@ -210,7 +216,10 @@ func Sweep(root string, encodings []Encoding) (Stats, error) {
 
 	var mu sync.Mutex
 	errs := make([]error, len(todo))
-	var next atomic.Int64
+	var next, done atomic.Int64
+	if progress != nil && len(todo) > 0 {
+		progress(0, len(todo))
+	}
 	var wg sync.WaitGroup
 	for w := 0; w < workers(); w++ {
 		wg.Add(1)
@@ -223,6 +232,9 @@ func Sweep(root string, encodings []Encoding) (Stats, error) {
 				}
 				did, size, saved, err := compress(todo[i], encodings)
 				errs[i] = err
+				if progress != nil {
+					progress(int(done.Add(1)), len(todo))
+				}
 				mu.Lock()
 				if did {
 					st.Compressed++

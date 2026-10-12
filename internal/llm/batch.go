@@ -290,6 +290,8 @@ type BatchJob struct {
 	Key   string
 	Title string
 	Text  string
+	// Kind is the kind of document (KindMan, KindRFC).
+	Kind string
 	// Meta is anything else the caller wants back with the result. It's
 	// saved with the batch; the text isn't.
 	Meta json.RawMessage
@@ -301,6 +303,10 @@ type SavedJob struct {
 	Title string          `json:"title"`
 	Parts int             `json:"parts"`
 	Meta  json.RawMessage `json:"meta,omitempty"`
+	// Kind and PromptVersion, for documents other than man pages, are
+	// what it is and the prompt it was sent with.
+	Kind          string `json:"kind,omitempty"`
+	PromptVersion int    `json:"prompt_version,omitempty"`
 }
 
 type batchState struct {
@@ -440,7 +446,9 @@ func (b *Batcher) Submit(ctx context.Context, jobs []BatchJob) (int, error) {
 		return nil
 	}
 	for _, j := range jobs {
-		parts := Plan(j.Title, j.Text, b.Options)
+		jo := b.Options
+		jo.Kind = j.Kind
+		parts := Plan(j.Title, j.Text, jo)
 		n := 0
 		for _, p := range parts {
 			n += RequestSize(p)
@@ -451,7 +459,11 @@ func (b *Batcher) Submit(ctx context.Context, jobs []BatchJob) (int, error) {
 			}
 		}
 		ji := len(st.Jobs)
-		st.Jobs = append(st.Jobs, SavedJob{Key: j.Key, Title: j.Title, Parts: len(parts), Meta: j.Meta})
+		sj := SavedJob{Key: j.Key, Title: j.Title, Parts: len(parts), Meta: j.Meta, Kind: j.Kind}
+		if j.Kind != KindMan {
+			sj.PromptVersion = PromptVersionFor(j.Kind)
+		}
+		st.Jobs = append(st.Jobs, sj)
 		for pi, p := range parts {
 			reqs = append(reqs, BatchRequest{CustomID: fmt.Sprintf("%d-%d", ji, pi), Part: p})
 		}
@@ -567,7 +579,9 @@ func (b *Batcher) finish(ctx context.Context, st *batchState, batch *Batch, text
 			t, ok := text(j)
 			var parts []Part
 			if ok {
-				parts = Plan(j.Title, t, opts)
+				jo := opts
+				jo.Kind = j.Kind
+				parts = Plan(j.Title, t, jo)
 			}
 			if !ok || len(parts) != j.Parts {
 				mu.Lock()
@@ -597,6 +611,9 @@ func (b *Batcher) finish(ctx context.Context, st *batchState, batch *Batch, text
 				}
 			}
 			res := Result{Job: j, Model: st.Model, PromptVersion: st.PromptVersion, Err: err}
+			if j.PromptVersion != 0 {
+				res.PromptVersion = j.PromptVersion
+			}
 			if err == nil {
 				res.Markup = Join(outs)
 			}

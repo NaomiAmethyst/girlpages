@@ -326,3 +326,37 @@ func (b *errBackend) Model() string { return "" }
 func (b *errBackend) Complete(_ context.Context, _, user string) (string, error) {
 	return b.fn(user)
 }
+
+func TestMissingRFC(t *testing.T) {
+	src := "1.1.  Requirements\n\n   Clients MUST NOT send it. Servers MUST reply and SHOULD log; they MAY retry.\n\n" +
+		"4.2.1.  http URI Scheme\n\n   It MUST be absolute.\n"
+	good := "## 1.1. Requirements 💅\nclients MUST NOT send it, servers MUST reply and SHOULD log, and MAY retry\n" +
+		"### 4.2.1. http URI Scheme\nit MUST be absolute ✨\n"
+	if m := MissingRFC(src, good); len(m) != 0 {
+		t.Errorf("a faithful conversion lacks %v", m)
+	}
+	bad := "## Requirements\nclients must not send it; servers MUST reply and should log, and may retry\n"
+	got := strings.Join(MissingRFC(src, bad), ", ")
+	for _, want := range []string{`"MUST NOT" ×1`, `"MUST" ×2`, `"SHOULD" ×1`, `"MAY" ×1`, "section 1.1", "section 4.2.1"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %s from %s", want, got)
+		}
+	}
+	if Missing(KindMan, "use --all", "uses --all") != nil || len(Missing(KindRFC, src, bad)) == 0 {
+		t.Error("Missing doesn't go by kind")
+	}
+}
+
+func TestPlanKinds(t *testing.T) {
+	parts := Plan("RFC 9110", "1.  Introduction\n\n   HTTP is a protocol.\n", Options{Kind: KindRFC})
+	if len(parts) != 1 || !strings.Contains(parts[0].System, "BCP 14") || !strings.Contains(parts[0].User, "Rewrite RFC 9110.") ||
+		parts[0].Kind != KindRFC {
+		t.Errorf("an RFC's part: %+v", parts)
+	}
+	if man := Plan("LS(1)", "NAME\n       ls - list\n", Options{}); strings.Contains(man[0].System, "BCP 14") {
+		t.Error("a man page got the RFC prompt")
+	}
+	if KindOf("rfc") != KindRFC || KindOf("3ssl") != KindMan || PromptVersionFor(KindRFC) < 1 {
+		t.Error("kinds")
+	}
+}

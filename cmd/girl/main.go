@@ -264,6 +264,10 @@ func run(args []string) int {
 		return exitUsage
 	}
 
+	if sec, name, ok := seriesDoc(rest); ok {
+		return runDocument(ctx, f, &cfg, g, sec, name)
+	}
+
 	var pages []manpage.Page
 	status := exitOK
 	if f.local {
@@ -360,6 +364,60 @@ func run(args []string) int {
 		os.Stdout.WriteString(out.String())
 	}
 	return status
+}
+
+// seriesDoc reads a document in a series from the arguments: "rfc 9110",
+// or "rfc9110".
+func seriesDoc(rest []string) (sec, name string, ok bool) {
+	switch {
+	case len(rest) == 2 && manpage.IsSeries(strings.ToLower(rest[0])) && isNumber(rest[1]):
+		return strings.ToLower(rest[0]), strings.TrimLeft(rest[1], "0"), true
+	case len(rest) == 1:
+		lower := strings.ToLower(rest[0])
+		if n, ok := strings.CutPrefix(lower, "rfc"); ok && isNumber(n) {
+			return "rfc", strings.TrimLeft(n, "0"), true
+		}
+	}
+	return "", "", false
+}
+
+func isNumber(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return s != "" && strings.TrimLeft(s, "0") != ""
+}
+
+// runDocument shows a document in a series, from the repository.
+func runDocument(ctx context.Context, f flags, cfg *config.Config, g *core.Girl, sec, name string) int {
+	title := strings.ToUpper(sec) + " " + name
+	v, err := g.Document(ctx, sec, name)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "girl: couldn't get %s from the repo 😭 %v\n", title, err)
+		if errors.Is(err, repo.ErrNotFound) {
+			return exitNotFound
+		}
+		return exitFailed
+	}
+	ui := newUI(f)
+	var out string
+	switch {
+	case v.Syntax != repo.SyntaxMarkup || f.raw:
+		out = render.StripControls(v.Text())
+	default:
+		out = render.Render(v.Text(), render.Options{Width: ui.width, Color: ui.color, Title: title, Footer: "girlpages " + getVersion()})
+	}
+	if ui.tty && !f.raw {
+		if err := pager.Show(pager.Command(cfg.Pager), out, "💅 girl "+title); err != nil {
+			fmt.Fprintf(os.Stderr, "girl: %v\n", err)
+			return exitFailed
+		}
+		return exitOK
+	}
+	os.Stdout.WriteString(out)
+	return exitOK
 }
 
 func runServe(ctx context.Context, f flags, g *core.Girl) int {

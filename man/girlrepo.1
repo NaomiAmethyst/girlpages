@@ -23,7 +23,7 @@ girlrepo \- build and publish girlpages repositories and their website
 .RB [ \-d
 .IR dir ]
 .B crawl
-.BR apt | rpm | pacman
+.BR apt | rpm | pacman | rfc
 .I url
 .RI [ suite ]
 .RI [ options ]
@@ -175,8 +175,8 @@ Don't take conversions from girl's cache.
 .TP
 .BR \-q ", " \-\-quiet
 Only report problems.
-.SS "crawl apt \fIurl suite\fR | rpm \fIurl\fR | pacman \fIurl\fR"
-Ingests every package in a repository that has man pages:
+.SS "crawl apt \fIurl suite\fR | rpm \fIurl\fR | pacman \fIurl\fR | rfc \fR[\fIurl\fR]"
+Ingests every package in a repository that has man pages, or every RFC:
 .TP
 .B apt \fIurl suite\fR
 A Debian-style repository, such as
@@ -191,6 +191,28 @@ An rpm-md (yum, dnf) repository: the directory holding
 .B pacman \fIurl\fR
 An Arch-style repository: the directory holding the database, such as
 .BR https://geo.mirror.pkgbuild.com/core/os/x86_64 .
+.TP
+.B rfc \fR[\fIurl\fR]
+RFCs, from the RFC Editor (or a mirror of
+.B https://www.rfc-editor.org/
+at
+.IR url ),
+by its
+.BR rfc-index.xml :
+each one with text, as page
+.I number
+in section
+.BR rfc ,
+its title its description, its text (cleaned of page breaks and running
+headers and footers) its original, and
+.B ietf
+its source.
+.B \-\-rfcs
+.I numbers
+(comma separated) crawls just those.
+They're girlified with a prompt of their own, which keeps every BCP 14 key
+word (MUST, SHOULD, MAY…) and section number, and on the website live at
+.BI rfc/ number /\fR.
 .PP
 Man pages only exist inside packages, compressed as a whole, so they can't
 be fetched on their own.

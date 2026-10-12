@@ -5,6 +5,7 @@ package repo
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -200,5 +201,52 @@ func TestImport(t *testing.T) {
 	}
 	if err := a.Read(VariantPath(srcs["cat"], VariantGirl, gens[0].SHA256), new(Variant)); err != nil {
 		t.Errorf("generation 1 should still be readable: %v", err)
+	}
+}
+
+// A long section's index is split into shards, which are read back whole,
+// kept by GC, and followed by import.
+func TestSectionShards(t *testing.T) {
+	defer func(n int) { sectionShardBytes = n }(sectionShardBytes)
+	sectionShardBytes = 1500
+	s, _ := Open(t.TempDir())
+	pkg := Package{Distro: "debian", Release: "trixie", Name: "p", Version: "1"}
+	for i := 0; i < 40; i++ {
+		addVersion(t, s, fmt.Sprintf("page%02d", i), "1", "a page", "girly", pkg, int64(i))
+	}
+	addVersion(t, s, "lonely", "5", "a short section", "", pkg, 1)
+	publish(t, s)
+	m, _ := s.Manifest()
+	var si SectionIndex
+	if err := s.Read(SectionIndexPath("1", m.Sections[0].SHA256), &si); err != nil {
+		t.Fatal(err)
+	}
+	if len(si.Shards) < 3 || len(si.Pages) != 0 || si.Count != 40 {
+		t.Fatalf("section 1's index: %d shards, %d pages inline, count %d", len(si.Shards), len(si.Pages), si.Count)
+	}
+	n := 0
+	for i, r := range si.Shards {
+		n += r.Count
+		if r.Bytes == 0 || (i > 0 && si.Shards[i-1].Last >= r.First) {
+			t.Errorf("shard %d: %+v", i, r)
+		}
+	}
+	pages, err := s.SectionPages(m.Sections[0])
+	if err != nil || len(pages) != 40 || n != 40 || pages[0].Name != "page00" || pages[39].Name != "page39" {
+		t.Fatalf("pages: %d (shards say %d), %v", len(pages), n, err)
+	}
+	if short, _ := s.SectionPages(m.Sections[1]); len(short) != 1 {
+		t.Errorf("section 5 should stay whole: %v", short)
+	}
+	if _, err := s.GC(false); err != nil {
+		t.Fatal(err)
+	}
+	if again, err := s.SectionPages(m.Sections[0]); err != nil || len(again) != 40 {
+		t.Fatalf("after GC: %d pages, %v", len(again), err)
+	}
+	dst, _ := Open(t.TempDir())
+	st, err := dst.Import(context.Background(), NewClient(s.Dir, 5*time.Second), ImportOptions{Jobs: 2})
+	if err != nil || st.Pages != 41 {
+		t.Fatalf("import: %+v, %v", st, err)
 	}
 }

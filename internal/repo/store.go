@@ -23,6 +23,9 @@ import (
 // Store is a repository on the local disk, for building and publishing.
 type Store struct {
 	Dir string
+	// Progress, if set, is told how long jobs (reading every listing,
+	// publishing, collecting garbage) are going.
+	Progress Progress
 
 	mu  sync.Mutex // serialises listing updates within this process
 	vmu sync.Mutex // and variants.json updates
@@ -242,7 +245,9 @@ func (l *Listing) derive() {
 func (s *Store) Refresh(pages []PageRef) (int, error) {
 	n := 0
 	contents := map[string]*Contents{}
+	c := s.counter("checking listings", len(pages))
 	for _, p := range pages {
+		c.add()
 		want := *p.Listing
 		want.Versions = append([]Version(nil), p.Listing.Versions...)
 		want.derive()

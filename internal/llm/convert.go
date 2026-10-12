@@ -28,6 +28,9 @@ type Backend interface {
 
 // Options tunes a conversion.
 type Options struct {
+	// Kind is the kind of document (KindMan, the default, or KindRFC),
+	// which has its own prompt.
+	Kind              string
 	ChunkSize         int
 	Parallel          int // chunks converted at once
 	ExtraInstructions string
@@ -64,17 +67,20 @@ type Part struct {
 	System, User string
 	// Source is the chunk of the original page.
 	Source string
+	// Kind is the kind of document (KindMan, KindRFC), for checking the
+	// reply.
+	Kind string `json:",omitempty"`
 }
 
 // Plan works out the requests needed to convert a page. It depends only on
 // its arguments, so a page planned again gives the same parts.
 func Plan(title, text string, o Options) []Part {
 	chunks := Split(text, o.ChunkSize)
-	system := SystemPrompt(o.ExtraInstructions)
+	system := SystemPromptFor(o.Kind, o.ExtraInstructions)
 	parts := make([]Part, len(chunks))
 	var prev []string
 	for i, c := range chunks {
-		parts[i] = Part{System: system, User: UserPrompt(title, i+1, len(chunks), prev, c), Source: c}
+		parts[i] = Part{System: system, User: UserPromptFor(o.Kind, title, i+1, len(chunks), prev, c), Source: c, Kind: o.Kind}
 		prev = append(prev, Headings(c)...)
 	}
 	return parts
@@ -194,7 +200,7 @@ func FinishPart(ctx context.Context, b Backend, p Part, reply string) (string, e
 	if out == "" {
 		return "", errors.New("the model returned an empty reply")
 	}
-	missing := MissingOptions(p.Source, out)
+	missing := Missing(p.Kind, p.Source, out)
 	if len(missing) == 0 || b == nil {
 		return out, nil
 	}
@@ -203,7 +209,7 @@ func FinishPart(ctx context.Context, b Backend, p Part, reply string) (string, e
 		return out, nil
 	}
 	retry = Clean(retry)
-	if retry != "" && len(MissingOptions(p.Source, retry)) < len(missing) {
+	if retry != "" && len(Missing(p.Kind, p.Source, retry)) < len(missing) {
 		return retry, nil
 	}
 	return out, nil

@@ -18,7 +18,7 @@
 // It's also where static pages go when offline. /browse/?page=… (from
 // earlier versions) redirects here.
 
-import { repoCache, saveButton, browseURL } from "./girlpages.js";
+import { repoCache, saveButton, browseURL, chapter, isSeries, pageURL, listingURL as listingAt, sectionShard } from "./girlpages.js";
 import { VirtualList } from "./vlist.js";
 import { renderHTML, renderOriginalHTML, esc } from "./render.js";
 import { escapeName, segmentName, searchPage } from "./search.js";
@@ -28,8 +28,9 @@ const SECTIONS = {
   "4": ["Special files", "🔌"], "5": ["File formats & config", "📝"], "6": ["Games", "🎮"],
   "7": ["Miscellany", "🌈"], "8": ["System administration", "👑"], "9": ["Kernel routines", "🧠"],
   "n": ["Tcl/Tk", "🪶"], "l": ["Local", "🏡"], "o": ["Old", "🕰️"],
+  "rfc": ["Requests for Comments", "🌐"],
 };
-const sectionName = (k) => SECTIONS[k[0]] || ["Section " + k, "📖"];
+const sectionName = (k) => SECTIONS[k] || SECTIONS[chapter(k)] || ["Section " + k, "📖"];
 
 const app = document.getElementById("app");
 const base = app.dataset.base;
@@ -37,7 +38,7 @@ const cache = repoCache(app.dataset.repo);
 const enc = (s) => encodeURIComponent(escapeName(s));
 
 // Where things are.
-const staticPage = (name, sec) => `${base}man/${encodeURIComponent(segmentName(sec))}/${encodeURIComponent(segmentName(name))}/`;
+const staticPage = (name, sec) => pageURL(base, name, sec);
 const browse = (params) => browseURL(base, params);
 const sourceLabel = (key) => (key ? key.replace("/", " ") : "everything");
 
@@ -118,7 +119,7 @@ function sourceChips(m, on, section) {
 // every page.
 function everything(m) {
   const sections = {};
-  for (const e of m.sections || []) sections[e.section[0]] = (sections[e.section[0]] || 0) + e.pages;
+  for (const e of m.sections || []) sections[chapter(e.section)] = (sections[chapter(e.section)] || 0) + e.pages;
   return { pages: m.pages, sections };
 }
 
@@ -149,39 +150,27 @@ const plural = (n) => (n === 1 ? "1 page" : `${n} pages`);
 async function sourceSection(src, key, sub, { start = 1, pageURL = null } = {}) {
   const m = await manifest();
   const [name, emoji] = sectionName(key);
-  const entries = m.sections.filter(e => e.section.startsWith(key[0]) && e.section[0] === key[0]);
-  const indexes = await Promise.all(entries.map(sectionIndex));
-  const subs = new Map();
-  let items = [];
-  for (const si of indexes) {
-    for (const p of si.pages) {
-      if (src && !(p.sources || []).includes(src)) continue;
-      subs.set(si.section, (subs.get(si.section) || 0) + 1);
-      if (sub && si.section !== sub) continue;
-      const other = src && p.other ? p.other[src] : "";
-      items.push({ name: p.name, sec: si.section, desc: p.description || "", girl: !other && (p.variants || []).includes("girl"),
-        url: src ? browse({ page: p.name, sec: si.section, src }) : staticPage(p.name, si.section) });
-    }
-  }
-  // In the static listings' order, so chunks are their pages.
-  const lower = (x) => x.name.toLowerCase();
-  items.sort((a, b) => (lower(a) < lower(b) ? -1 : lower(a) > lower(b) ? 1 : a.sec < b.sec ? -1 : a.sec > b.sec ? 1 : 0));
+  const entries = m.sections.filter(e => chapter(e.section) === chapter(key));
+  const plan = await listingPlan(entries, src, sub);
   const label = sub || key;
-  document.title = `${sourceLabel(src)} · section ${label} · girlpages 💅`;
+  document.title = `${sourceLabel(src)} · ${sectionLabel(label)} · girlpages 💅`;
   let chips = "";
-  if (subs.size > 1) {
+  if (plan.subs.size > 1) {
+    const n = (c) => (c == null ? "" : ` (${c})`);
     chips = `<a class="pill${sub ? "" : " on"}" href="${esc(browse({ src, section: key }))}">all</a>` +
-      [...subs].sort().map(([s, n]) => `<a class="pill${s === sub ? " on" : ""}" href="${esc(browse({ src, section: key, sub: s }))}">${esc(s)} (${n})</a>`).join("");
+      [...plan.subs].sort().map(([s, c]) => `<a class="pill${s === sub ? " on" : ""}" href="${esc(browse({ src, section: key, sub: s }))}">${esc(s)}${n(c)}</a>`).join("");
     chips = `<div class="chips">${chips}</div>`;
   }
-  // Chunks of the listing, grouped by first letter, as the static
-  // listings' pages are; letters jump to the chunk they start in.
-  const letterOf = (n) => (/^[a-z]/i.test(n) ? n[0].toUpperCase() : "#");
-  const starts = new Map();
-  items.forEach((it, i) => { const l = letterOf(it.name); if (!starts.has(l)) starts.set(l, Math.floor(i / CHUNK) + 1); });
-  const chunkHTML = (n) => {
-    let out = "", prev = n > 1 ? letterOf(items[(n - 1) * CHUNK - 1].name) : "", open = false;
-    for (const it of items.slice((n - 1) * CHUNK, n * CHUNK)) {
+  // The count, where it's known without fetching everything.
+  let total = plan.total;
+  if (total == null && !sub) {
+    const se = (m.sources || []).find(x => (x.release ? `${x.distro}/${x.release}` : x.distro) === src);
+    total = se && se.sections ? se.sections[chapter(key)] : null;
+  }
+  const chunkHTML = async (n) => {
+    const items = await plan.load(n);
+    let out = "", prev = plan.prevLetter(n), open = false;
+    for (const it of items) {
       const l = letterOf(it.name);
       if (!open || l !== prev) {
         if (open) out += "</ul>";
@@ -190,27 +179,30 @@ async function sourceSection(src, key, sub, { start = 1, pageURL = null } = {}) 
         open = true;
         prev = l;
       }
-      out += `<li><a href="${esc(it.url)}"><span class="name">${esc(it.name)}</span><span class="sec">(${esc(it.sec)})</span></a>` +
+      const name = isSeries(it.sec) ? `${it.sec.toUpperCase()} ${it.name}` : it.name;
+      out += `<li><a href="${esc(it.url)}"><span class="name">${esc(name)}</span>${isSeries(it.sec) ? "" : `<span class="sec">(${esc(it.sec)})</span>`}</a>` +
         `<span class="desc">${esc(it.desc)}</span>${it.girl ? '<span class="done" title="girlified">✨</span>' : ""}</li>`;
     }
     return open ? out + "</ul>" : out;
   };
-  const chunks = Math.max(1, Math.ceil(items.length / CHUNK));
+  const chunks = Math.max(1, plan.count);
   const first = Math.min(Math.max(1, start), chunks);
-  let body = `<nav class="letters" aria-label="Jump to letter">${[...starts.keys()].map(l => `<a href="#letter-${esc(l)}" data-chunk="${starts.get(l)}">${esc(l)}</a>`).join("")}</nav>` +
-    `<div class="listing"><div class="chunk" data-chunk="${first}">${chunkHTML(first)}</div></div>`;
-  if (!items.length) body = '<div class="empty">nothing here, bestie 😭</div>';
+  let body = `<nav class="letters" aria-label="Jump to letter">${[...plan.letters].map(([l, c]) => `<a href="#letter-${esc(l)}" data-chunk="${c}">${esc(l)}</a>`).join("")}</nav>` +
+    `<div class="listing"><div class="chunk" data-chunk="${first}">${await chunkHTML(first)}</div></div>`;
+  if (!plan.count || total === 0) body = '<div class="empty">nothing here, bestie 😭</div>';
   const crumbs = `<a href="${esc(base)}">home</a> › ` + (src ? `<a href="${esc(browse({ src }))}">${esc(sourceLabel(src))}</a> › ` : "");
   const save = "caches" in globalThis ? '<p class="save"><button type="button" class="pill" id="save"></button></p>' : "";
-  h(`<div class="card"><nav class="crumbs">${crumbs}section ${esc(label)}</nav>` +
-    `<div class="pagehead"><h1>section ${esc(label)} · ${esc(name)} ${emoji}</h1><p class="sub">${plural(items.length)}${src ? " in " + esc(sourceLabel(src)) : ""}</p>${save}</div>` +
-    sourceChips(m, src, key[0]) + chips + body + "</div>");
+  const count = total == null ? "" : plural(total);
+  const heading = isSeries(label) ? `${name} ${emoji}` : `${sectionLabel(label)} · ${name} ${emoji}`;
+  h(`<div class="card"><nav class="crumbs">${crumbs}${esc(sectionLabel(label))}</nav>` +
+    `<div class="pagehead"><h1>${esc(heading)}</h1><p class="sub">${count}${src ? (count ? " in " : "in ") + esc(sourceLabel(src)) : ""}</p>${save}</div>` +
+    sourceChips(m, src, chapter(key)) + chips + body + "</div>");
   if (location.href !== routingFor) return;
   const button = app.querySelector("#save");
   if (button) saveButton(button, cache, sub || key, src);
   const listing = app.querySelector(".listing");
   if (listing && chunks > 1 && "IntersectionObserver" in globalThis) {
-    const list = new VirtualList(listing, { count: chunks, load: async (n) => chunkHTML(n),
+    const list = new VirtualList(listing, { count: chunks, load: chunkHTML,
       onChunk: pageURL ? (n) => { if (location.href === routingFor) { history.replaceState(history.state, "", pageURL(n)); shown = routingFor = renderedFor = revealedFor = location.href; } } : undefined });
     current = list;
     app.querySelector(".letters").addEventListener("click", (e) => {
@@ -222,9 +214,93 @@ async function sourceSection(src, key, sub, { start = 1, pageURL = null } = {}) 
     });
     list.fill();
   } else if (listing) {
-    for (let n = first + 1; n <= chunks; n++) listing.insertAdjacentHTML("beforeend", `<div class="chunk" data-chunk="${n}">${chunkHTML(n)}</div>`);
+    for (let n = first + 1; n <= chunks; n++) listing.insertAdjacentHTML("beforeend", `<div class="chunk" data-chunk="${n}">${await chunkHTML(n)}</div>`);
   }
 }
+
+// letterOf is the group a name is listed under, as in site.letterOf: its
+// first letter, or a number's thousand.
+function letterOf(n) {
+  if (/^[0-9]+$/.test(n)) return +n < 1000 ? "1–999" : `${Math.floor(+n / 1000) * 1000}s`;
+  return /^[a-z]/i.test(n) ? n[0].toUpperCase() : "#";
+}
+// nameCmp orders names as manpage.NameLess does: numbers by value.
+function nameCmp(a, b) {
+  const num = (x) => /^[0-9]+$/.test(x);
+  if (num(a) && num(b) && a.replace(/^0+/, "").length !== b.replace(/^0+/, "").length) {
+    return a.replace(/^0+/, "").length - b.replace(/^0+/, "").length;
+  }
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+const byName = (a, b) => nameCmp(a.name, b.name) || (a.sec < b.sec ? -1 : a.sec > b.sec ? 1 : 0);
+
+// listingPlan works out a listing's chunks: {count, load(n) resolving to
+// the chunk's items, letters (letter → the chunk it starts in), total
+// (null if unknown), subs (section → count, or null), prevLetter(n)}. Short
+// sections' indexes are read whole and cut into chunks of CHUNK; long
+// sections' shards are read as they're needed, a chunk being the names
+// between one shard's start and the next's, across the chapter's sections.
+async function listingPlan(entries, src, sub) {
+  const indexes = await Promise.all(entries.map(sectionIndex));
+  const want = (p) => !src || (p.sources || []).includes(src);
+  const toItem = (p, sec) => {
+    const other = src && p.other ? p.other[src] : "";
+    return { name: p.name, sec, desc: p.description || "", girl: !other && (p.variants || []).includes("girl"),
+      url: src ? browse({ page: p.name, sec, src }) : staticPage(p.name, sec) };
+  };
+  if (!indexes.some(si => si.shards && si.shards.length)) {
+    const subs = new Map();
+    const items = [];
+    for (const si of indexes) {
+      for (const p of si.pages || []) {
+        if (!want(p)) continue;
+        subs.set(si.section, (subs.get(si.section) || 0) + 1);
+        if (!sub || si.section === sub) items.push(toItem(p, si.section));
+      }
+    }
+    // In the static listings' order, so chunks are their pages.
+    items.sort((a, b) => nameCmp(a.name.toLowerCase(), b.name.toLowerCase()) || (a.sec < b.sec ? -1 : a.sec > b.sec ? 1 : 0));
+    const letters = new Map();
+    items.forEach((it, i) => { const l = letterOf(it.name); if (!letters.has(l)) letters.set(l, Math.floor(i / CHUNK) + 1); });
+    return {
+      count: Math.ceil(items.length / CHUNK), total: items.length, subs, letters,
+      load: async (n) => items.slice((n - 1) * CHUNK, n * CHUNK),
+      prevLetter: (n) => (n > 1 ? letterOf(items[(n - 1) * CHUNK - 1].name) : ""),
+    };
+  }
+  const parts = [], subs = new Map();
+  let total = 0;
+  for (const si of indexes) {
+    const n = si.count || (si.pages || []).length;
+    subs.set(si.section, src ? null : n);
+    if (sub && si.section !== sub) continue;
+    total += n;
+    for (const r of si.shards || []) parts.push({ sec: si.section, first: r.first, last: r.last, sha: r.sha256 });
+    const ps = si.pages || [];
+    if (ps.length) parts.push({ sec: si.section, first: ps[0].name, last: ps[ps.length - 1].name, pages: ps });
+  }
+  const bounds = [...new Set(parts.map(p => p.first))].sort(nameCmp);
+  const letters = new Map();
+  bounds.forEach((b, i) => { const l = letterOf(b); if (!letters.has(l)) letters.set(l, i + 1); });
+  return {
+    count: bounds.length, total: src ? null : total, subs, letters,
+    load: async (n) => {
+      const lo = bounds[n - 1], hi = n < bounds.length ? bounds[n] : null;
+      const inRange = (name) => nameCmp(name, lo) >= 0 && (hi === null || nameCmp(name, hi) < 0);
+      const items = [];
+      await Promise.all(parts.filter(p => nameCmp(p.last, lo) >= 0 && (hi === null || nameCmp(p.first, hi) < 0)).map(async (part) => {
+        const pages = part.pages || (await cache.get(sectionShard(part.sha))).pages;
+        for (const p of pages) if (inRange(p.name) && want(p)) items.push(toItem(p, part.sec));
+      }));
+      return items.sort(byName);
+    },
+    prevLetter: (n) => (n > 1 && letterOf(bounds[n - 2]) === letterOf(bounds[n - 1]) ? letterOf(bounds[n - 1]) : ""),
+  };
+}
+
+// LAYOUT is how series of documents are laid out, where it isn't man's: as
+// rfc.Indent and rfc.Width.
+const LAYOUT = { rfc: { indent: 3, width: 72, titleBlock: true } };
 
 // CHUNK is how many pages a listing shows at a time, as the static
 // listings' pages do.
@@ -293,7 +369,7 @@ async function pageView(name, sec, rest, src) {
     ({ html: body, toc } = renderHTML(variantText(doc), { link }));
     body = `<div class="content">${body}</div>`;
   } else if (!mono) {
-    ({ html: body, toc } = renderOriginalHTML(doc, { link }));
+    ({ html: body, toc } = renderOriginalHTML(doc, { link, ...(LAYOUT[sec] || {}) }));
     body = `<div class="content reflowed">${body}</div>`;
   } else {
     body = '<div class="original">' + (doc.header ? `<pre class="manhead">${esc(doc.header)}</pre>` : "") +
@@ -314,7 +390,8 @@ async function pageView(name, sec, rest, src) {
     meta += `<a class="pill${mono ? " on" : ""}" href="${esc(href)}" title="as man prints it">⌨️ monospace</a>`;
   }
   const keys = sourceKeys(ver);
-  const inLine = keys.length ? `<div class="meta in">📦 ${ver.version ? "version " + esc(ver.version) + ", " : ""}in ` +
+  const when = isSeries(sec) && ver.packages && ver.packages[0] ? publishedLabel(ver.packages[0].version) : "";
+  const inLine = keys.length ? `<div class="meta in">${isSeries(sec) ? `📅 ${when ? "published " + esc(when) + ", " : ""}from ` : `📦 ${ver.version ? "version " + esc(ver.version) + ", " : ""}in `}` +
     keys.map(k => `<a href="${esc(browse({ page: name, sec, src: k }))}">${esc(sourceLabel(k))}</a>`).join(", ") + "</div>" : "";
   let notice = "";
   if (!latest) notice += `<div class="notice">🕰️ this isn't the latest version of ${esc(name)}(${esc(sec)}). <a href="${esc(staticPage(name, sec))}">here's the latest</a>.</div>`;
@@ -327,11 +404,12 @@ async function pageView(name, sec, rest, src) {
         : `<li><a href="${esc(browse({ page: name, sec, version: slug(x), src }))}">${esc(label)}</a></li>`;
     }).join("") + "</ul></details></div>" : "";
   const crumbs = `<nav class="crumbs"><a href="${esc(base)}">home</a> › ` + (src
-    ? `<a href="${esc(browse({ src }))}">${esc(sourceLabel(src))}</a> › <a href="${esc(browse({ src, section: sec[0], sub: sec.length > 1 ? sec : "" }))}">section ${esc(sec)}</a>`
-    : `<a href="${esc(base)}section/${encodeURIComponent(sec[0])}/">section ${esc(sec)}</a>`) + ` › ${esc(title)}</nav>`;
+    ? `<a href="${esc(browse({ src }))}">${esc(sourceLabel(src))}</a> › <a href="${esc(browse({ src, section: chapter(sec), sub: chapter(sec) !== sec ? sec : "" }))}">${esc(sectionLabel(sec))}</a>`
+    : `<a href="${esc(listingURL(chapter(sec), chapter(sec) !== sec ? sec : "", 1))}">${esc(sectionLabel(sec))}</a>`) + ` › ${esc(title)}</nav>`;
   const tocHTML = toc.length ? `<nav class="toc card" aria-label="Contents"><h2>✨ contents</h2><ul>` +
     toc.map(t => `<li${t.level === 2 ? ' class="sub"' : ""}><a href="#${esc(t.id)}">${esc(t.text)}</a></li>`).join("") + "</ul></nav>" : "";
-  h(`<div class="layout"><article class="card manpage">${crumbs}<h1>${esc(title)}${esc(suffix)}</h1>` +
+  const lede = isSeries(sec) && ver.description ? `<p class="lede">${esc(ver.description)}</p>` : "";
+  h(`<div class="layout"><article class="card manpage">${crumbs}<h1>${esc(title)}${esc(suffix)}</h1>${lede}` +
     `<div class="meta">${meta}</div>${inLine}${notice}${body}${vlist}</article>${tocHTML}</div>`);
   if (at) afterShow = () => app.querySelector(`[id="${at}"]`)?.scrollIntoView();
 }
@@ -495,6 +573,12 @@ function viewOf(u) {
     return null;
   }
   if (parts[0] === "man" && parts.length === 3) return { kind: "page", sec: parts[1], name: parts[2] };
+  if (isSeries(parts[0]) && !RESERVED.has(parts[0])) {
+    // A series: rfc/9110/, or its listing, rfc/ or rfc/page/2/.
+    if (parts.length === 2 && parts[1] !== "page") return { kind: "page", sec: parts[0], name: parts[1] };
+    if (parts.length === 1) return { kind: "section", key: parts[0], sub: "", page: 1 };
+    if (parts.length === 3 && parts[1] === "page") return { kind: "section", key: parts[0], sub: "", page: +parts[2] || 1 };
+  }
   if (parts[0] === "search" && parts.length === 1) return { kind: "search", params: u.searchParams };
   if (parts[0] === "section") {
     let page = 1;
@@ -507,11 +591,23 @@ function viewOf(u) {
 // unsegment undoes site.SegmentName (names starting with a dot are escaped).
 const unsegment = (s) => (s.startsWith("%") ? decodeURIComponent(s) : s);
 
-// listingURL is a static listing's page n.
-function listingURL(key, sub, n) {
-  const u = `${base}section/${encodeURIComponent(segmentName(key))}/${sub ? encodeURIComponent(segmentName(sub)) + "/" : ""}`;
-  return n > 1 ? `${u}page/${n}/` : u;
+// publishedLabel is a "2022-06" date as "June 2022", as site.published.
+function publishedLabel(d) {
+  const m = /^(\d{4})-(\d{2})$/.exec(d || "");
+  if (!m) return d || "";
+  const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  return `${months[+m[2] - 1] || m[2]} ${m[1]}`;
 }
+
+// listingURL is a static listing's page n.
+const listingURL = (key, sub, n) => listingAt(base, key, sub, n);
+
+// sectionLabel names a section in breadcrumbs: "section 3ssl", or a
+// series' name ("RFCs").
+const sectionLabel = (sec) => (isSeries(sec) ? sectionName(sec)[0] : `section ${sec}`);
+
+// Top-level directories of the site that aren't series.
+const RESERVED = new Set(["man", "section", "search", "browse", "offline", "static", "repo", "src"]);
 
 async function route() {
   current?.destroy();

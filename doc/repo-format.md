@@ -134,9 +134,22 @@ all count.
 ### Names and sections
 
 A page is named and sectioned as `man` does it: `ls` in section `1`,
-`printf` in `3`, `SSL_new` in `3ssl`. A section's *main section* is its
-first character (`3` for `3ssl`). Names may contain almost anything, hence
-the [escaping](#paths).
+`printf` in `3`, `SSL_new` in `3ssl`. Names may contain almost anything,
+hence the [escaping](#paths).
+
+A section's *chapter* is the part of the manual it belongs to: for a
+section starting with a digit, that digit (`3` for `3`, `3p` and `3ssl`);
+any other section is its own chapter (`n`, `l`). Counts by section in the
+[manifest](#manifestjson)'s sources are by chapter.
+
+Sections that don't start with a digit and are longer than a letter are
+*series* of documents named by number: `rfc` holds RFCs, RFC 9110 being
+the page named `9110` in section `rfc`. Its original is the RFC's
+published text (cleaned of page breaks and running headers and footers),
+as a [text variant](#text) whose first section, with no heading, is the
+title block; its [source hash](#source-hashes) is the hash of the
+published text, as fetched, and its package's `distro` is `ietf`, with
+the date (`2022-06`) as its `version`. Names in a series sort by number.
 
 ### Sources
 
@@ -174,6 +187,7 @@ highest number.
 | `contents/ab/<source>/<variant>-<sha>.json` | no | [One generation of a variant](#contentsabsourcevariant-shajson) |
 | `section/<section>.json` | yes | [Pointer to a section's index](#pointers) |
 | `section/<section>-<sha>.json` | no | [Section index: every page in a section](#sectionsection-shajson) |
+| `section/shard-ab/<sha>.json` | no | ″ a shard of a long one |
 | `index/variants/<variant>/manifest-<sha>.json` | no | [Which versions have a variant](#variant-indexes) |
 | `index/variants/<variant>/shard-ab/<sha>.json` | no | ″ |
 | `index/words/manifest-<sha>.json` | no | [Search index](#the-search-index): words |
@@ -221,7 +235,7 @@ The root. Fetch it fresh to see the repository as it is now.
 | `sections` | Each section (exact, like `3ssl`), sorted: the hash of its [section index](#sectionsection-shajson), and counts as above. |
 | `index.words`, `.grams`, `.docs` | Hashes of the [search index](#the-search-index) manifests. |
 | `index.variants` | For each variant, the hash of its [variant index](#variant-indexes) manifest. |
-| `sources` | Each [source](#sources), sorted by distro then release (a distro's entry, with no `release`, first): how many pages have a version from it, in all and by main section. |
+| `sources` | Each [source](#sources), sorted by distro then release (a distro's entry, with no `release`, first): how many pages have a version from it, in all and by [chapter](#names-and-sections). |
 
 ### Pointers
 
@@ -337,7 +351,8 @@ One generation of one variant of one page version.
 
 ### section/&lt;section&gt;-&lt;sha&gt;.json
 
-Every page in one section, sorted by name, for listings.
+Every page in one section, sorted by name (numbers by value), for
+listings.
 
 ```json
 {
@@ -363,6 +378,18 @@ Every page in one section, sorted by name, for listings.
 | `versions` | How many versions it has, if more than one. |
 | `sources` | The [source keys](#sources) it has versions from. |
 | `other` | For those of its sources whose version isn't the latest, that version's source hash. |
+
+A long section's index (over about 64 KB) is split: its `pages` is empty,
+and `count` and `shards` say where they are, by ranges of names, each shard
+being a section index of its own (at `section/shard-ab/<sha>.json`) with a
+run of the pages:
+
+```json
+{"format": 1, "section": "1", "pages": [], "count": 12034,
+ "shards": [{"first": "2to3", "last": "bzmore", "sha256": "1c0d…", "bytes": 65411, "count": 187}, …]}
+```
+
+Readers must read the shards (in order) when there are any.
 
 ### Variant indexes
 
@@ -583,7 +610,7 @@ pick the version (`current`, or `sources[<key>]`); and fetch its variant by
 the hash the listing gives, `contents/ab/<source>/<variant>-<sha>.json`.
 
 **List a section**: fetch `manifest.json`, then the section indexes it
-names for every section in that main section (`3`, `3p`, `3ssl`…).
+names for every section in that chapter (`3`, `3p`, `3ssl`…).
 
 **Mirror a repository**: fetch `manifest.json`; every section index; every
 listing they name, every `variants.json` for every version in them, and

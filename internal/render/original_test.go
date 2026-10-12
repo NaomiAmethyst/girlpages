@@ -77,3 +77,25 @@ func TestOriginalHTMLHostile(t *testing.T) {
 		t.Errorf("not escaped: %s", got)
 	}
 }
+
+// An RFC's layout: text at 3, filled to 72, subsections at the margin.
+func TestOriginalHTMLRFC(t *testing.T) {
+	body := "\n   " + strings.Repeat("word ", 13) + "words\n   go on and on, as RFC 2119 says they MUST.\n\n" +
+		"1.1.  Requirements Language\n\n   The key words in this document are to be interpreted as described in\n   BCP 14.\n\n" +
+		"      +--------+\n      | header |\n      +--------+\n"
+	got, toc := OriginalHTML("", "", []OriginalSection{{Heading: "1.  Introduction", Body: body}},
+		HTMLOptions{Indent: 3, Width: 72, Link: func(n, s string) string { return "/" + s + "/" + n + "/" }})
+	for _, want := range []string{
+		`<p>word word word word word word word word word word word word word words go on and on, as <a href="/rfc/2119/">RFC 2119</a> says they MUST.</p>`,
+		`<h3 id="1-1-requirements-language">1.1.  Requirements Language</h3>`,
+		"<p>The key words in this document are to be interpreted as described in BCP 14.</p>",
+		"<pre><code>+--------+\n| header |\n+--------+</code></pre>",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+	if len(toc) != 2 || toc[1].Level != 2 {
+		t.Errorf("toc: %+v", toc)
+	}
+}

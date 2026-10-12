@@ -187,6 +187,10 @@ func BuildIndex(docs []IndexDoc) *BuiltIndex {
 		// Like man, prefer printf(1) to printf(3): each section step is
 		// worth more than any amount of body text.
 		scores[name] += scoreName + scoreSection*(manpage.SectionCount-manpage.SectionRank(d.Section))
+		if manpage.IsSeries(d.Section) {
+			// RFC 9110 is found as rfc9110 too (see SeriesTerms).
+			scores[strings.ToLower(d.Section)+name] += scoreName
+		}
 		for _, t := range Tokens(d.Name) {
 			if t != name {
 				scores[t] += scoreNamePart
@@ -219,6 +223,9 @@ func BuildIndex(docs []IndexDoc) *BuiltIndex {
 	vocab := map[string]bool{} // words worth finding by trigram
 	for di, d := range docs {
 		vocab[strings.ToLower(d.Name)] = true
+		if manpage.IsSeries(d.Section) {
+			vocab[strings.ToLower(d.Section+d.Name)] = true
+		}
 		for _, t := range Tokens(d.Name) {
 			vocab[t] = true
 		}

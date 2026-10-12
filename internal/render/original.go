@@ -33,7 +33,7 @@ func OriginalHTML(header, footer string, sections []OriginalSection, o HTMLOptio
 	if f := headFields(header); len(f) > 0 {
 		fmt.Fprintf(&h.b, "<p class=\"manhead\">%s</p>\n", html.EscapeString(strings.Join(f, " · ")))
 	}
-	for _, s := range sections {
+	for i, s := range sections {
 		heading := strings.TrimSpace(StripControls(s.Heading))
 		lines := origLines(StripControls(s.Body))
 		if heading != "" {
@@ -42,12 +42,19 @@ func OriginalHTML(header, footer string, sections []OriginalSection, o HTMLOptio
 			fmt.Fprintf(&h.b, "<h2 id=\"%s\">%s</h2>\n", id, html.EscapeString(heading))
 		}
 		var nodes []onode
-		if strings.EqualFold(heading, "SYNOPSIS") {
+		if strings.EqualFold(heading, "SYNOPSIS") || (o.TitleBlock && heading == "" && i == 0) {
 			// Synopses are laid out with care, even when they look filled.
 			nodes = mergeCode(codeNodes(lines))
 		} else {
-			p := &oparser{tagInds: tagIndents(lines)}
-			nodes = p.parse(lines, baseIndent(lines), true, false)
+			p := &oparser{tagInds: tagIndents(lines), width: fillWidth}
+			if o.Width > 0 {
+				p.width = o.Width
+			}
+			base := baseIndent(lines)
+			if o.Indent > 0 {
+				base = o.Indent
+			}
+			nodes = p.parse(lines, base, true, false)
 		}
 		h.onodes(nodes)
 	}
@@ -155,7 +162,10 @@ type oitem struct {
 	body []onode
 }
 
-type oparser struct{ tagInds map[int]bool }
+type oparser struct {
+	tagInds map[int]bool
+	width   int // the last column text is filled to
+}
 
 // parse turns lines indented at least ind into nodes. At the top of a
 // section, lines left of ind are subsection headings; indented is for
@@ -220,7 +230,7 @@ func (p *oparser) parse(lines []oline, ind int, top, indented bool) []onode {
 		switch run := lines[i:j]; {
 		case indented && len(run) == 1 && !strings.HasSuffix(run[0].text, "."):
 			add(i, onode{kind: oCode, lines: run})
-		case isProse(run):
+		case isProse(run, p.width):
 			add(i, onode{kind: oPara, text: joinProse(run)})
 		case isText(run):
 			var ts []string
@@ -334,7 +344,7 @@ func regionEnd(lines []oline, start, ind int) int {
 // isProse reports whether a run of lines is text man filled: no columns
 // lined up with runs of spaces, and every line but the last ending where
 // the next word wouldn't have fit.
-func isProse(run []oline) bool {
+func isProse(run []oline, width int) bool {
 	for k, l := range run {
 		if strings.Contains(l.text, "   ") {
 			return false
@@ -345,7 +355,7 @@ func isProse(run []oline) bool {
 				return false
 			}
 			next, _, _ := strings.Cut(run[k+1].text, " ")
-			if l.ind+utf8.RuneCountInString(l.text)+1+utf8.RuneCountInString(next) <= fillWidth {
+			if l.ind+utf8.RuneCountInString(l.text)+1+utf8.RuneCountInString(next) <= width {
 				return false
 			}
 		}
@@ -359,8 +369,9 @@ func isProse(run []oline) bool {
 // isText reports whether lines man didn't fill are still text, broken by
 // hand: each is words, not code.
 func isText(run []oline) bool {
-	for _, l := range run {
-		if strings.Contains(l.text, "   ") || !textLike(l.text) || len(strings.Fields(l.text)) < 3 {
+	for k, l := range run {
+		// (The last line may be short: a paragraph's often ends so.)
+		if strings.Contains(l.text, "   ") || !textLike(l.text) || (k < len(run)-1 && len(strings.Fields(l.text)) < 3) {
 			return false
 		}
 	}

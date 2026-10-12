@@ -218,7 +218,8 @@ export function esc(s) {
 }
 
 const linkRE = new RegExp("(https?://[^\\t\\n\\f\\r <>()\"'`]*[^\\t\\n\\f\\r <>()\"'`.,;:!?])" +
-  "|([A-Za-z_][A-Za-z0-9_.:+-]*)\\(([0-9][a-z0-9]*|n|l)\\)", "g");
+  "|([A-Za-z_][A-Za-z0-9_.:+-]*)\\(([0-9][a-z0-9]*|n|l)\\)" +
+  "|\\bRFC ?0*([1-9][0-9]{0,4})\\b", "g");
 
 function splitRow(row) {
   row = trim(row);
@@ -237,7 +238,9 @@ function makeLinkify(link) {
     for (const m of s.matchAll(linkRE)) {
       let href = "";
       if (m[1] !== undefined) href = m[1];
-      else if (link) href = link(m[2], m[3]);
+      else if (!link) href = "";
+      else if (m[4] !== undefined) href = link(m[4], "rfc"); // RFC 9110
+      else href = link(m[2], m[3]);
       if (!href) continue;
       out += esc(s.slice(last, m.index)) + `<a href="${esc(href)}">${esc(m[0])}</a>`;
       last = m.index + m[0].length;
@@ -413,21 +416,21 @@ function regionEnd(lines, start, ind) {
   return end;
 }
 
-function isProse(run) {
+function isProse(run, width) {
   for (let k = 0; k < run.length; k++) {
     const l = run[k];
     if (l.text.includes("   ")) return false;
     if (k + 1 < run.length) {
       if ("{};\\".includes(l.text[l.text.length - 1])) return false;
       const next = run[k + 1].text.split(" ")[0];
-      if (l.ind + runes(l.text).length + 1 + runes(next).length <= FILL_WIDTH) return false;
+      if (l.ind + runes(l.text).length + 1 + runes(next).length <= width) return false;
     }
   }
   return run.length === 1 ? textLike(run[0].text) : true;
 }
 
 function isText(run) {
-  return run.every(l => !l.text.includes("   ") && textLike(l.text) && trim(l.text).split(/\s+/).length >= 3);
+  return run.every((l, k) => !l.text.includes("   ") && textLike(l.text) && (k === run.length - 1 || trim(l.text).split(/\s+/).length >= 3));
 }
 
 function joinProse(run) {
@@ -499,7 +502,7 @@ function tagAt(tagInds, lines, i) {
   return null;
 }
 
-function parseOriginal(tagInds, lines, ind, top, indented) {
+function parseOriginal(tagInds, lines, ind, top, indented, width) {
   const out = [];
   const add = (i, n) => { n.gap = i > 0 && !lines[i - 1].text; out.push(n); };
   for (let i = 0; i < lines.length;) {
@@ -512,7 +515,7 @@ function parseOriginal(tagInds, lines, ind, top, indented) {
       let sub = lines.slice(i + 1, end);
       if (t.desc) sub = [{ ind: t.col, text: t.desc }, ...sub];
       const kind = BULLETS.has(t.tag) ? "ul" : orderedTag.test(t.tag) ? "ol" : "dl";
-      const item = { tag: t.tag, body: parseOriginal(tagInds, sub, t.col, false, false) };
+      const item = { tag: t.tag, body: parseOriginal(tagInds, sub, t.col, false, false, width) };
       const last = out[out.length - 1];
       if (last && last.kind === kind) last.items.push(item);
       else add(i, { kind, items: [item] });
@@ -521,7 +524,7 @@ function parseOriginal(tagInds, lines, ind, top, indented) {
     }
     if (l.ind > ind) {
       const end = regionEnd(lines, i, l.ind);
-      const sub = parseOriginal(tagInds, lines.slice(i, end), l.ind, false, true);
+      const sub = parseOriginal(tagInds, lines.slice(i, end), l.ind, false, true, width);
       if (sub.length) sub[0].gap = i > 0 && !lines[i - 1].text;
       out.push(...sub);
       i = end;
@@ -531,7 +534,7 @@ function parseOriginal(tagInds, lines, ind, top, indented) {
     while (j < lines.length && lines[j].text && lines[j].ind === ind && !tagAt(tagInds, lines, j)) j++;
     const run = lines.slice(i, j);
     if (indented && run.length === 1 && !run[0].text.endsWith(".")) add(i, { kind: "code", lines: run });
-    else if (isProse(run)) add(i, { kind: "para", text: joinProse(run) });
+    else if (isProse(run, width)) add(i, { kind: "para", text: joinProse(run) });
     else if (isText(run)) add(i, { kind: "para", text: run.map(l => l.text).join("\n") });
     else add(i, { kind: "code", lines: run });
     i = j;
@@ -540,8 +543,9 @@ function parseOriginal(tagInds, lines, ind, top, indented) {
 }
 
 // renderOriginalHTML renders a text variant (header, footer and sections)
-// as HTML that reflows, returning {html, toc}, as renderHTML does.
-export function renderOriginalHTML(doc, { link } = {}) {
+// as HTML that reflows, returning {html, toc}, as renderHTML does; indent
+// and width are as HTMLOptions' Indent and Width.
+export function renderOriginalHTML(doc, { link, indent = 0, width = 0, titleBlock = false } = {}) {
   let b = "";
   const toc = [], linkify = makeLinkify(link), id = makeIDs();
   const head = headFields(doc.header);
@@ -584,7 +588,7 @@ export function renderOriginalHTML(doc, { link } = {}) {
       }
     }
   };
-  for (const s of doc.sections || []) {
+  (doc.sections || []).forEach((s, i) => {
     const heading = trim(stripControls(s.heading || ""));
     const lines = origLines(stripControls(s.body || ""));
     if (heading) {
@@ -592,9 +596,9 @@ export function renderOriginalHTML(doc, { link } = {}) {
       toc.push({ id: hid, text: heading, level: 1 });
       b += `<h2 id="${hid}">${esc(heading)}</h2>\n`;
     }
-    nodes(heading.toUpperCase() === "SYNOPSIS" ? mergeCode(codeNodes(lines))
-      : parseOriginal(tagIndents(lines), lines, baseIndent(lines), true, false));
-  }
+    nodes(heading.toUpperCase() === "SYNOPSIS" || (titleBlock && !heading && i === 0) ? mergeCode(codeNodes(lines))
+      : parseOriginal(tagIndents(lines), lines, indent > 0 ? indent : baseIndent(lines), true, false, width > 0 ? width : FILL_WIDTH));
+  });
   const foot = splitFields(doc.footer);
   if (foot.length) b += `<p class="manhead">${esc(foot.join(" · "))}</p>\n`;
   return { html: b, toc };

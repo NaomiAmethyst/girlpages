@@ -6,6 +6,8 @@ package repo
 import (
 	"sort"
 	"strings"
+
+	"github.com/NaomiAmethyst/girlpages/internal/manpage"
 )
 
 // A source is where pages come from, to browse by: a distribution
@@ -145,7 +147,7 @@ func (l *Listing) SourceKeys() ([]string, map[string]string) {
 func Sources(pages []PageRef) []SourceEntry {
 	count := map[[2]string]*SourceEntry{}
 	for _, p := range pages {
-		key := p.Pointer.Section[:1]
+		key := manpage.Chapter(p.Pointer.Section)
 		for _, src := range sourcesOf(p.Listing) {
 			k := [2]string{src.Distro, src.Release}
 			e := count[k]

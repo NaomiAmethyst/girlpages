@@ -76,9 +76,15 @@ function offlineView(url) {
   let route;
   if (parts[0] === "man" && parts.length === 3) route = [parts[1], parts[2]];
   else if (parts[0] === "section" && (parts.length === 2 || parts.length === 3)) route = parts;
+  // A series (rfc/9110/, rfc/): anything else that isn't one of the site's own.
+  else if (isSeries(parts[0]) && !RESERVED.includes(parts[0]) && parts.length === 2) route = [parts[0], parts[1]];
+  else if (isSeries(parts[0]) && !RESERVED.includes(parts[0]) && parts.length === 1) route = ["section", parts[0]];
   else return "";
   return BASE + "#/" + route.map(encodeURIComponent).join("/");
 }
+
+const isSeries = (sec) => sec.length > 1 && !/^[0-9]/.test(sec);
+const RESERVED = ["man", "section", "search", "browse", "offline", "static", "repo", "src"];
 
 // unsegment undoes site.SegmentName, which escapes names starting with a
 // dot as file names are.

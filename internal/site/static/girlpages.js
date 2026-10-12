@@ -43,6 +43,39 @@ export function escapeName(s) {
   }
   return out;
 }
+// segmentName matches site.SegmentName: the directory a name gets.
+export function segmentName(s) {
+  return s.startsWith(".") ? escapeName(s) : s;
+}
+
+// chapter matches manpage.Chapter: the part of the manual a section belongs
+// to (3 for 3ssl); a section not starting with a digit is its own.
+export const chapter = (sec) => (/^[0-9]/.test(sec) ? sec[0] : sec);
+
+// isSeries matches manpage.IsSeries: a series of documents (rfc), not a
+// section of the manual.
+export const isSeries = (sec) => sec.length > 1 && !/^[0-9]/.test(sec);
+
+const seg = (s) => encodeURIComponent(segmentName(s));
+
+// pageURL is a page's static address: man/<sec>/<name>/, or
+// <series>/<name>/.
+export function pageURL(base, name, sec) {
+  return isSeries(sec) ? `${base}${seg(sec)}/${seg(name)}/` : `${base}man/${seg(sec)}/${seg(name)}/`;
+}
+
+// listingURL is page n of a static listing: a chapter's (section/3/, for
+// sub ""), one of its sections' (section/3/3ssl/, or section/3/3/ for just
+// 3), or a series' (rfc/).
+export function listingURL(base, key, sub = "", n = 1) {
+  const u = isSeries(key) ? `${base}${seg(key)}/`
+    : `${base}section/${seg(key)}/${sub ? seg(sub) + "/" : ""}`;
+  return n > 1 ? `${u}page/${n}/` : u;
+}
+
+// sectionShard is a shard of a long section's index.
+export const sectionShard = (sha) => `section/shard-${sha.slice(0, 2)}/${sha}.json`;
+
 // browseURL is a view in the browse app, which lives in the home page's
 // hash: #/[<source>/]<sec>/<name>[/<version>][/<variant>][/mono] for a page
 // (the latest version, or as a source has it, unless a version is given:
@@ -273,7 +306,12 @@ export class RepoCache {
       const shas = kind === "docs" ? m.shards : m.shards.map(s => s.sha256);
       for (const s of shas) live.add(`index/${kind}/shard-${s.slice(0, 2)}/${s}.json`);
     }
-    for (const e of manifest.sections || []) live.add(`section/${enc(e.section)}-${e.sha256}.json`);
+    for (const e of manifest.sections || []) {
+      const path = `section/${enc(e.section)}-${e.sha256}.json`;
+      live.add(path);
+      const text = await this.store.get(path);
+      if (text !== null) for (const r of JSON.parse(text).shards || []) live.add(sectionShard(r.sha256));
+    }
     let removed = 0;
     for (const p of await this.store.paths()) {
       if ((p.startsWith("index/") || (p.startsWith("section/") && IMMUTABLE.test(p))) && !live.has(p)) {
@@ -311,14 +349,13 @@ export class RepoCache {
   // {pages, failed}.
   async save(key, { src = "", progress = () => {} } = {}) {
     const m = JSON.parse(await this.mutable("manifest.json", { fresh: true }));
-    const exact = key.length > 1;
-    const entries = (m.sections || []).filter(e => exact ? e.section === key : e.section[0] === key[0]);
+    const exact = chapter(key) !== key || isSeries(key);
+    const entries = (m.sections || []).filter(e => exact ? e.section === key : chapter(e.section) === key);
     const pages = [];
     for (const e of entries) {
-      const si = await this.get(`section/${enc(e.section)}-${e.sha256}.json`);
-      for (const p of si.pages) {
+      for (const p of await this.sectionPages(e)) {
         if (src && !(p.sources || []).includes(src)) continue;
-        pages.push({ name: p.name, sec: si.section, page: p.page, source: (src && p.other && p.other[src]) || "" });
+        pages.push({ name: p.name, sec: e.section, page: p.page, source: (src && p.other && p.other[src]) || "" });
       }
     }
     let done = 0, failed = 0, next = 0;
@@ -360,10 +397,12 @@ export class RepoCache {
   }
 
   // keepListing fetches the section indexes a section's listing needs.
-  async keepListing(key) {
-    const m = await this.get("manifest.json");
-    const entries = (m.sections || []).filter(e => key.length > 1 ? e.section === key : e.section[0] === key[0]);
-    await Promise.all(entries.map(e => this.get(`section/${enc(e.section)}-${e.sha256}.json`)));
+  // sectionPages is every page in a section's index (a manifest entry),
+  // fetching its shards if it has them.
+  async sectionPages(e) {
+    const si = await this.get(`section/${enc(e.section)}-${e.sha256}.json`);
+    const shards = await Promise.all((si.shards || []).map(r => this.get(sectionShard(r.sha256))));
+    return [...(si.pages || []), ...shards.flatMap(sh => sh.pages || [])];
   }
 
   // searchFiles lists the search index files a part of search needs
@@ -597,8 +636,6 @@ function boot() {
   // show it offline.
   const page = document.querySelector("[data-keep-page]");
   if (page) idle(() => cache.keepPage(page.dataset.keepPage, page.dataset.keepSection).catch(() => {}));
-  const list = document.querySelector("button[data-save-section]");
-  if (list) idle(() => cache.keepListing(list.dataset.saveSection).catch(() => {}));
   if (typeof globalThis.caches !== "undefined") {
     for (const b of document.querySelectorAll("button[data-save-section], button[data-save-search]")) {
       b.hidden = false;

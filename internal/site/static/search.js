@@ -5,9 +5,9 @@
 // browser, fetching only the shards a query needs. This is the same
 // algorithm as Searcher in internal/repo/search.go; keep them in step.
 
-import { repoCache, escapeName, browseURL } from "./girlpages.js";
+import { repoCache, escapeName, segmentName, browseURL, pageURL } from "./girlpages.js";
 
-export { escapeName };
+export { escapeName, segmentName };
 
 const PREFIX_WEIGHT = 0.5;
 const PREFIX_CAP = 100; // as in search.go
@@ -68,11 +68,6 @@ export function queryGrams(t) {
 export function maxTypos(w) {
   const n = [...w].length;
   return n <= 2 ? 0 : n <= 5 ? 1 : 2;
-}
-
-// segmentName matches site.SegmentName: the directory a name gets.
-export function segmentName(s) {
-  return s.startsWith(".") ? escapeName(s) : s;
 }
 
 function findRange(ranges, key) {
@@ -207,7 +202,7 @@ export class Searcher {
   async search(query, limit = 50, source = "", accept = null) {
     this.missedTypos = false;
     await this.load();
-    const terms = [...new Set(tokens(query))];
+    const terms = [...new Set(seriesTerms(tokens(query), this.manifest))];
     const whole = query.trim().toLowerCase();
     if (!terms.length && !whole) return [];
     const perTerm = await Promise.all(terms.map(t => this.term(t)));
@@ -254,6 +249,21 @@ export class Searcher {
 }
 
 const MAX_FILTERED = 2000;
+
+// seriesTerms is repo.SeriesTerms: "rfc 9110" is searched as rfc9110.
+function seriesTerms(terms, m) {
+  const series = new Set((m && m.sections || []).map(e => e.section.toLowerCase()).filter(s => s.length > 1 && !/^[0-9]/.test(s)));
+  const out = [];
+  for (let i = 0; i < terms.length; i++) {
+    if (series.has(terms[i]) && i + 1 < terms.length && /^[0-9]+$/.test(terms[i + 1])) {
+      out.push(terms[i] + terms[i + 1].replace(/^0+/, ""));
+      i++;
+      continue;
+    }
+    out.push(terms[i]);
+  }
+  return out;
+}
 
 function hit(d, score) {
   return { name: d[0], section: d[1], description: d[2], sources: d[3] ? d[3].split(" ") : [], score };
@@ -335,7 +345,7 @@ export async function searchPage(box, params, { current = () => true } = {}) {
       const a = document.createElement("a");
       a.href = src
         ? browseURL(base, { page: h.name, sec: h.section, src })
-        : `${base}man/${encodeURIComponent(segmentName(h.section))}/${encodeURIComponent(segmentName(h.name))}/`;
+        : pageURL(base, h.name, h.section);
       const name = document.createElement("span");
       name.className = "name";
       name.textContent = h.name;

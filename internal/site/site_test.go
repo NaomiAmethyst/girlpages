@@ -195,7 +195,7 @@ func TestBuild(t *testing.T) {
 	}
 	sec3 := read(t, filepath.Join(out, "section", "3", "index.html"))
 	if !strings.Contains(sec3, "SSL_new") || !strings.Contains(sec3, `href="/girlpages/section/3/3ssl/"`) {
-		t.Error("section 3 should list 3ssl pages and link the subsection")
+		t.Errorf("section 3 should list 3ssl pages and link the subsection:\n%s", sec3)
 	}
 
 	sitemap := read(t, filepath.Join(out, "sitemap.xml"))
@@ -361,6 +361,7 @@ func TestRenderJS(t *testing.T) {
 		"",
 		"no heading at all\n\n\n\nlots of blanks\n   \n",
 		"- a\n\n- b\n    - c\n        - d\n- e\n\n1. x\n- y\n",
+		"keywords are in RFC 2119 and [RFC8174]; RFC0791 is IP, RFC 99999 isn't, and NOTRFC 1 neither\n",
 	}
 	link := func(name, sec string) string {
 		if name == "nope" {
@@ -823,9 +824,11 @@ func TestHandler(t *testing.T) {
 // static site does.
 func TestOriginalJS(t *testing.T) {
 	type doc struct {
-		Header   string                   `json:"header"`
-		Footer   string                   `json:"footer"`
-		Sections []render.OriginalSection `json:"sections"`
+		Header        string                   `json:"header"`
+		Footer        string                   `json:"footer"`
+		Sections      []render.OriginalSection `json:"sections"`
+		Indent, Width int
+		TitleBlock    bool
 	}
 	b, err := os.ReadFile("../render/testdata/original.json")
 	if err != nil {
@@ -848,6 +851,13 @@ func TestOriginalJS(t *testing.T) {
 		doc{Sections: []render.OriginalSection{{Heading: "X", Body: "       [{\n           \"a\": 1\n       }]\n       -n with numbers\n"}}},
 		// Right at the fill width: one more column and it would be filled.
 		doc{Sections: []render.OriginalSection{{Heading: "X", Body: "       " + strings.Repeat("ab ", 22) + "a\n       word and more words\n"}}},
+		// An RFC: text at 3, filled to 72, subsections at the margin.
+		doc{Indent: 3, Width: 72, TitleBlock: true, Sections: []render.OriginalSection{
+			{Body: "Internet Engineering Task Force (IETF)        R. Fielding, Ed.\nRequest for Comments: 9110            Adobe\n\n                 HTTP Semantics\n"},
+			{Heading: "1.  Introduction", Body: "\n" +
+				"   " + strings.Repeat("word ", 13) + "words\n   go on and on, as RFC 2119 says they MUST.\n\n" +
+				"1.1.  Requirements Language\n\n   The key words \"MUST\" and \"SHOULD\" are to be interpreted as in\n   BCP 14.\n\n" +
+				"      +--------+\n      | header |\n      +--------+\n"}}},
 	)
 	type result struct {
 		HTML string
@@ -856,7 +866,7 @@ func TestOriginalJS(t *testing.T) {
 	link := func(n, s string) string { return "/man/" + s + "/" + n + "/" }
 	var want []result
 	for _, d := range docs {
-		h, toc := render.OriginalHTML(d.Header, d.Footer, d.Sections, render.HTMLOptions{Link: link})
+		h, toc := render.OriginalHTML(d.Header, d.Footer, d.Sections, render.HTMLOptions{Link: link, Indent: d.Indent, Width: d.Width, TitleBlock: d.TitleBlock})
 		if toc == nil {
 			toc = []render.Heading{}
 		}
@@ -869,14 +879,14 @@ func TestOriginalJS(t *testing.T) {
 		for _, s := range d.Sections {
 			ss = append(ss, map[string]string{"heading": s.Heading, "body": s.Body})
 		}
-		in = append(in, map[string]any{"header": d.Header, "footer": d.Footer, "sections": ss})
+		in = append(in, map[string]any{"header": d.Header, "footer": d.Footer, "sections": ss, "indent": d.Indent, "width": d.Width, "titleBlock": d.TitleBlock})
 	}
 	ds, _ := json.Marshal(in)
 	got := node(t, fmt.Sprintf(`
 const { renderOriginalHTML } = await import(%q);
 const out = [];
 for (const d of %s) {
-  const r = renderOriginalHTML(d, { link: (n, s) => "/man/" + s + "/" + n + "/" });
+  const r = renderOriginalHTML(d, { link: (n, s) => "/man/" + s + "/" + n + "/", indent: d.indent, width: d.width, titleBlock: d.titleBlock });
   out.push({ HTML: r.html, TOC: r.toc.map(h => ({ ID: h.id, Text: h.text, Level: h.level })) });
 }
 console.log(JSON.stringify(out));`, staticFile(t, "render.js"), ds))

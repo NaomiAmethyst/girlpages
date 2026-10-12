@@ -255,13 +255,18 @@ var sectionInfo = map[string][2]string{
 	"n": {"Tcl/Tk", "🪶"},
 	"l": {"Local", "🏡"},
 	"o": {"Old", "🕰️"},
+	// Series of documents.
+	"rfc": {"Requests for Comments", "🌐"},
 }
 
 // SectionName gives a section's description and emoji.
 func SectionName(key string) (string, string) { return sectionName(key) }
 
 func sectionName(key string) (string, string) {
-	if info, ok := sectionInfo[key[:1]]; ok {
+	if info, ok := sectionInfo[key]; ok {
+		return info[0], info[1]
+	}
+	if info, ok := sectionInfo[manpage.Chapter(key)]; ok {
 		return info[0], info[1]
 	}
 	return "Section " + key, "📖"
@@ -277,7 +282,7 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 	cards := map[string]*sectionCard{}
 	v := &view{Title: "the manual, but make it girly", Version: s.Version}
 	for _, e := range idx.pages {
-		key := e.page.Section[:1]
+		key := manpage.Chapter(e.page.Section)
 		c := cards[key]
 		if c == nil {
 			name, emoji := sectionName(key)

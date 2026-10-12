@@ -325,13 +325,13 @@ func (m makers) current(hash string) bool {
 // outdated reports whether a girl variant was made with an older prompt,
 // reading it if its listing doesn't say (one written before listings
 // recorded prompt versions, or a variant whose maker didn't say).
-func outdated(s *repo.Store, source string, info repo.VariantInfo) bool {
+func outdated(s *repo.Store, source, section string, info repo.VariantInfo) bool {
 	if info.PromptVersion == 0 {
 		if v, err := s.Variant(source, repo.VariantGirl); err == nil && v.Generator != nil {
 			info.PromptVersion = v.Generator.PromptVersion
 		}
 	}
-	return info.PromptVersion < llm.PromptVersion
+	return info.PromptVersion < llm.PromptVersionFor(llm.KindOf(section))
 }
 
 func (m makers) generator(hash string, fallback time.Time) *repo.Generator {
@@ -664,7 +664,7 @@ func Girlify(ctx context.Context, s *repo.Store, o GirlifyOptions) (GirlifyStats
 			vs = []repo.Version{*p.Current()}
 		}
 		for _, v := range vs {
-			if info, ok := v.Variants[repo.VariantGirl]; ok && !o.Force && !(o.Reprompt && outdated(s, v.Source, info)) {
+			if info, ok := v.Variants[repo.VariantGirl]; ok && !o.Force && !(o.Reprompt && outdated(s, v.Source, p.Pointer.Section, info)) {
 				continue
 			}
 			if pending[v.Source] && !o.Force {
@@ -730,7 +730,9 @@ func Girlify(ctx context.Context, s *repo.Store, o GirlifyOptions) (GirlifyStats
 				logf("💾 %s (in the local cache)\n", w.title)
 				continue
 			}
-			parts := llm.Plan(w.title, text, o.LLM)
+			lo := o.LLM
+			lo.Kind = llm.KindOf(w.pages[0].Section)
+			parts := llm.Plan(w.title, text, lo)
 			var in, out int64
 			for _, p := range parts {
 				in += EstimateTokens(p.System) + EstimateTokens(p.User)
@@ -770,7 +772,7 @@ func Girlify(ctx context.Context, s *repo.Store, o GirlifyOptions) (GirlifyStats
 			if err != nil {
 				return st, err
 			}
-			jobs = append(jobs, llm.BatchJob{Key: src, Title: w.title, Text: text, Meta: meta})
+			jobs = append(jobs, llm.BatchJob{Key: src, Title: w.title, Text: text, Meta: meta, Kind: llm.KindOf(w.pages[0].Section)})
 		}
 		if len(jobs) == 0 {
 			return st, nil
@@ -822,6 +824,7 @@ func Girlify(ctx context.Context, s *repo.Store, o GirlifyOptions) (GirlifyStats
 						last = time.Now()
 					}
 				}
+				lo.LLM.Kind = llm.KindOf(w.pages[0].Section)
 				fromCache, err := girlifyOne(ctx, s, lo, made, w.source, w.title, func(info repo.VariantInfo) error {
 					return recordGirl(s, w.source, w.pages, info)
 				})
@@ -886,7 +889,7 @@ func girlifyOne(ctx context.Context, s *repo.Store, o GirlifyOptions, made maker
 				}
 			}()
 		}
-		g = &repo.Generator{Backend: o.Backend.Name(), Model: o.Backend.Model(), PromptVersion: llm.PromptVersion,
+		g = &repo.Generator{Backend: o.Backend.Name(), Model: o.Backend.Model(), PromptVersion: llm.PromptVersionFor(o.LLM.Kind),
 			Generated: time.Now().UTC().Truncate(time.Second)}
 	}
 	info, err := s.PutVariant(repo.GirlVariant(source, man.Title, markup, g))
