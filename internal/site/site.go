@@ -89,6 +89,9 @@ type Options struct {
 	Log     io.Writer
 	// Progress, if set, is told how the build is going.
 	Progress repo.Progress
+	// Written, if set, is told of each file written, so it can be
+	// compressed straight away.
+	Written func(path string)
 }
 
 // Stats summarises a build.
@@ -430,7 +433,13 @@ func (b *builder) write(path string, data []byte) error {
 	b.mu.Lock()
 	b.st.Written++
 	b.mu.Unlock()
-	return repo.WriteFile(path, data)
+	if err := repo.WriteFile(path, data); err != nil {
+		return err
+	}
+	if b.o.Written != nil {
+		b.o.Written(path)
+	}
+	return nil
 }
 
 func (b *builder) render(u, name string, v *view) error {
@@ -625,6 +634,7 @@ func (b *builder) sections(pages []repo.PageRef) error {
 		}
 		subs[key][p.Pointer.Section]++
 	}
+	var jobs []func() error // rendering, done in parallel at the end
 	for key, ps := range byKey {
 		var secs []string
 		for s := range subs[key] {
@@ -696,10 +706,10 @@ func (b *builder) sections(pages []repo.PageRef) error {
 					its = append(its, g.Items...)
 				}
 				pu := listPageURL(u, n)
-				pv.JSONLD = b.ldCollection(&pv, pu, its)
-				if err := b.render(pu, "list", &pv); err != nil {
-					return err
-				}
+				jobs = append(jobs, func() error {
+					pv.JSONLD = b.ldCollection(&pv, pu, its)
+					return b.render(pu, "list", &pv)
+				})
 			}
 			return nil
 		}
@@ -720,7 +730,29 @@ func (b *builder) sections(pages []repo.PageRef) error {
 			}
 		}
 	}
-	return nil
+	return parallel(jobs)
+}
+
+// parallel runs jobs, one per CPU at a time, and joins their errors.
+func parallel(jobs []func() error) error {
+	errs := make([]error, len(jobs))
+	var next atomic.Int64
+	var wg sync.WaitGroup
+	for range runtime.NumCPU() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				i := int(next.Add(1)) - 1
+				if i >= len(jobs) {
+					return
+				}
+				errs[i] = jobs[i]()
+			}
+		}()
+	}
+	wg.Wait()
+	return errors.Join(errs...)
 }
 
 func pluralPages(n int) string {
@@ -1025,39 +1057,59 @@ func (b *builder) prune() error {
 			dirs = append(dirs, SegmentName(e.Section))
 		}
 	}
+	// Each directory under those is walked on its own, in parallel.
+	var jobs []func() error
+	var mu sync.Mutex
+	emptied := map[string]bool{} // directories something was removed from
 	for _, dir := range dirs {
 		root := filepath.Join(b.o.Out, dir)
-		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-			if err != nil {
-				if errors.Is(err, fs.ErrNotExist) {
-					return nil
-				}
-				return err
-			}
-			if d.IsDir() || b.written[path] || d.Name() != "index.html" {
-				return nil
-			}
-			b.st.Removed++
-			return os.Remove(path)
-		})
-		if err != nil {
+		ents, err := os.ReadDir(root)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		} else if err != nil {
 			return err
 		}
-		removeEmptyDirs(root)
-		_ = os.Remove(root) // if it's empty now
+		emptied[root] = true // tried last, in case it's empty now
+		for _, e := range ents {
+			sub := filepath.Join(root, e.Name())
+			jobs = append(jobs, func() error {
+				return filepath.WalkDir(sub, func(path string, d fs.DirEntry, err error) error {
+					if err != nil {
+						if errors.Is(err, fs.ErrNotExist) {
+							return nil
+						}
+						return err
+					}
+					b.mu.Lock()
+					keep := d.IsDir() || b.written[path] || d.Name() != "index.html"
+					if !keep {
+						b.st.Removed++
+					}
+					b.mu.Unlock()
+					if keep {
+						return nil
+					}
+					mu.Lock()
+					for p := filepath.Dir(path); p != root; p = filepath.Dir(p) {
+						emptied[p] = true
+					}
+					mu.Unlock()
+					return os.Remove(path)
+				})
+			})
+		}
+	}
+	if err := parallel(jobs); err != nil {
+		return err
+	}
+	// Remove whichever of those are empty now, deepest first.
+	gone := make([]string, 0, len(emptied))
+	for d := range emptied {
+		gone = append(gone, d)
+	}
+	sort.Slice(gone, func(i, j int) bool { return len(gone[i]) > len(gone[j]) })
+	for _, d := range gone {
+		_ = os.Remove(d) // fails if it isn't empty
 	}
 	return nil
-}
-
-func removeEmptyDirs(root string) {
-	var dirs []string
-	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err == nil && d.IsDir() && path != root {
-			dirs = append(dirs, path)
-		}
-		return nil
-	})
-	for i := len(dirs) - 1; i >= 0; i-- {
-		_ = os.Remove(dirs[i])
-	}
 }

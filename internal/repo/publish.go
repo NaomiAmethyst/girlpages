@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/NaomiAmethyst/girlpages/internal/manpage"
 	"github.com/NaomiAmethyst/girlpages/internal/precompress"
@@ -50,9 +52,10 @@ func (p *PageRef) Girlified() bool {
 // AllPages reads every page's listing, sorted by section then name.
 func (s *Store) AllPages() ([]PageRef, error) {
 	var out []PageRef
+	var mu sync.Mutex
 	c := s.counter("reading listings", 0)
-	err := s.Pages(func(p Pointer) error {
-		c.add()
+	err := s.eachPage(func(p Pointer) error {
+		defer c.add()
 		l, err := s.ListingByHash(p.SHA256)
 		if err != nil {
 			return err
@@ -60,7 +63,9 @@ func (s *Store) AllPages() ([]PageRef, error) {
 		if l.CurrentVersion() == nil {
 			return nil
 		}
+		mu.Lock()
 		out = append(out, PageRef{Pointer: p, Listing: l})
+		mu.Unlock()
 		return nil
 	})
 	sort.Slice(out, func(i, j int) bool {
@@ -413,13 +418,14 @@ func (s *Store) writeVariantIndexes(pages []PageRef) (map[string]string, error) 
 
 func (s *Store) writeShards(kind string, ranges []ShardRange, shard func(int) any) (string, error) {
 	sm := ShardManifest{Format: Format, Shards: make([]ShardRange, len(ranges))}
-	for i, r := range ranges {
-		sha, n, err := s.writeSized(func(sha string) string { return ShardPath(kind, sha) }, shard(i))
-		if err != nil {
-			return "", err
-		}
-		r.SHA256, r.Bytes = sha, n
+	errs := make([]error, len(ranges))
+	parallel(len(ranges), func(i int) {
+		r := ranges[i]
+		r.SHA256, r.Bytes, errs[i] = s.writeSized(func(sha string) string { return ShardPath(kind, sha) }, shard(i))
 		sm.Shards[i] = r
+	})
+	if err := errors.Join(errs...); err != nil {
+		return "", err
 	}
 	return s.WriteAddressed(func(sha string) string { return IndexManifestPath(kind, sha) }, &sm)
 }
@@ -483,39 +489,64 @@ func (s *Store) GC(dryRun bool) (GCStats, error) {
 	}
 	seenSource := map[string]bool{}
 	gc := s.counter("finding what's in use", 0)
-	err = s.Pages(func(p Pointer) error {
-		gc.add()
-		live[NamePath(p.Name, p.Section)] = true
-		live[ListingPath(p.SHA256)] = true
+	var mu sync.Mutex
+	err = s.eachPage(func(p Pointer) error {
+		defer gc.add()
 		l, err := s.ListingByHash(p.SHA256)
 		if err != nil {
 			return err
 		}
+		mu.Lock()
+		live[NamePath(p.Name, p.Section)] = true
+		live[ListingPath(p.SHA256)] = true
+		var sources []string
 		for _, v := range l.Versions {
-			if seenSource[v.Source] {
-				continue
+			if !seenSource[v.Source] {
+				seenSource[v.Source] = true
+				sources = append(sources, v.Source)
 			}
-			seenSource[v.Source] = true
-			// Every generation stays, as clients may ask for any.
-			live[ContentsPath(v.Source)] = true
-			cs, err := s.Contents(v.Source)
+		}
+		mu.Unlock()
+		for _, src := range sources {
+			cs, err := s.Contents(src)
 			if err != nil {
 				return err
 			}
+			mu.Lock()
+			// Every generation stays, as clients may ask for any.
+			live[ContentsPath(src)] = true
 			for variant, gens := range cs.Variants {
 				for _, g := range gens {
-					live[VariantPath(v.Source, variant, g.SHA256)] = true
+					live[VariantPath(src, variant, g.SHA256)] = true
 				}
 			}
+			mu.Unlock()
 		}
 		return nil
 	})
 	if err != nil {
 		return st, err
 	}
+
+	// Then everything else goes, each part of the tree swept at once.
+	var roots []string
 	for _, top := range []string{"contents", "page", "section", "index"} {
 		root := filepath.Join(s.Dir, top)
-		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		ents, err := os.ReadDir(root)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return st, err
+		}
+		for _, e := range ents {
+			roots = append(roots, filepath.Join(root, e.Name()))
+		}
+	}
+	var files, bytes atomic.Int64
+	errs := make([]error, len(roots))
+	parallel(len(roots), func(i int) {
+		errs[i] = filepath.WalkDir(roots[i], func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				if errors.Is(err, fs.ErrNotExist) {
 					return nil
@@ -540,22 +571,24 @@ func (s *Store) GC(dryRun bool) (GCStats, error) {
 				}
 			}
 			if fi, err := d.Info(); err == nil {
-				st.Bytes += fi.Size()
+				bytes.Add(fi.Size())
 			}
-			st.Files++
+			files.Add(1)
 			if dryRun {
 				return nil
 			}
-			return os.Remove(path)
+			if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return err
+			}
+			return nil
 		})
-		if err != nil {
-			return st, err
+		if fi, err := os.Stat(roots[i]); errs[i] == nil && !dryRun && err == nil && fi.IsDir() {
+			removeEmptyDirs(roots[i])
+			_ = os.Remove(roots[i]) // if it's empty now
 		}
-		if !dryRun {
-			removeEmptyDirs(root)
-		}
-	}
-	return st, nil
+	})
+	st.Files, st.Bytes = int(files.Load()), bytes.Load()
+	return st, errors.Join(errs...)
 }
 
 func removeEmptyDirs(root string) {

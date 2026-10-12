@@ -188,75 +188,209 @@ func Sweep(root string, encodings []Encoding) (Stats, error) {
 }
 
 // SweepProgress is Sweep, telling progress (if not nil) how many files
-// it's been through of how many.
+// it's compressed of how many.
 func SweepProgress(root string, encodings []Encoding, progress func(done, total int)) (Stats, error) {
-	var st Stats
-	want := map[string]bool{}
+	q := NewQueue(encodings)
+	q.Progress = progress
+	err := q.Stale(root)
+	st, qerr := q.Wait()
+	return st, errors.Join(err, qerr)
+}
+
+// Queue compresses files as they're handed to it, one per worker at a
+// time, so that compressing goes on while files are still being written.
+type Queue struct {
+	enc  []Encoding
+	want map[string]bool
+	ch   chan string
+	wg   sync.WaitGroup
+
+	mu   sync.Mutex
+	st   Stats
+	errs []error
+	// queued and done count files, for Progress.
+	queued, done atomic.Int64
+	// Progress, if set, is told how many files have been compressed of
+	// how many queued so far.
+	Progress func(done, queued int)
+}
+
+// NewQueue starts compressing (with Workers workers) whatever's added.
+func NewQueue(encodings []Encoding) *Queue {
+	q := &Queue{enc: encodings, want: map[string]bool{}, ch: make(chan string, 1<<16)}
 	for _, e := range encodings {
-		want[e.Ext] = true
+		q.want[e.Ext] = true
 	}
-	var todo []string
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
-				return nil
+	for w := 0; w < workers(); w++ {
+		q.wg.Add(1)
+		go q.work()
+	}
+	return q
+}
+
+// Add queues a file that's been written, if it's the kind worth
+// compressing.
+func (q *Queue) Add(path string) {
+	if len(q.enc) == 0 || !worth[filepath.Ext(path)] || strings.HasPrefix(filepath.Base(path), ".tmp-") {
+		return
+	}
+	q.queued.Add(1)
+	q.ch <- path
+}
+
+func (q *Queue) work() {
+	defer q.wg.Done()
+	for path := range q.ch {
+		did, size, saved, err := compress(path, q.enc)
+		q.mu.Lock()
+		switch {
+		case err != nil && !errors.Is(err, fs.ErrNotExist): // (gone since: nothing to do)
+			q.errs = append(q.errs, err)
+		case did:
+			q.st.Compressed++
+			q.st.Bytes += size
+			q.st.Saved += saved
+		case err == nil:
+			q.st.Unchanged++
+		}
+		q.mu.Unlock()
+		n := q.done.Add(1)
+		if p := q.Progress; p != nil {
+			p(int(n), int(q.queued.Load()))
+		}
+	}
+}
+
+// Stale goes through the files under root, queueing those whose copies
+// are missing or older than they are, and removing copies whose originals
+// are gone, or that the encodings no longer include.
+func (q *Queue) Stale(root string) error {
+	return walkDirs(root, func(dir string, ents []fs.DirEntry) error {
+		byName := make(map[string]fs.DirEntry, len(ents))
+		for _, d := range ents {
+			byName[d.Name()] = d
+		}
+		for _, d := range ents {
+			name := d.Name()
+			if d.IsDir() || strings.HasPrefix(name, ".tmp-") {
+				continue
 			}
-			return err
-		}
-		if d.IsDir() || strings.HasPrefix(d.Name(), ".tmp-") {
-			return nil
-		}
-		if base, ok := IsCopy(path); ok {
-			if _, err := os.Stat(base); errors.Is(err, fs.ErrNotExist) || !want[strings.TrimPrefix(path, base)] {
-				st.Removed++
-				return os.Remove(path)
+			path := filepath.Join(dir, name)
+			if base, ok := IsCopy(name); ok {
+				if b, ok := byName[base]; !ok || b.IsDir() || !q.want[strings.TrimPrefix(name, base)] {
+					if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+						return err
+					}
+					q.mu.Lock()
+					q.st.Removed++
+					q.mu.Unlock()
+				}
+				continue
 			}
-			return nil
-		}
-		if worth[filepath.Ext(path)] && len(encodings) > 0 {
-			todo = append(todo, path)
+			if worth[filepath.Ext(name)] && len(q.enc) > 0 && q.stale(name, d, byName) {
+				q.Add(path)
+			}
 		}
 		return nil
 	})
-	if err != nil {
-		return st, err
-	}
+}
 
-	var mu sync.Mutex
-	errs := make([]error, len(todo))
-	var next, done atomic.Int64
-	if progress != nil && len(todo) > 0 {
-		progress(0, len(todo))
+// stale reports whether a file's copies need making, going by its
+// directory's entries.
+func (q *Queue) stale(name string, d fs.DirEntry, byName map[string]fs.DirEntry) bool {
+	fi, err := d.Info()
+	if err != nil {
+		return false
 	}
-	var wg sync.WaitGroup
-	for w := 0; w < workers(); w++ {
+	if fi.Size() < MinSize {
+		// Too small to compress; copies of it go (compress does that).
+		for _, e := range q.enc {
+			if _, ok := byName[name+e.Ext]; ok {
+				return true
+			}
+		}
+		return false
+	}
+	for _, e := range q.enc {
+		c, ok := byName[name+e.Ext]
+		if !ok {
+			return true
+		}
+		cfi, err := c.Info()
+		if err != nil || cfi.ModTime().Before(fi.ModTime()) {
+			return true
+		}
+	}
+	return false
+}
+
+// walkDirs calls fn with each directory under root (root included) and
+// its entries, a directory per CPU at a time, stopping at the first error.
+// Directories that vanish meanwhile are skipped.
+func walkDirs(root string, fn func(dir string, ents []fs.DirEntry) error) error {
+	var (
+		mu    sync.Mutex
+		cond  = sync.NewCond(&mu)
+		todo  = []string{root}
+		busy  int
+		first error
+		wg    sync.WaitGroup
+	)
+	for range workers() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for {
-				i := int(next.Add(1)) - 1
-				if i >= len(todo) {
+				mu.Lock()
+				for len(todo) == 0 && busy > 0 && first == nil {
+					cond.Wait()
+				}
+				if len(todo) == 0 || first != nil {
+					mu.Unlock()
+					cond.Broadcast()
 					return
 				}
-				did, size, saved, err := compress(todo[i], encodings)
-				errs[i] = err
-				if progress != nil {
-					progress(int(done.Add(1)), len(todo))
+				dir := todo[len(todo)-1]
+				todo = todo[:len(todo)-1]
+				busy++
+				mu.Unlock()
+
+				ents, err := os.ReadDir(dir)
+				if errors.Is(err, fs.ErrNotExist) {
+					ents, err = nil, nil
 				}
+				var subs []string
+				if err == nil {
+					for _, d := range ents {
+						if d.IsDir() {
+							subs = append(subs, filepath.Join(dir, d.Name()))
+						}
+					}
+					err = fn(dir, ents)
+				}
+
 				mu.Lock()
-				if did {
-					st.Compressed++
-					st.Bytes += size
-					st.Saved += saved
-				} else if err == nil {
-					st.Unchanged++
+				todo = append(todo, subs...)
+				busy--
+				if err != nil && first == nil {
+					first = err
 				}
 				mu.Unlock()
+				cond.Broadcast()
 			}
 		}()
 	}
 	wg.Wait()
-	return st, errors.Join(errs...)
+	return first
+}
+
+// Wait finishes what's queued (nothing more may be added) and reports.
+func (q *Queue) Wait() (Stats, error) {
+	close(q.ch)
+	q.wg.Wait()
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.st, errors.Join(q.errs...)
 }
 
 // compress writes a file's copies if any is missing or older than it. A

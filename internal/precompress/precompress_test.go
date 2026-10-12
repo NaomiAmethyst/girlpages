@@ -33,7 +33,7 @@ func TestSweep(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.Compressed != 4 || st.Saved <= 0 { // tiny.json is read but too small
+	if st.Compressed != 3 || st.Saved <= 0 { // tiny.json is too small to bother with
 		t.Errorf("first sweep: %+v", st)
 	}
 	for _, name := range []string{"index.html", "repo/a.json", "static/app.js"} {
@@ -58,10 +58,9 @@ func TestSweep(t *testing.T) {
 		}
 	}
 
-	// Nothing changed: nothing to do (tiny.json is looked at again, as it
-	// never gets copies, but that's cheap).
+	// Nothing changed: nothing to do.
 	st, _ = Sweep(root, Encodings)
-	if st.Compressed != 1 || st.Removed != 0 {
+	if st.Compressed != 0 || st.Removed != 0 {
 		t.Errorf("second sweep: %+v", st)
 	}
 

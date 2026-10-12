@@ -4,8 +4,10 @@
 package repo
 
 import (
+	"hash/maphash"
 	"math"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -163,33 +165,49 @@ func init() {
 
 // BuildIndex builds the search index for docs, by their ids.
 func BuildIndex(docs []IndexDoc) *BuiltIndex {
-	type posting struct{ doc, score int }
-	type docScores struct {
-		scores map[string]int
-		body   []string // distinct body words
+	// Pages are scored in parallel, then words are shared out among the
+	// CPUs by hash so each merges, sorts and trigrams its own; only cutting
+	// the sorted result into shards is left to do in turn.
+	parts := runtime.NumCPU()
+	seed := maphash.MakeSeed()
+	partOf := func(w string) int { return int(maphash.String(seed, w) % uint64(parts)) }
+
+	const (
+		inBody  = 1 << iota // a distinct body word, counted for bodyDF
+		inVocab             // worth finding by trigram
+	)
+	type term struct {
+		word  string
+		score int
+		flags uint8
 	}
-	per := make([]docScores, len(docs))
+	per := make([][][]term, len(docs)) // doc → part → terms
 	parallel(len(docs), func(di int) {
 		d := docs[di]
 		scores := map[string]int{}
+		flags := map[string]uint8{}
 		name := strings.ToLower(d.Name)
 		// Like man, prefer printf(1) to printf(3): each section step is
 		// worth more than any amount of body text.
 		scores[name] += scoreName + scoreSection*(manpage.SectionCount-manpage.SectionRank(d.Section))
+		flags[name] |= inVocab
 		if manpage.IsSeries(d.Section) {
 			// RFC 9110 is found as rfc9110 too (see SeriesTerms).
 			scores[strings.ToLower(d.Section)+name] += scoreName
+			flags[strings.ToLower(d.Section+d.Name)] |= inVocab
 		}
 		for _, t := range Tokens(d.Name) {
 			if t != name {
 				scores[t] += scoreNamePart
 			}
+			flags[t] |= inVocab
 		}
 		seen := map[string]bool{}
 		for _, t := range Tokens(d.Description) {
 			if !seen[t] && !stopwords[t] {
 				seen[t] = true
 				scores[t] += scoreDesc
+				flags[t] |= inVocab
 			}
 		}
 		tf := map[string]int{}
@@ -198,103 +216,153 @@ func BuildIndex(docs []IndexDoc) *BuiltIndex {
 				tf[t]++
 			}
 		}
-		body := make([]string, 0, len(tf))
 		for t, n := range tf {
-			body = append(body, t)
 			s := 1 + int(4*math.Log2(float64(n)))
 			scores[t] += min(s, scoreBodyMax)
+			flags[t] |= inBody
 		}
-		per[di] = docScores{scores, body}
+		out := make([][]term, parts)
+		for t, s := range scores {
+			p := partOf(t)
+			out[p] = append(out[p], term{t, s, flags[t]})
+		}
+		per[di] = out
 	})
 
-	postings := map[string][]posting{}
-	bodyDF := map[string]int{}
-	vocab := map[string]bool{} // words worth finding by trigram
-	for di, d := range docs {
-		vocab[strings.ToLower(d.Name)] = true
-		if manpage.IsSeries(d.Section) {
-			vocab[strings.ToLower(d.Section+d.Name)] = true
+	type wordEntry struct {
+		word string
+		list []int // flat [doc, score, …]
+		size int
+	}
+	type gramWord struct {
+		gram, word string
+		df         int
+	}
+	words := make([][]wordEntry, parts)
+	gramsOut := make([][][]gramWord, parts) // word part → gram part → …
+	limit := int(commonBody * float64(len(docs)))
+	parallel(parts, func(p int) {
+		type posting struct{ doc, score int }
+		postings := map[string][]posting{}
+		bodyDF := map[string]int{}
+		vocab := map[string]bool{}
+		for di, d := range docs {
+			for _, t := range per[di][p] {
+				postings[t.word] = append(postings[t.word], posting{d.ID, t.score})
+				if t.flags&inBody != 0 {
+					bodyDF[t.word]++
+				}
+				if t.flags&inVocab != 0 {
+					vocab[t.word] = true
+				}
+			}
+			per[di][p] = nil
 		}
-		for _, t := range Tokens(d.Name) {
-			vocab[t] = true
+
+		// Drop body-only postings for words that are everywhere; they make
+		// shards huge and searches no better.
+		if len(docs) >= 20 {
+			for t, df := range bodyDF {
+				if df <= limit {
+					continue
+				}
+				ps := postings[t][:0]
+				for _, p := range postings[t] {
+					if p.score > scoreBodyMax {
+						ps = append(ps, p)
+					}
+				}
+				if len(ps) == 0 {
+					delete(postings, t)
+				} else {
+					postings[t] = ps
+				}
+			}
 		}
-		for _, t := range Tokens(d.Description) {
-			if !stopwords[t] {
+		// Body words worth fuzzy-finding: ones in more than one page and not
+		// mostly digits (option values, addresses and versions aren't typos).
+		for t, df := range bodyDF {
+			if df >= 2 && !mostlyDigits(t) && postings[t] != nil {
 				vocab[t] = true
 			}
 		}
-		for _, t := range per[di].body {
-			bodyDF[t]++
-		}
-		for t, s := range per[di].scores {
-			postings[t] = append(postings[t], posting{d.ID, s})
-		}
-		per[di] = docScores{}
-	}
 
-	// Drop body-only postings for words that are everywhere; they make
-	// shards huge and searches no better.
-	limit := int(commonBody * float64(len(docs)))
-	if len(docs) >= 20 {
-		for t, df := range bodyDF {
-			if df <= limit {
-				continue
-			}
-			ps := postings[t][:0]
-			for _, p := range postings[t] {
-				if p.score > scoreBodyMax {
-					ps = append(ps, p)
+		out := make([]wordEntry, 0, len(postings))
+		for t, ps := range postings {
+			sort.Slice(ps, func(i, j int) bool {
+				if ps[i].score != ps[j].score {
+					return ps[i].score > ps[j].score
 				}
-			}
-			if len(ps) == 0 {
-				delete(postings, t)
-			} else {
+				return ps[i].doc < ps[j].doc
+			})
+			if len(ps) > maxPostings {
+				ps = ps[:maxPostings]
 				postings[t] = ps
 			}
-		}
-	}
-	// Body words worth fuzzy-finding: ones in more than one page and not
-	// mostly digits (option values, addresses and versions aren't typos).
-	for t, df := range bodyDF {
-		if df >= 2 && !mostlyDigits(t) && postings[t] != nil {
-			vocab[t] = true
-		}
-	}
-
-	words := make([]string, 0, len(postings))
-	for t, ps := range postings {
-		sort.Slice(ps, func(i, j int) bool {
-			if ps[i].score != ps[j].score {
-				return ps[i].score > ps[j].score
+			list := make([]int, 0, 2*len(ps))
+			size := len(t) + 6
+			for _, p := range ps {
+				list = append(list, p.doc, p.score)
+				size += 2 + digits(p.doc) + digits(p.score)
 			}
-			return ps[i].doc < ps[j].doc
-		})
-		if len(ps) > maxPostings {
-			postings[t] = ps[:maxPostings]
+			out = append(out, wordEntry{t, list, size})
 		}
-		words = append(words, t)
+		words[p] = out
+
+		gs := make([][]gramWord, parts)
+		for w := range vocab {
+			df := max(len(postings[w]), bodyDF[w])
+			for _, g := range Grams(w) {
+				q := partOf(g)
+				gs[q] = append(gs[q], gramWord{g, w, df})
+			}
+		}
+		gramsOut[p] = gs
+	})
+
+	type gramEntry struct {
+		gram   string
+		words  []string
+		counts []int
+		size   int
 	}
-	sort.Strings(words)
+	grams := make([][]gramEntry, parts)
+	parallel(parts, func(q int) {
+		byGram := map[string][]gramWord{}
+		for p := range gramsOut {
+			for _, gw := range gramsOut[p][q] {
+				byGram[gw.gram] = append(byGram[gw.gram], gw)
+			}
+		}
+		out := make([]gramEntry, 0, len(byGram))
+		for g, gws := range byGram {
+			sort.Slice(gws, func(i, j int) bool { return gws[i].word < gws[j].word })
+			e := gramEntry{gram: g, words: make([]string, len(gws)), counts: make([]int, len(gws)), size: len(g) + 12}
+			for i, gw := range gws {
+				e.words[i], e.counts[i] = gw.word, gw.df
+				e.size += len(gw.word) + 4 + digits(gw.df)
+			}
+			out = append(out, e)
+		}
+		grams[q] = out
+	})
+	gramsOut = nil
 
 	bi := &BuiltIndex{}
 
+	allWords := slices.Concat(words...)
+	sort.Slice(allWords, func(i, j int) bool { return allWords[i].word < allWords[j].word })
 	var cur *WordShard
 	var size int
 	var first, last string
-	for _, w := range words {
+	for _, e := range allWords {
 		if cur == nil {
 			cur = &WordShard{Format: Format, Words: map[string][]int{}}
-			size, first = 0, w
+			size, first = 0, e.word
 		}
-		ps := postings[w]
-		list := make([]int, 0, 2*len(ps))
-		size += len(w) + 6
-		for _, p := range ps {
-			list = append(list, p.doc, p.score)
-			size += 2 + digits(p.doc) + digits(p.score)
-		}
-		cur.Words[w] = list
-		last = w
+		cur.Words[e.word] = e.list
+		size += e.size
+		last = e.word
 		if size >= shardTarget {
 			bi.Words = append(bi.Words, *cur)
 			bi.WordRanges = append(bi.WordRanges, ShardRange{First: first, Last: last})
@@ -306,41 +374,17 @@ func BuildIndex(docs []IndexDoc) *BuiltIndex {
 		bi.WordRanges = append(bi.WordRanges, ShardRange{First: first, Last: last})
 	}
 
-	// Gram shards.
-	df := map[string]int{}
-	for t, ps := range postings {
-		df[t] = len(ps)
-	}
-	for t, n := range bodyDF {
-		df[t] = max(df[t], n)
-	}
-	grams := map[string][]string{}
-	for w := range vocab {
-		for _, g := range Grams(w) {
-			grams[g] = append(grams[g], w)
-		}
-	}
-	keys := make([]string, 0, len(grams))
-	for g, ws := range grams {
-		sort.Strings(ws)
-		keys = append(keys, g)
-	}
-	sort.Strings(keys)
+	allGrams := slices.Concat(grams...)
+	sort.Slice(allGrams, func(i, j int) bool { return allGrams[i].gram < allGrams[j].gram })
 	var gcur *GramShard
-	for _, g := range keys {
+	for _, e := range allGrams {
 		if gcur == nil {
 			gcur = &GramShard{Format: Format, Grams: map[string][]string{}, Pages: map[string][]int{}}
-			size, first = 0, g
+			size, first = 0, e.gram
 		}
-		ws := grams[g]
-		counts := make([]int, len(ws))
-		size += len(g) + 12
-		for i, w := range ws {
-			counts[i] = df[w]
-			size += len(w) + 4 + digits(df[w])
-		}
-		gcur.Grams[g], gcur.Pages[g] = ws, counts
-		last = g
+		gcur.Grams[e.gram], gcur.Pages[e.gram] = e.words, e.counts
+		size += e.size
+		last = e.gram
 		if size >= shardTarget {
 			bi.Grams = append(bi.Grams, *gcur)
 			bi.GramRanges = append(bi.GramRanges, ShardRange{First: first, Last: last})

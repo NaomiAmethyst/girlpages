@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -26,6 +27,9 @@ type Store struct {
 	// Progress, if set, is told how long jobs (reading every listing,
 	// publishing, collecting garbage) are going.
 	Progress Progress
+	// Written, if set, is told of each file written (by its path), so it
+	// can be compressed straight away.
+	Written func(path string)
 
 	mu  sync.Mutex // serialises listing updates within this process
 	vmu sync.Mutex // and variants.json updates
@@ -83,7 +87,18 @@ func (s *Store) Write(rel string, v any) (string, int64, error) {
 	if err != nil {
 		return "", 0, err
 	}
-	return Hash(b), int64(len(b)), WriteFile(s.abs(rel), b)
+	return Hash(b), int64(len(b)), s.writeFile(s.abs(rel), b)
+}
+
+// writeFile writes a file, and tells Written.
+func (s *Store) writeFile(path string, b []byte) error {
+	if err := WriteFile(path, b); err != nil {
+		return err
+	}
+	if s.Written != nil {
+		s.Written(path)
+	}
+	return nil
 }
 
 // WriteAddressed stores a document under a name made from its own hash.
@@ -103,7 +118,7 @@ func (s *Store) writeSized(name func(sha string) string, v any) (string, int64, 
 	if _, err := os.Stat(p); err == nil {
 		return sha, int64(len(b)), nil
 	}
-	return sha, int64(len(b)), WriteFile(p, b)
+	return sha, int64(len(b)), s.writeFile(p, b)
 }
 
 // WriteFile writes data atomically, creating directories as needed.
@@ -134,8 +149,12 @@ func WriteFile(path string, data []byte) error {
 
 // Lock takes the repository's lock, waiting for other writers. Every
 // command that changes the repository holds it while it does.
-func (s *Store) Lock() (func(), error) {
-	f, err := os.OpenFile(filepath.Join(s.Dir, ".lock"), os.O_CREATE|os.O_RDWR, 0o644)
+func (s *Store) Lock() (func(), error) { return LockFile(filepath.Join(s.Dir, ".lock")) }
+
+// LockFile takes an exclusive lock on a file (creating it), waiting for
+// it if another process has it, and returns what releases it.
+func LockFile(path string) (func(), error) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +224,7 @@ func (s *Store) UpdateListing(name, section string, fn func(*Listing) error) err
 
 // WriteRaw stores a document's bytes as they are, so a copy from another
 // repository keeps its hash.
-func (s *Store) WriteRaw(rel string, b []byte) error { return WriteFile(s.abs(rel), b) }
+func (s *Store) WriteRaw(rel string, b []byte) error { return s.writeFile(s.abs(rel), b) }
 
 // ReadRaw reads a stored document's bytes.
 func (s *Store) ReadRaw(rel string) ([]byte, error) {
@@ -243,11 +262,32 @@ func (l *Listing) derive() {
 // the fields derived from versions are worked out again. The caller must
 // hold Lock.
 func (s *Store) Refresh(pages []PageRef) (int, error) {
-	n := 0
+	var n atomic.Int64
+	var mu sync.Mutex
 	contents := map[string]*Contents{}
+	// A version's Contents, migrated if need be, once however many pages
+	// share it.
+	contentsOf := func(v Version) (*Contents, error) {
+		mu.Lock()
+		cs := contents[v.Source]
+		mu.Unlock()
+		if cs != nil {
+			return cs, nil
+		}
+		cs, err := s.migrate(v.Source, v.Variants)
+		if err != nil {
+			return nil, err
+		}
+		mu.Lock()
+		contents[v.Source] = cs
+		mu.Unlock()
+		return cs, nil
+	}
 	c := s.counter("checking listings", len(pages))
-	for _, p := range pages {
-		c.add()
+	errs := make([]error, len(pages))
+	parallel(len(pages), func(i int) {
+		defer c.add()
+		p := pages[i]
 		want := *p.Listing
 		want.Versions = append([]Version(nil), p.Listing.Versions...)
 		want.derive()
@@ -257,13 +297,10 @@ func (s *Store) Refresh(pages []PageRef) (int, error) {
 		}
 		latest := map[string]map[string]VariantInfo{}
 		for _, v := range p.Listing.Versions {
-			cs := contents[v.Source]
-			if cs == nil {
-				var err error
-				if cs, err = s.migrate(v.Source, v.Variants); err != nil {
-					return n, err
-				}
-				contents[v.Source] = cs
+			cs, err := contentsOf(v)
+			if err != nil {
+				errs[i] = err
+				return
 			}
 			latest[v.Source] = map[string]VariantInfo{}
 			for variant, info := range v.Variants {
@@ -274,9 +311,9 @@ func (s *Store) Refresh(pages []PageRef) (int, error) {
 			}
 		}
 		if same {
-			continue
+			return
 		}
-		err := s.UpdateListing(p.Pointer.Name, p.Pointer.Section, func(l *Listing) error {
+		errs[i] = s.UpdateListing(p.Pointer.Name, p.Pointer.Section, func(l *Listing) error {
 			for i := range l.Versions {
 				v := &l.Versions[i]
 				for variant, g := range latest[v.Source] {
@@ -287,12 +324,11 @@ func (s *Store) Refresh(pages []PageRef) (int, error) {
 			}
 			return nil
 		})
-		if err != nil {
-			return n, err
+		if errs[i] == nil {
+			n.Add(1)
 		}
-		n++
-	}
-	return n, nil
+	})
+	return int(n.Load()), errors.Join(errs...)
 }
 
 // migrate moves a version's variants still kept the old way, one file per
@@ -418,13 +454,48 @@ func (s *Store) putVariant(source, variant string, b []byte) (VariantInfo, error
 
 // Pages calls fn for every page pointer, in no particular order.
 func (s *Store) Pages(fn func(Pointer) error) error {
+	paths, err := s.pointerPaths()
+	if err != nil {
+		return err
+	}
+	for _, rel := range paths {
+		var p Pointer
+		if err := s.Read(rel, &p); err != nil {
+			return err
+		}
+		if err := fn(p); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// eachPage calls fn with every page's pointer, from every CPU at once.
+func (s *Store) eachPage(fn func(Pointer) error) error {
+	paths, err := s.pointerPaths()
+	if err != nil {
+		return err
+	}
+	errs := make([]error, len(paths))
+	parallel(len(paths), func(i int) {
+		var p Pointer
+		if errs[i] = s.Read(paths[i], &p); errs[i] == nil {
+			errs[i] = fn(p)
+		}
+	})
+	return errors.Join(errs...)
+}
+
+// pointerPaths lists every page's pointer.
+func (s *Store) pointerPaths() ([]string, error) {
+	var out []string
 	root := s.abs("page")
 	ents, err := os.ReadDir(root)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil
+		return nil, nil
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, d := range ents {
 		if !d.IsDir() || !strings.HasPrefix(d.Name(), "name-") {
@@ -432,22 +503,16 @@ func (s *Store) Pages(fn func(Pointer) error) error {
 		}
 		files, err := os.ReadDir(filepath.Join(root, d.Name()))
 		if err != nil {
-			return err
+			return nil, err
 		}
 		for _, f := range files {
 			if !strings.HasSuffix(f.Name(), ".json") || strings.HasPrefix(f.Name(), ".tmp-") {
 				continue
 			}
-			var p Pointer
-			if err := s.Read("page/"+d.Name()+"/"+f.Name(), &p); err != nil {
-				return err
-			}
-			if err := fn(p); err != nil {
-				return err
-			}
+			out = append(out, "page/"+d.Name()+"/"+f.Name())
 		}
 	}
-	return nil
+	return out, nil
 }
 
 // Manifest reads manifest.json.

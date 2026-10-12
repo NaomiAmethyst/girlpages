@@ -44,7 +44,7 @@ func iconPNG(size int, maskable bool) []byte {
 	if maskable {
 		flower = 0.28
 	}
-	for y := 0; y < size; y++ {
+	rows(size, func(y int) {
 		for x := 0; x < size; x++ {
 			var r, g, b, a float64
 			for sy := 0; sy < ss; sy++ {
@@ -63,12 +63,21 @@ func iconPNG(size int, maskable bool) []byte {
 			}
 			img.SetNRGBA(x, y, color.NRGBA{uint8(r / a), uint8(g / a), uint8(b / a), uint8(255 * a / (ss * ss))})
 		}
-	}
+	})
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, img); err != nil {
 		panic(err) // can't happen writing to a buffer
 	}
 	return buf.Bytes()
+}
+
+// rows calls fn(0)…fn(n-1), one per CPU at a time.
+func rows(n int, fn func(y int)) {
+	jobs := make([]func() error, n)
+	for y := range jobs {
+		jobs[y] = func() error { fn(y); return nil }
+	}
+	_ = parallel(jobs)
 }
 
 // iconSample is the icon's colour at (u, v) in the unit square, and

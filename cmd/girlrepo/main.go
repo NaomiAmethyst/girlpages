@@ -16,7 +16,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"runtime/debug"
 	"sort"
 	"strconv"
@@ -600,12 +599,41 @@ func (a *app) publish(ctx context.Context, args []string) error {
 	}
 	pr := newProgress(os.Stderr)
 	s.Progress = pr.report
+	encodings, err := precompress.Parse(*compress)
+	if err != nil {
+		return err
+	}
+	precompress.Workers = *compressJobs
+	// One publish at a time (they'd write the same website), but the
+	// repository is only locked while it's read and its indexes written:
+	// the website is made from what was read then, and crawls, ingests
+	// and girlifies can go on meanwhile.
+	unpublish, err := repo.LockFile(filepath.Join(a.dir, ".publish.lock"))
+	if err != nil {
+		return err
+	}
+	defer unpublish()
 	unlock, err := s.Lock()
 	if err != nil {
 		return err
 	}
-	defer unlock()
+	locked := true
+	defer func() {
+		if locked {
+			unlock()
+		}
+	}()
 	start := time.Now()
+	// Files are compressed as they're written, and those written since
+	// the last publish (by crawls, say) are found and queued meanwhile.
+	root := a.dir
+	if *noSite {
+		root = s.Dir
+	}
+	q := precompress.NewQueue(encodings)
+	s.Written = q.Add
+	stale := make(chan error, 1)
+	go func() { stale <- q.Stale(root) }()
 	pages, err := s.AllPages()
 	if err != nil {
 		return err
@@ -623,34 +651,39 @@ func (a *app) publish(ctx context.Context, args []string) error {
 		return err
 	}
 	pr.say("📚 published %d pages in %d sections (%d girlified)\n", m.Pages, len(m.Sections), m.Variants[repo.VariantGirl])
+	unlock()
+	locked = false
 	if !*noSite {
 		st, err := site.Build(s, pages, m, site.Options{Out: a.dir, Base: *base, URL: *siteURL,
-			Version: getVersion(), Log: os.Stderr, Progress: pr.report})
+			Version: getVersion(), Log: os.Stderr, Progress: pr.report, Written: q.Add})
 		if err != nil {
 			return err
 		}
 		pr.say("🌸 website: %d files written, %d unchanged, %d removed\n", st.Written, st.Unchanged, st.Removed)
 	}
 	if *gc {
+		// GC deletes, so nothing else may be writing.
+		unlock, err := s.Lock()
+		if err != nil {
+			return err
+		}
 		st, err := s.GC(false)
+		unlock()
 		if err != nil {
 			return err
 		}
 		pr.say("🧹 removed %d unused files (%s)\n", st.Files, humanBytes(st.Bytes))
 	}
-	encodings, err := precompress.Parse(*compress)
-	if err != nil {
+	// Whatever's left to compress, and copies of what's gone since
+	// (pruned pages, collected garbage).
+	if err := <-stale; err != nil {
 		return err
 	}
-	pages, m = nil, nil // the compressors want the memory more
-	runtime.GC()
-	// After the website and GC, so copies of removed files go too.
-	root := a.dir
-	if *noSite {
-		root = s.Dir
+	q.Progress = func(done, queued int) { pr.report("compressing", done, queued) }
+	if err := q.Stale(root); err != nil {
+		return err
 	}
-	precompress.Workers = *compressJobs
-	pst, err := precompress.SweepProgress(root, encodings, func(done, total int) { pr.report("compressing", done, total) })
+	pst, err := q.Wait()
 	if err != nil {
 		return err
 	}
