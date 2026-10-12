@@ -18,7 +18,7 @@
 // It's also where static pages go when offline. /browse/?page=… (from
 // earlier versions) redirects here.
 
-import { repoCache, saveButton, browseURL, chapter, isSeries, pageURL, listingURL as listingAt, sectionShard } from "./girlpages.js";
+import { repoCache, saveButton, browseURL, chapter, isSeries, pageURL, listingURL as listingAt } from "./girlpages.js";
 import { VirtualList } from "./vlist.js";
 import { renderHTML, renderOriginalHTML, esc } from "./render.js";
 import { escapeName, segmentName, searchPage } from "./search.js";
@@ -61,7 +61,6 @@ async function listing(name, sec) {
 // A variant is named after its own hash (the listing gives it), so it's
 // cached forever.
 const variant = (source, v, sha) => cache.get(`contents/${source.slice(0, 2)}/${source}/${v}-${sha}.json`);
-const sectionIndex = (e) => cache.get(`section/${enc(e.section)}-${e.sha256}.json`);
 
 // variantText reassembles a variant, as Variant.Text does in Go.
 function variantText(v) {
@@ -292,102 +291,41 @@ function nameCmp(a, b) {
 const byName = (a, b) => listCmp(a.name, b.name) || (a.sec < b.sec ? -1 : a.sec > b.sec ? 1 : 0);
 
 // listingPlan works out a listing's chunks: {count, load(n) resolving to
-// the chunk's items, letters (letter → the chunk it starts in), total
-// (null if unknown), subs (section → count, or null), prevLetter(n),
-// pageOf(n), chunkForPage(p), chunkOf(name)}. Short sections' indexes are
-// read whole and cut into chunks of CHUNK (the static listing's pages);
-// long sections' shards are read as they're needed, a chunk being the
-// names between one shard's start and the next's, across the chapter's
-// sections.
+// the chunk's items, letters (letter → the chunk it starts in), total,
+// subs (section → count), prevLetter(n), pageOf(n), chunkForPage(p),
+// chunkOf(name)}. Chunks are CHUNK pages, as the static listing's pages
+// are.
 async function listingPlan(entries, src, sub) {
-  const indexes = await Promise.all(entries.map(sectionIndex));
+  // Sections' indexes are a megabyte a shard, so a chapter's are a few
+  // files at most: read them whole.
+  const indexes = await Promise.all(entries.map(async e => ({ section: e.section, pages: await cache.sectionPages(e) })));
   const want = (p) => !src || (p.sources || []).includes(src);
   const toItem = (p, sec) => {
     const other = src && p.other ? p.other[src] : "";
     return { name: p.name, sec, desc: p.description || "", girl: !other && (p.variants || []).includes("girl"),
       url: src ? browse({ page: p.name, sec, src }) : staticPage(p.name, sec) };
   };
-  if (!indexes.some(si => si.shards && si.shards.length)) {
-    const subs = new Map();
-    const items = [];
-    for (const si of indexes) {
-      for (const p of si.pages || []) {
-        if (!want(p)) continue;
-        subs.set(si.section, (subs.get(si.section) || 0) + 1);
-        if (!sub || si.section === sub) items.push(toItem(p, si.section));
-      }
-    }
-    // In the static listings' order, so chunks are their pages.
-    items.sort(byName);
-    const letters = new Map();
-    items.forEach((it, i) => { const l = letterOf(it.name); if (!letters.has(l)) letters.set(l, Math.floor(i / CHUNK) + 1); });
-    return {
-      count: Math.ceil(items.length / CHUNK), total: items.length, subs, letters,
-      load: async (n) => items.slice((n - 1) * CHUNK, n * CHUNK),
-      prevLetter: (n) => (n > 1 ? letterOf(items[(n - 1) * CHUNK - 1].name) : ""),
-      // Chunks are the static listing's pages.
-      pageOf: (n) => n,
-      chunkForPage: (p) => p,
-      chunkOf: (name) => Math.floor(Math.max(0, items.findIndex(it => it.name === name)) / CHUNK) + 1,
-    };
-  }
-  const parts = [], subs = new Map();
-  let total = 0;
+  const subs = new Map();
+  const items = [];
   for (const si of indexes) {
-    const n = si.count || (si.pages || []).length;
-    subs.set(si.section, src ? null : n);
-    if (sub && si.section !== sub) continue;
-    total += n;
-    for (const r of si.shards || []) parts.push({ sec: si.section, first: r.first, last: r.last, sha: r.sha256, count: r.count || 0 });
-    const ps = si.pages || [];
-    if (ps.length) parts.push({ sec: si.section, first: ps[0].name, last: ps[ps.length - 1].name, pages: ps, count: ps.length });
-  }
-  const bounds = [...new Set(parts.map(p => p.first))].sort(listCmp);
-  // A letter's chunk is where names starting with it would begin.
-  const letters = new Map();
-  for (const b of bounds) {
-    const l = letterOf(b);
-    if (!letters.has(l)) letters.set(l, 0);
-  }
-  for (const l of letters.keys()) letters.set(l, chunkOf(l === "#" ? "" : l.toLowerCase()));
-  return {
-    count: bounds.length, total: src ? null : total, subs, letters,
-    load: async (n) => {
-      const lo = bounds[n - 1], hi = n < bounds.length ? bounds[n] : null;
-      const inRange = (name) => listCmp(name, lo) >= 0 && (hi === null || listCmp(name, hi) < 0);
-      const items = [];
-      await Promise.all(parts.filter(p => listCmp(p.last, lo) >= 0 && (hi === null || listCmp(p.first, hi) < 0)).map(async (part) => {
-        const pages = part.pages || (await cache.get(sectionShard(part.sha))).pages;
-        for (const p of pages) if (inRange(p.name) && want(p)) items.push(toItem(p, part.sec));
-      }));
-      return items.sort(byName);
-    },
-    prevLetter: (n) => (n > 1 && letterOf(bounds[n - 2]) === letterOf(bounds[n - 1]) ? letterOf(bounds[n - 1]) : ""),
-    // Chunks don't line up with the static listing's pages, so where a
-    // chunk falls among them is reckoned from the shards' counts.
-    pageOf: (n) => Math.floor(before(n) / CHUNK) + 1,
-    chunkForPage: (p) => {
-      let n = 1;
-      while (n < bounds.length && Math.floor(before(n + 1) / CHUNK) + 1 <= p) n++;
-      return n;
-    },
-    chunkOf,
-  };
-  function chunkOf(name) {
-    let n = 1;
-    while (n < bounds.length && listCmp(bounds[n], name) <= 0) n++;
-    return n;
-  }
-  // before is about how many pages come before chunk n.
-  function before(n) {
-    const b = bounds[n - 1];
-    let k = 0;
-    for (const p of parts) {
-      if (listCmp(p.last, b) < 0) k += p.count;
-      else if (listCmp(p.first, b) < 0) k += p.count / 2;
+    for (const p of si.pages) {
+      if (!want(p)) continue;
+      subs.set(si.section, (subs.get(si.section) || 0) + 1);
+      if (!sub || si.section === sub) items.push(toItem(p, si.section));
     }
-    return k;
   }
+  // In the static listings' order, so chunks are their pages.
+  items.sort(byName);
+  const letters = new Map();
+  items.forEach((it, i) => { const l = letterOf(it.name); if (!letters.has(l)) letters.set(l, Math.floor(i / CHUNK) + 1); });
+  return {
+    count: Math.ceil(items.length / CHUNK), total: items.length, subs, letters,
+    load: async (n) => items.slice((n - 1) * CHUNK, n * CHUNK),
+    prevLetter: (n) => (n > 1 ? letterOf(items[(n - 1) * CHUNK - 1].name) : ""),
+    pageOf: (n) => n,
+    chunkForPage: (p) => p,
+    chunkOf: (name) => Math.floor(Math.max(0, items.findIndex(it => it.name === name)) / CHUNK) + 1,
+  };
 }
 
 // LAYOUT is how series of documents are laid out, where it isn't man's: as
@@ -534,7 +472,14 @@ async function searchView(params) {
   for (const b of app.querySelectorAll("button[data-save-search]")) saveButton(b, cache, "search:" + b.dataset.saveSearch);
   reveal();
   const url = routingFor;
-  await searchPage(app.querySelector("#search"), params, { current: () => location.href === url });
+  await searchPage(app.querySelector("#search"), params, {
+    current: () => location.href === url,
+    // Straight to a page a query names, in place of the search.
+    go: (u) => {
+      history.replaceState(history.state, "", new URL(u, location.href).href);
+      main();
+    },
+  });
 }
 
 function oops(msg) {

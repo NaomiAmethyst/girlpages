@@ -70,6 +70,31 @@ Files named after their own hash (`…/<sha>.json`, `…-<sha>.json`) can be
 checked: hash what you fetched and compare. Readers should, as `girl` does,
 when the content matters.
 
+### Tables
+
+Indexes (section indexes, shard manifests, the page table) are made to be
+small, so lists of records in them are *tables*: the fields are named once,
+in `keys`, and `data` holds each record's values in turn:
+
+```json
+{"keys": ["first", "last", "sha256", "bytes"],
+ "data": ["#endif", "0000001c", "x}Gd…", 66688,
+          "0000001d", "abort", "Q9k(…", 65201]}
+```
+
+That's two records: `{first: "#endif", last: "0000001c", …}` and so on.
+Readers find fields by name, and must ignore ones they don't know.
+
+Hashes in tables are written in *basE91* (40 characters rather than 64),
+with the alphabet
+``ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!#$%&()*+,./:;<=>?@[]^_`{|}~'``
+(basE91's own, with `'` in place of `"`, so they need no escaping in JSON),
+encoding the hash's 32 bytes as basE91 does: taking 13 bits at a time
+from a little-endian bit queue (or 14, when the 13-bit value is 88 or
+less) and writing each value as two characters, the low one (value mod 91)
+first. Paths still have them in hex. `internal/repo/compact.go` and
+`decode91` in `internal/site/static/girlpages.js` are implementations.
+
 ### Paths
 
 All paths are relative to the repository's root, which is wherever its
@@ -194,7 +219,9 @@ highest number.
 | `index/words/shard-ab/<sha>.json` | no | ″ |
 | `index/grams/manifest-<sha>.json` | no | ″ trigrams |
 | `index/grams/shard-ab/<sha>.json` | no | ″ |
-| `index/docs/manifest-<sha>.json` | no | ″ the page table |
+| `index/names/manifest-<sha>.json` | no | ″ the page table: names |
+| `index/names/shard-ab/<sha>.json` | no | ″ |
+| `index/docs/manifest-<sha>.json` | no | ″ the page table: the rest |
 | `index/docs/shard-ab/<sha>.json` | no | ″ |
 
 `<section>` and `<name>` are [escaped](#paths); `<source>` is a source
@@ -217,7 +244,7 @@ The root. Fetch it fresh to see the repository as it is now.
     …
   ],
   "index": {
-    "words": "4532…", "grams": "15b1…", "docs": "6e78…",
+    "words": "4532…", "grams": "15b1…", "names": "90a2…", "docs": "6e78…",
     "variants": {"girl": "7c1d…", "man": "a09e…"}
   },
   "sources": [
@@ -233,7 +260,7 @@ The root. Fetch it fresh to see the repository as it is now.
 | `pages` | How many pages (name and section pairs) there are. |
 | `variants` | For each variant, how many pages' [latest versions](#which-version-is-the-latest) have it. |
 | `sections` | Each section (exact, like `3ssl`), sorted: the hash of its [section index](#sectionsection-shajson), and counts as above. |
-| `index.words`, `.grams`, `.docs` | Hashes of the [search index](#the-search-index) manifests. |
+| `index.words`, `.grams`, `.names`, `.docs` | Hashes of the [search index](#the-search-index) manifests. |
 | `index.variants` | For each variant, the hash of its [variant index](#variant-indexes) manifest. |
 | `sources` | Each [source](#sources), sorted by distro then release (a distro's entry, with no `release`, first): how many pages have a version from it, in all and by [chapter](#names-and-sections). |
 
@@ -352,41 +379,43 @@ One generation of one variant of one page version.
 ### section/&lt;section&gt;-&lt;sha&gt;.json
 
 Every page in one section, sorted by name as listings are (ignoring
-case, then by it; numbers by value).
+case, then by it; numbers by value), as a [table](#tables):
 
 ```json
 {
   "format": 1,
   "section": "1",
-  "pages": [
-    {
-      "name": "tar", "title": "TAR(1)", "description": "an archiving utility",
-      "page": "f0e6…", "source": "3a85…", "variants": ["girl", "man"],
-      "version": "1.35", "versions": 2,
-      "sources": ["arch", "arch/rolling", "debian", "debian/trixie", "rocky"],
-      "other": {"rocky": "366c…"}
-    },
-    …
-  ]
+  "count": 1963,
+  "pages": {
+    "keys": ["name", "title", "description", "page", "source", "variants", "version", "versions", "sources", "other"],
+    "data": [
+      "tar", "TAR(1)", "an archiving utility", "Ak9}…", "q(Lz…", ["girl", "man"], "1.35", 2,
+      ["arch", "arch/rolling", "debian", "debian/trixie", "rocky"], {"rocky": "8^bX…"},
+      …
+    ]
+  }
 }
 ```
 
 | Field | |
 |---|---|
+| `name`, `title`, `description` | The page's name, and its latest version's title and description. |
 | `page` | The hash of the page's [listing](#pagepage-absha-json--listing). |
-| `source`, `variants`, `version`, `title`, `description` | Of its latest version. |
-| `versions` | How many versions it has, if more than one. |
+| `source`, `variants`, `version` | Its latest version's source hash, variants and upstream version (`""` if unknown). |
+| `versions` | How many versions it has (`0` for one). |
 | `sources` | The [source keys](#sources) it has versions from. |
 | `other` | For those of its sources whose version isn't the latest, that version's source hash. |
 
-A long section's index (over about 64 KB) is split: its `pages` is empty,
-and `count` and `shards` say where they are, by ranges of names, each shard
-being a section index of its own (at `section/shard-ab/<sha>.json`) with a
-run of the pages:
+Hashes (`page`, `source` and `other`'s) are in basE91. A long section's
+index (over about a megabyte) is split: it has no `pages`, but `shards`, a
+table of ranges of names (`first`, `last`, `sha256`, `bytes`, `count`),
+each shard being a section index of its own (at
+`section/shard-ab/<sha>.json`) with a run of the pages:
 
 ```json
-{"format": 1, "section": "1", "pages": [], "count": 12034,
- "shards": [{"first": "2to3", "last": "bzmore", "sha256": "1c0d…", "bytes": 65411, "count": 187}, …]}
+{"format": 1, "section": "1", "count": 12034,
+ "shards": {"keys": ["first", "last", "sha256", "bytes", "count"],
+            "data": ["2to3", "fakeroot", "Lw]u…", 1048601, 4401, …]}}
 ```
 
 Readers must read the shards (in order) when there are any.
@@ -397,12 +426,13 @@ Readers must read the shards (in order) when there are any.
 of the versions that have that variant, by key range:
 
 ```json
-{"format": 1, "shards": [{"first": "0003…", "last": "7fff…", "sha256": "e954…", "bytes": 61873}, …]}
+{"format": 1, "shards": {"keys": ["first", "last", "sha256", "bytes"], "data": ["0003…", "7fff…", "s?nP…", 1040873, …]}}
 ```
 
-`bytes`, the shard's size, is optional (it's there so that clients can say
-how big fetching every shard would be); every shard manifest in a
-repository, including the search index's, has this shape.
+That's a *shard manifest*: a [table](#tables) of shards by the range of
+keys each holds (sorted, not overlapping; keys compare as UTF-8 bytes),
+with their hashes (in basE91) and sizes, so clients can say how big fetching
+every shard would be. The search index's words and trigrams have these too.
 
 Each shard, `index/variants/<variant>/shard-ab/<sha>.json`, holds the first
 `length` (16) hex digits of the source hash of each version with that
@@ -510,32 +540,43 @@ The website searches a repository from the browser, fetching only the
 parts a query needs. The index covers every page from every source and the
 text of all its versions.
 
-**The page table.** `index/docs/manifest-<sha>.json` lists its shards:
+**The page table.** Pages are numbered: their *doc ids*. A page keeps its
+id from one publish to the next, new pages taking the next ids, so the
+parts of the table that don't change keep their hashes (and clients' copies
+of them stay good); ids of pages that have gone stay unused, until there
+are so many that everything's numbered afresh, in name order.
+
+The table is in two parts, each in shards of fixed runs of ids (about a
+megabyte each): the names (`index/names/…`), which searches fetch as soon
+as they start, so results can be named as soon as they're found; and the
+rest (`index/docs/…`). Each part's manifest lists its shards by the ids
+they hold, as a [table](#tables):
 
 ```json
-{"format": 1, "count": 7452, "size": 128, "shards": ["6a1f…", "9c02…", …], "bytes": [11245, 10876, …]}
+{"format": 1, "count": 143820,
+ "shards": {"keys": ["first", "last", "sha256", "bytes"], "data": [0, 49999, "Fq2*…", 1251177, 50000, 99999, "c%Wm…", 1244019, …]}}
 ```
 
-(`bytes`, each shard's size in step with `shards`, is optional.)
-
-Pages are numbered (their *doc ids*) in name, then section, order; doc id
-`i` is entry `i % size` of shard `shards[i / size]`, found at
-`index/docs/shard-ab/<sha>.json`:
+`count` is one more than the highest id. A shard of names
+(`index/names/shard-ab/<sha>.json`) has the names and sections of the
+pages from id `first` on; a shard of docs, their descriptions and
+[source keys](#sources), space-separated:
 
 ```json
-{"format": 1, "docs": [["ls", "1", "list directory contents", "debian debian/trixie"], …]}
+{"format": 1, "first": 0, "names": {"keys": ["name", "section"], "data": ["[", "1", "2to3", "1", …]}}
+{"format": 1, "first": 0, "docs": {"keys": ["description", "sources"], "data": ["check file types and compare values", "debian debian/trixie", …]}}
 ```
 
-Each entry is the page's name, section, description and its
-[source keys](#sources), space-separated.
+An unused id has the name `""`.
 
-**Words.** `index/words/manifest-<sha>.json` is a shard manifest (like a
-[variant index's](#variant-indexes)) of word ranges; each
-`index/words/shard-ab/<sha>.json` maps words to postings, `[doc id,
-score]`, best first (at most 400 per word):
+**Words.** `index/words/manifest-<sha>.json` is a
+[shard manifest](#variant-indexes) of word ranges, its shards small (about
+64 KB: a search fetches the ones its words are in); each
+`index/words/shard-ab/<sha>.json` maps words to postings, doc id and score
+in turn, best first (at most 400 per word):
 
 ```json
-{"format": 1, "words": {"directory": [[4120, 140], [5121, 61], …], …}}
+{"format": 1, "words": {"directory": [4120, 140, 5121, 61, …], …}}
 ```
 
 Words are *tokens*: runs of Unicode letters, decimal digits and `_`,
@@ -589,6 +630,12 @@ scores are only advice):
    and that score added (this finds `git-commit`).
 4. Order by score, then doc id. To keep to one source, skip pages without
    it among their source keys (looking at most 2000 pages down).
+
+The website shows the count at once, and the results a screenful at a
+time, each named as soon as its names shard is in and described when its
+docs shard is. A query that names a page exactly (`2 open`, `open(2)`,
+`rfc 9110`: a section, or every section of a chapter in turn, and a name)
+goes straight to it, if it's there, without searching.
 
 ## Recipes
 

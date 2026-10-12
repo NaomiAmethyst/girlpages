@@ -47,9 +47,17 @@ var zstdEncoder = sync.OnceValues(func() (*zstd.Encoder, error) {
 		zstd.WithEncoderConcurrency(workers()), zstd.WithWindowSize(1<<20))
 })
 
-// workers is how many files are compressed at once. The best settings of
-// brotli and zstd take tens of megabytes each, so it stops at 8.
-func workers() int { return min(runtime.NumCPU(), 8) }
+// Workers is how many files are compressed at once: one per CPU, unless
+// it's set. Each takes tens of megabytes at most (windows are fitted to
+// files' sizes).
+var Workers = 0
+
+func workers() int {
+	if Workers > 0 {
+		return Workers
+	}
+	return runtime.NumCPU()
+}
 
 // brotliWindow is the smallest window (as a power of two, from 2^16 to
 // 2^24) that holds n bytes: brotli's biggest would cost memory for nothing

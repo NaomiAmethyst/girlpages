@@ -250,3 +250,64 @@ func TestSectionShards(t *testing.T) {
 		t.Fatalf("import: %+v, %v", st, err)
 	}
 }
+
+func TestBase91(t *testing.T) {
+	for _, s := range []string{"", "a", "girlpages", "\x00\x00\x00", "\xff\xfe\xfd\xfc\xfb"} {
+		e := Encode91([]byte(s))
+		if strings.ContainsAny(e, "\"\\") {
+			t.Errorf("%q encodes with characters JSON escapes: %q", s, e)
+		}
+		if d, err := Decode91(e); err != nil || string(d) != s {
+			t.Errorf("%q → %q → %q, %v", s, e, d, err)
+		}
+	}
+	h := Hash([]byte("x"))
+	e := hash91(h)
+	if back, err := unhash91(e); err != nil || back != h || len(e) > 40 {
+		t.Errorf("hash %s → %s (%d) → %s, %v", h, e, len(e), back, err)
+	}
+}
+
+// Pages keep their ids across publishes, new ones going on the end, so
+// the page table's shards that don't change keep their hashes.
+func TestStableIDs(t *testing.T) {
+	s, _ := Open(t.TempDir())
+	pkg := Package{Distro: "debian", Release: "trixie", Name: "p", Version: "1"}
+	for _, n := range []string{"b", "d", "f"} {
+		addVersion(t, s, n, "1", "a page", "girly", pkg, 1)
+	}
+	publish(t, s)
+	ids := func() map[string]int {
+		m, _ := s.Manifest()
+		var nm TableManifest
+		s.Read(IndexManifestPath("names", m.Index.Names), &nm)
+		out := map[string]int{}
+		for _, r := range nm.Shards {
+			var sh NameShard
+			s.Read(ShardPath("names", r.SHA256), &sh)
+			for i, n := range sh.Names {
+				if n.Name != "" {
+					out[n.Name] = sh.First + i
+				}
+			}
+		}
+		return out
+	}
+	before := ids()
+	addVersion(t, s, "a", "1", "a new page", "girly", pkg, 2)
+	publish(t, s)
+	after := ids()
+	for n, id := range before {
+		if after[n] != id {
+			t.Errorf("%s was %d, now %d", n, id, after[n])
+		}
+	}
+	if after["a"] != 3 {
+		t.Errorf("the new page should go on the end: %v", after)
+	}
+	// It's found, by its new id.
+	sr := &Searcher{Client: NewClient(s.Dir, time.Second)}
+	if hits, err := sr.Search(context.Background(), "new", 5); err != nil || len(hits) != 1 || hits[0].Name != "a" {
+		t.Errorf("search: %+v, %v", hits, err)
+	}
+}

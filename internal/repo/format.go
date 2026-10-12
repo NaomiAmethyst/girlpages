@@ -36,6 +36,7 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -88,6 +89,9 @@ type SectionEntry struct {
 type IndexEntry struct {
 	Words string `json:"words"`
 	Grams string `json:"grams"`
+	// Names and Docs are the page table: what each page found is called,
+	// and what it says about itself.
+	Names string `json:"names"`
 	Docs  string `json:"docs"`
 	// Variants names, for each variant, the manifest of its index (a
 	// ShardManifest of SourceShards), which says which page versions have
@@ -306,64 +310,185 @@ type Generator struct {
 	Generated     time.Time `json:"generated"`
 }
 
-// SectionIndex lists every page in one section, sorted by name. A long
-// section's index has no Pages, but Shards: ranges of names (and how many
-// pages each has), each another SectionIndex with those pages. See
-// Store.SectionPages and Client.SectionPages.
+// SectionIndex lists every page in one section, sorted by name as listings
+// are (manpage.ListLess). A long section's index has no Pages, but Shards:
+// ranges of names (and how many pages each has), each another
+// SectionIndex with those pages. See Store.SectionPages and
+// Client.SectionPages.
 type SectionIndex struct {
-	Format  int          `json:"format"`
-	Section string       `json:"section"`
-	Pages   []IndexPage  `json:"pages"`
-	Count   int          `json:"count,omitempty"`
-	Shards  []ShardRange `json:"shards,omitempty"`
+	Format  int        `json:"format"`
+	Section string     `json:"section"`
+	Count   int        `json:"count,omitempty"`
+	Pages   IndexPages `json:"pages,omitempty"`
+	Shards  Shards     `json:"shards,omitempty"`
 }
 
 // IndexPage is a page in a SectionIndex.
 type IndexPage struct {
-	Name        string `json:"name"`
-	Title       string `json:"title,omitempty"`
-	Description string `json:"description,omitempty"`
+	Name        string
+	Title       string
+	Description string
 	// Page is the SHA-256 of the page's Listing.
-	Page string `json:"page"`
+	Page string
 	// Source is the latest version's source hash, and Variants the
 	// variants it has.
-	Source   string   `json:"source"`
-	Variants []string `json:"variants,omitempty"`
+	Source   string
+	Variants []string
 	// Version is the latest version's upstream version number, if known.
-	Version string `json:"version,omitempty"`
+	Version string
 	// Versions is how many versions the page has.
-	Versions int `json:"versions,omitempty"`
+	Versions int
 	// Sources are the keys of the sources the page has versions from
 	// ("debian", "debian/trixie", "upstream"); Other gives, for those whose
 	// version isn't the latest, the source hash of theirs.
-	Sources []string          `json:"sources,omitempty"`
-	Other   map[string]string `json:"other,omitempty"`
+	Sources []string
+	Other   map[string]string
+}
+
+// IndexPages are a section's pages, as a Table: name, title, description,
+// page and source (hashes, in basE91), variants, version, versions,
+// sources, and other (each a hash in basE91).
+type IndexPages []IndexPage
+
+var indexPageKeys = []string{"name", "title", "description", "page", "source", "variants", "version", "versions", "sources", "other"}
+
+func (p IndexPage) values() []any {
+	vs, ss := p.Variants, p.Sources
+	if vs == nil {
+		vs = []string{}
+	}
+	if ss == nil {
+		ss = []string{}
+	}
+	other := map[string]string{}
+	for k, h := range p.Other {
+		other[k] = hash91(h)
+	}
+	return []any{p.Name, p.Title, p.Description, hash91(p.Page), hash91(p.Source), vs, p.Version, p.Versions, ss, other}
+}
+
+func (ps IndexPages) MarshalJSON() ([]byte, error) {
+	t := newTable(indexPageKeys...)
+	for _, p := range ps {
+		t.add(p.values()...)
+	}
+	return t.MarshalJSON()
+}
+
+func (ps *IndexPages) UnmarshalJSON(b []byte) error {
+	var t Table
+	if err := json.Unmarshal(b, &t); err != nil {
+		return err
+	}
+	*ps = nil
+	return t.rows(func(get func(string) json.RawMessage) error {
+		var p IndexPage
+		var page, source string
+		var other map[string]string
+		for _, f := range []struct {
+			key string
+			v   any
+		}{{"name", &p.Name}, {"title", &p.Title}, {"description", &p.Description}, {"page", &page}, {"source", &source},
+			{"variants", &p.Variants}, {"version", &p.Version}, {"versions", &p.Versions}, {"sources", &p.Sources}, {"other", &other}} {
+			if err := field(get(f.key), f.v); err != nil {
+				return fmt.Errorf("section index %s: %w", f.key, err)
+			}
+		}
+		var err error
+		if p.Page, err = unhash91(page); err != nil {
+			return err
+		}
+		if p.Source, err = unhash91(source); err != nil {
+			return err
+		}
+		for k, h := range other {
+			if p.Other == nil {
+				p.Other = map[string]string{}
+			}
+			if p.Other[k], err = unhash91(h); err != nil {
+				return err
+			}
+		}
+		*ps = append(*ps, p)
+		return nil
+	})
 }
 
 // ShardManifest lists index shards by the range of keys each holds. Shards
 // are sorted and don't overlap; keys compare as UTF-8 bytes.
 type ShardManifest struct {
-	Format int          `json:"format"`
-	Shards []ShardRange `json:"shards"`
+	Format int    `json:"format"`
+	Shards Shards `json:"shards"`
 }
 
 // ShardRange is one shard in a ShardManifest.
 type ShardRange struct {
-	First  string `json:"first"`
-	Last   string `json:"last"`
-	SHA256 string `json:"sha256"`
+	First  string
+	Last   string
+	SHA256 string
 	// Bytes is the shard's size, so clients can say how much fetching
-	// every shard would be (0 if not known).
-	Bytes int64 `json:"bytes,omitempty"`
+	// every shard would be.
+	Bytes int64
 	// Count, for section index shards, is how many pages the shard has.
-	Count int `json:"count,omitempty"`
+	Count int
 }
 
-// WordShard maps words to the pages they appear in. Postings are
-// [doc id, score], best first; doc ids index the DocsManifest.
+// Shards are a list of shards, as a Table: first, last, sha256 (in
+// basE91), bytes, and for section index shards, count.
+type Shards []ShardRange
+
+func (s Shards) MarshalJSON() ([]byte, error) {
+	counts := false
+	for _, r := range s {
+		counts = counts || r.Count > 0
+	}
+	keys := []string{"first", "last", "sha256", "bytes"}
+	if counts {
+		keys = append(keys, "count")
+	}
+	t := newTable(keys...)
+	for _, r := range s {
+		if counts {
+			t.add(r.First, r.Last, hash91(r.SHA256), r.Bytes, r.Count)
+		} else {
+			t.add(r.First, r.Last, hash91(r.SHA256), r.Bytes)
+		}
+	}
+	return t.MarshalJSON()
+}
+
+func (s *Shards) UnmarshalJSON(b []byte) error {
+	var t Table
+	if err := json.Unmarshal(b, &t); err != nil {
+		return err
+	}
+	*s = nil
+	return t.rows(func(get func(string) json.RawMessage) error {
+		var r ShardRange
+		var sha string
+		for _, f := range []struct {
+			key string
+			v   any
+		}{{"first", &r.First}, {"last", &r.Last}, {"sha256", &sha}, {"bytes", &r.Bytes}, {"count", &r.Count}} {
+			if err := field(get(f.key), f.v); err != nil {
+				return fmt.Errorf("shards %s: %w", f.key, err)
+			}
+		}
+		var err error
+		if r.SHA256, err = unhash91(sha); err != nil {
+			return err
+		}
+		*s = append(*s, r)
+		return nil
+	})
+}
+
+// WordShard maps words to the pages they appear in. Postings are doc id
+// and score, in turn, best first: [id, score, id, score, …]; doc ids index
+// the page table (names and docs).
 type WordShard struct {
-	Format int                 `json:"format"`
-	Words  map[string][][2]int `json:"words"`
+	Format int              `json:"format"`
+	Words  map[string][]int `json:"words"`
 }
 
 // SourceShard is part of a variant's index: the first Length hex digits of
@@ -380,22 +505,148 @@ type SourceShard struct {
 // costs a request that finds nothing) is vanishingly unlikely.
 const SourceKeyLength = 16
 
-// DocsManifest lists the shards of the search index's page table. Doc id
-// i is entry i%Size of shard i/Size. Ids are in name, then section, order.
-type DocsManifest struct {
+// TableManifest lists the shards of the page table's names or docs, by the
+// range of doc ids each holds. Count is one more than the highest id.
+type TableManifest struct {
 	Format int      `json:"format"`
 	Count  int      `json:"count"`
-	Size   int      `json:"size"`
-	Shards []string `json:"shards"`
-	// Bytes is each shard's size, in step with Shards (if known).
-	Bytes []int64 `json:"bytes,omitempty"`
+	Shards IDShards `json:"shards"`
 }
 
-// DocShard is a slice of the page table: [name, section, description,
-// source keys separated by spaces].
+// IDRange is a shard of the page table: ids First to Last.
+type IDRange struct {
+	First, Last int
+	SHA256      string
+	Bytes       int64
+}
+
+// IDShards are a list of the page table's shards, as a Table: first,
+// last, sha256 (in basE91), bytes.
+type IDShards []IDRange
+
+func (s IDShards) MarshalJSON() ([]byte, error) {
+	t := newTable("first", "last", "sha256", "bytes")
+	for _, r := range s {
+		t.add(r.First, r.Last, hash91(r.SHA256), r.Bytes)
+	}
+	return t.MarshalJSON()
+}
+
+func (s *IDShards) UnmarshalJSON(b []byte) error {
+	var t Table
+	if err := json.Unmarshal(b, &t); err != nil {
+		return err
+	}
+	*s = nil
+	return t.rows(func(get func(string) json.RawMessage) error {
+		var r IDRange
+		var sha string
+		for _, f := range []struct {
+			key string
+			v   any
+		}{{"first", &r.First}, {"last", &r.Last}, {"sha256", &sha}, {"bytes", &r.Bytes}} {
+			if err := field(get(f.key), f.v); err != nil {
+				return fmt.Errorf("shards %s: %w", f.key, err)
+			}
+		}
+		var err error
+		if r.SHA256, err = unhash91(sha); err != nil {
+			return err
+		}
+		*s = append(*s, r)
+		return nil
+	})
+}
+
+// Find is the shard holding id, if any.
+func (s IDShards) Find(id int) (IDRange, bool) {
+	i := sort.Search(len(s), func(i int) bool { return s[i].Last >= id })
+	if i < len(s) && s[i].First <= id {
+		return s[i], true
+	}
+	return IDRange{}, false
+}
+
+// NameShard is a run of the page table's names, from id First: each page's
+// name and section ("" for an id no page has any more).
+type NameShard struct {
+	Format int       `json:"format"`
+	First  int       `json:"first"`
+	Names  NameTable `json:"names"`
+}
+
+// PageName is a page's name and section.
+type PageName struct{ Name, Section string }
+
+// NameTable is names, as a Table: name, section.
+type NameTable []PageName
+
+func (n NameTable) MarshalJSON() ([]byte, error) {
+	t := newTable("name", "section")
+	for _, p := range n {
+		t.add(p.Name, p.Section)
+	}
+	return t.MarshalJSON()
+}
+
+func (n *NameTable) UnmarshalJSON(b []byte) error {
+	var t Table
+	if err := json.Unmarshal(b, &t); err != nil {
+		return err
+	}
+	*n = nil
+	return t.rows(func(get func(string) json.RawMessage) error {
+		var p PageName
+		if err := field(get("name"), &p.Name); err != nil {
+			return err
+		}
+		if err := field(get("section"), &p.Section); err != nil {
+			return err
+		}
+		*n = append(*n, p)
+		return nil
+	})
+}
+
+// DocShard is a run of the page table's docs, from id First: each page's
+// description, and the keys of the sources it's from, separated by spaces.
 type DocShard struct {
-	Format int         `json:"format"`
-	Docs   [][4]string `json:"docs"`
+	Format int      `json:"format"`
+	First  int      `json:"first"`
+	Docs   DocTable `json:"docs"`
+}
+
+// PageDoc is what the page table says about a page, besides its name.
+type PageDoc struct{ Description, Sources string }
+
+// DocTable is docs, as a Table: description, sources.
+type DocTable []PageDoc
+
+func (d DocTable) MarshalJSON() ([]byte, error) {
+	t := newTable("description", "sources")
+	for _, p := range d {
+		t.add(p.Description, p.Sources)
+	}
+	return t.MarshalJSON()
+}
+
+func (d *DocTable) UnmarshalJSON(b []byte) error {
+	var t Table
+	if err := json.Unmarshal(b, &t); err != nil {
+		return err
+	}
+	*d = nil
+	return t.rows(func(get func(string) json.RawMessage) error {
+		var p PageDoc
+		if err := field(get("description"), &p.Description); err != nil {
+			return err
+		}
+		if err := field(get("sources"), &p.Sources); err != nil {
+			return err
+		}
+		*d = append(*d, p)
+		return nil
+	})
 }
 
 // GramShard maps trigrams to the words containing them. Pages holds, in

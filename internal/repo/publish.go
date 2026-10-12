@@ -77,6 +77,7 @@ func (s *Store) AllPages() ([]PageRef, error) {
 // manifest.json from the pages in the store. The caller must hold Lock.
 func (s *Store) Publish(pages []PageRef) (*Manifest, error) {
 	m := &Manifest{Format: Format, Generated: now(), Sources: Sources(pages), Variants: map[string]int{}}
+	ids, count := s.assignIDs(pages)
 
 	// The search index wants all of every page's text: every version's,
 	// as people may be looking for an option only an old one has.
@@ -87,7 +88,7 @@ func (s *Store) Publish(pages []PageRef) (*Manifest, error) {
 		defer c.add()
 		p := pages[i]
 		keys, _ := p.Listing.SourceKeys()
-		d := IndexDoc{Name: p.Pointer.Name, Section: p.Pointer.Section, Description: p.Current().Description,
+		d := IndexDoc{ID: ids[i], Name: p.Pointer.Name, Section: p.Pointer.Section, Description: p.Current().Description,
 			Sources: keys}
 		var body strings.Builder
 		descs := map[string]bool{d.Description: true}
@@ -183,16 +184,7 @@ func (s *Store) Publish(pages []PageRef) (*Manifest, error) {
 	if m.Index.Grams, err = s.writeShards("grams", bi.GramRanges, func(i int) any { return &bi.Grams[i] }); err != nil {
 		return nil, err
 	}
-	dm := DocsManifest{Format: Format, Count: bi.DocCount, Size: docShardSize}
-	for i := range bi.Docs {
-		sha, n, err := s.writeSized(func(sha string) string { return ShardPath("docs", sha) }, &bi.Docs[i])
-		if err != nil {
-			return nil, err
-		}
-		dm.Shards = append(dm.Shards, sha)
-		dm.Bytes = append(dm.Bytes, n)
-	}
-	if m.Index.Docs, err = s.WriteAddressed(func(sha string) string { return IndexManifestPath("docs", sha) }, &dm); err != nil {
+	if m.Index.Names, m.Index.Docs, err = s.writePageTable(docs, count); err != nil {
 		return nil, err
 	}
 
@@ -206,9 +198,114 @@ func (s *Store) Publish(pages []PageRef) (*Manifest, error) {
 	return m, nil
 }
 
+// The page table's shards hold fixed runs of ids, about a megabyte each,
+// so a publish that adds pages (at the end) leaves the others as they
+// were, and clients' copies of them good.
+const (
+	namesPerShard = 50000
+	docsPerShard  = 10000
+)
+
+// assignIDs gives each page its doc id: the one it had in the last
+// published index, if it was in it, or a new one after the rest. Ids of
+// pages that have gone stay unused, until there are so many that it's
+// worth numbering everything afresh (in name order, so ties in scores come
+// out alphabetical).
+func (s *Store) assignIDs(pages []PageRef) ([]int, int) {
+	key := func(name, sec string) string { return sec + "\x00" + name }
+	old := map[string]int{}
+	count := 0
+	if m, err := s.Manifest(); err == nil && m.Index.Names != "" {
+		var nm TableManifest
+		if s.Read(IndexManifestPath("names", m.Index.Names), &nm) == nil {
+			for _, r := range nm.Shards {
+				var sh NameShard
+				if s.Read(ShardPath("names", r.SHA256), &sh) != nil {
+					old, count = map[string]int{}, 0
+					break
+				}
+				for i, n := range sh.Names {
+					if n.Name != "" {
+						old[key(n.Name, n.Section)] = sh.First + i
+					}
+				}
+			}
+			count = nm.Count
+		}
+	}
+	kept := 0
+	for _, p := range pages {
+		if _, ok := old[key(p.Pointer.Name, p.Pointer.Section)]; ok {
+			kept++
+		}
+	}
+	if count > 0 && kept*10 < count*7 {
+		old, count = map[string]int{}, 0 // over 30% unused: start again
+	}
+	order := make([]int, len(pages))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(a, b int) bool {
+		pa, pb := pages[order[a]].Pointer, pages[order[b]].Pointer
+		if pa.Name != pb.Name {
+			return pa.Name < pb.Name
+		}
+		return pa.Section < pb.Section
+	})
+	ids := make([]int, len(pages))
+	for _, i := range order {
+		p := pages[i].Pointer
+		if id, ok := old[key(p.Name, p.Section)]; ok {
+			ids[i] = id
+			continue
+		}
+		ids[i] = count
+		count++
+	}
+	return ids, count
+}
+
+// writePageTable writes the page table: names and docs, in fixed runs of
+// ids, returning their manifests' hashes.
+func (s *Store) writePageTable(docs []IndexDoc, count int) (string, string, error) {
+	names := make([]PageName, count)
+	table := make([]PageDoc, count)
+	for _, d := range docs {
+		names[d.ID] = PageName{Name: d.Name, Section: d.Section}
+		table[d.ID] = PageDoc{Description: d.Description, Sources: strings.Join(d.Sources, " ")}
+	}
+	nm := TableManifest{Format: Format, Count: count}
+	for i := 0; i < count; i += namesPerShard {
+		j := min(i+namesPerShard, count)
+		sha, n, err := s.writeSized(func(sha string) string { return ShardPath("names", sha) },
+			&NameShard{Format: Format, First: i, Names: names[i:j]})
+		if err != nil {
+			return "", "", err
+		}
+		nm.Shards = append(nm.Shards, IDRange{First: i, Last: j - 1, SHA256: sha, Bytes: n})
+	}
+	dm := TableManifest{Format: Format, Count: count}
+	for i := 0; i < count; i += docsPerShard {
+		j := min(i+docsPerShard, count)
+		sha, n, err := s.writeSized(func(sha string) string { return ShardPath("docs", sha) },
+			&DocShard{Format: Format, First: i, Docs: table[i:j]})
+		if err != nil {
+			return "", "", err
+		}
+		dm.Shards = append(dm.Shards, IDRange{First: i, Last: j - 1, SHA256: sha, Bytes: n})
+	}
+	nsha, err := s.WriteAddressed(func(sha string) string { return IndexManifestPath("names", sha) }, &nm)
+	if err != nil {
+		return "", "", err
+	}
+	dsha, err := s.WriteAddressed(func(sha string) string { return IndexManifestPath("docs", sha) }, &dm)
+	return nsha, dsha, err
+}
+
 // sectionShardBytes is about how big a section index (or a shard of one)
 // grows before it's split.
-var sectionShardBytes = 64 << 10
+var sectionShardBytes = 1 << 20
 
 // writeSectionIndex writes a section's index, split into shards if it's
 // long, returning its hash.
@@ -221,7 +318,7 @@ func (s *Store) writeSectionIndex(si *SectionIndex) (string, error) {
 	var sizes []int
 	total := 0
 	for _, p := range si.Pages {
-		b, err := Encode(p)
+		b, err := marshal(p.values())
 		if err != nil {
 			return "", err
 		}
@@ -231,7 +328,7 @@ func (s *Store) writeSectionIndex(si *SectionIndex) (string, error) {
 	if total <= sectionShardBytes {
 		return write(si)
 	}
-	idx := &SectionIndex{Format: Format, Section: si.Section, Pages: []IndexPage{}, Count: len(si.Pages)}
+	idx := &SectionIndex{Format: Format, Section: si.Section, Count: len(si.Pages)}
 	for i := 0; i < len(si.Pages); {
 		j, n := i, 0
 		for j < len(si.Pages) && (j == i || n+sizes[j] <= sectionShardBytes) {
@@ -267,8 +364,8 @@ func (s *Store) SectionPages(e SectionEntry) ([]IndexPage, error) {
 }
 
 // sourceShardSize is how many keys go in each variant index shard: about
-// 64 KB.
-const sourceShardSize = 3500
+// a megabyte (fetched once, for a bulk run).
+var sourceShardSize = 55000
 
 // writeVariantIndexes writes an index of the versions that have each
 // variant, returning each one's manifest hash.
@@ -355,13 +452,15 @@ func (s *Store) GC(dryRun bool) (GCStats, error) {
 			live[SectionShardPath(r.SHA256)] = true
 		}
 	}
-	live[IndexManifestPath("docs", m.Index.Docs)] = true
-	var dm DocsManifest
-	if err := s.Read(IndexManifestPath("docs", m.Index.Docs), &dm); err != nil {
-		return st, err
-	}
-	for _, sha := range dm.Shards {
-		live[ShardPath("docs", sha)] = true
+	for kind, sha := range map[string]string{"names": m.Index.Names, "docs": m.Index.Docs} {
+		live[IndexManifestPath(kind, sha)] = true
+		var tm TableManifest
+		if err := s.Read(IndexManifestPath(kind, sha), &tm); err != nil {
+			return st, err
+		}
+		for _, r := range tm.Shards {
+			live[ShardPath(kind, r.SHA256)] = true
+		}
 	}
 	kinds := map[string]string{"words": m.Index.Words, "grams": m.Index.Grams}
 	for variant, sha := range m.Index.Variants {

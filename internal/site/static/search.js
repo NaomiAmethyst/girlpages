@@ -5,7 +5,7 @@
 // browser, fetching only the shards a query needs. This is the same
 // algorithm as Searcher in internal/repo/search.go; keep them in step.
 
-import { repoCache, escapeName, segmentName, browseURL, pageURL } from "./girlpages.js";
+import { repoCache, escapeName, segmentName, browseURL, pageURL, shardsOf, rows, chapter } from "./girlpages.js";
 
 export { escapeName, segmentName };
 
@@ -96,14 +96,16 @@ export class Searcher {
       this.loaded = (async () => {
         this.manifest = await this.get("manifest.json");
         const ix = this.manifest.index;
-        const [words, grams, docs] = await Promise.all([
+        const [words, grams, names, docs] = await Promise.all([
           this.get(`index/words/manifest-${ix.words}.json`),
           this.get(`index/grams/manifest-${ix.grams}.json`),
+          this.get(`index/names/manifest-${ix.names}.json`),
           this.get(`index/docs/manifest-${ix.docs}.json`),
         ]);
-        this.words = words.shards;
-        this.grams = grams.shards;
-        this.docs = docs;
+        this.words = shardsOf(words);
+        this.grams = shardsOf(grams);
+        this.names = shardsOf(names);
+        this.docs = shardsOf(docs);
       })();
       this.loaded.catch(() => { this.loaded = null; });
     }
@@ -124,17 +126,53 @@ export class Searcher {
     const r = findRange(this.words, w);
     if (!r) return [];
     const sh = await this.shard("words", r.sha256);
-    return Object.hasOwn(sh.words, w) ? sh.words[w] : [];
+    if (!Object.hasOwn(sh.words, w)) return [];
+    const flat = sh.words[w], out = [];
+    for (let i = 0; i + 1 < flat.length; i += 2) out.push([flat[i], flat[i + 1]]);
+    return out;
   }
 
-  // doc returns [name, section, description] for a doc id.
+  // tableShard is the page table's shard (names or docs) holding id, read
+  // as {first, rows}.
+  async tableShard(kind, id) {
+    const r = (kind === "names" ? this.names : this.docs).find(x => x.first <= id && id <= x.last);
+    if (!r) throw new Error(`search index has no page ${id}`);
+    const key = kind + ":" + r.sha256;
+    if (!this.tables) this.tables = new Map();
+    if (!this.tables.has(key)) {
+      const p = this.shard(kind, r.sha256).then(sh => ({ first: sh.first, rows: rows(sh[kind]) }));
+      p.catch(() => this.tables.delete(key));
+      this.tables.set(key, p);
+    }
+    return this.tables.get(key);
+  }
+
+  // name returns [name, section] for a doc id.
+  async name(id) {
+    const t = await this.tableShard("names", id);
+    const r = t.rows[id - t.first];
+    return r ? [r.name, r.section] : ["", ""];
+  }
+
+  // docOf returns [description, sources] for a doc id.
+  async docOf(id) {
+    const t = await this.tableShard("docs", id);
+    const r = t.rows[id - t.first];
+    return r ? [r.description, r.sources] : ["", ""];
+  }
+
+  // doc returns [name, section, description, sources] for a doc id.
   async doc(id) {
-    const size = this.docs.size, i = Math.floor(id / size);
-    if (size < 1 || id < 0 || i >= this.docs.shards.length) throw new Error(`search index has no page ${id}`);
-    const sh = await this.shard("docs", this.docs.shards[i]);
-    const d = sh.docs[id % size];
-    if (!d) throw new Error(`search index has no page ${id}`);
-    return d;
+    const [[name, section], [description, sources]] = await Promise.all([this.name(id), this.docOf(id)]);
+    return [name, section, description, sources];
+  }
+
+  // prefetchNames starts fetching every shard of the page table's names
+  // (a few, about a megabyte each, cached after), so that a search's
+  // results can be named as soon as they're found.
+  async prefetchNames() {
+    await this.load();
+    await Promise.all(this.names.map(r => this.tableShard("names", r.first).catch(() => {})));
   }
 
   async prefixWords(p) {
@@ -286,6 +324,30 @@ function addBest(m, id, score) {
   if (!m.has(id) || score > m.get(id)) m.set(id, score);
 }
 
+// directPage is the page a query names exactly, if there's one: "2 open",
+// "open(2)", "rfc 9110" (a section, or a chapter's sections in order, and
+// a name). Search goes straight there.
+export async function directPage(query, searcher) {
+  const q = query.trim();
+  let m = /^(\S+)\s+(\S+)$/.exec(q), sec, name;
+  if (m) [sec, name] = [m[1].toLowerCase(), m[2]];
+  else if ((m = /^([^\s()]+)\(([^\s()]+)\)$/.exec(q))) [name, sec] = [m[1], m[2].toLowerCase()];
+  else return null;
+  await searcher.load();
+  const secs = (searcher.manifest.sections || []).map(e => e.section);
+  const tries = secs.filter(x => x === sec);
+  if (chapter(sec) === sec) tries.push(...secs.filter(x => x !== sec && chapter(x) === sec));
+  for (const x of tries) {
+    try {
+      await searcher.cache.get(`page/name-${encodeURIComponent(escapeName(x))}/${encodeURIComponent(escapeName(name))}.json`);
+      return { name, sec: x };
+    } catch (e) {
+      if (e.status !== 404) return null;
+    }
+  }
+  return null;
+}
+
 // searchers keeps one Searcher per repository, so the index files a search
 // has loaded serve the next.
 const searchers = new Map();
@@ -296,8 +358,9 @@ export function searcher(repo) {
 
 // searchPage runs the search page in box (the static one, or the app's):
 // ?q=words, and &src=debian/trixie to keep to a source. current() says
-// whether it's still wanted.
-export async function searchPage(box, params, { current = () => true } = {}) {
+// whether it's still wanted; go(url) is how it goes straight to a page a
+// query names exactly.
+export async function searchPage(box, params, { current = () => true, go = (u) => location.replace(u) } = {}) {
   const $ = (id) => box.querySelector("#" + id);
   const status = $("search-status");
   const list = $("search-results");
@@ -344,6 +407,11 @@ export async function searchPage(box, params, { current = () => true } = {}) {
   const saved = savedOnly ? " saved" : "";
   try {
     const accept = savedOnly ? (h) => s.cache.hasPage(h.name, h.section, src) : null;
+    s.prefetchNames().catch(() => {});
+    const direct = await directPage(q, s).catch(() => null);
+    if (direct && current()) {
+      return go(src ? browseURL(base, { page: direct.name, sec: direct.sec, src }) : pageURL(base, direct.name, direct.sec));
+    }
     const ranked = await s.rank(q);
     if (!current()) return;
     list.replaceChildren();
@@ -365,16 +433,18 @@ export async function searchPage(box, params, { current = () => true } = {}) {
       list.append(li);
       return li;
     };
-    const fill = (li, h) => {
+    const named = (li, name, section) => {
       li.className = "";
       const a = li.querySelector("a");
-      a.href = src ? browseURL(base, { page: h.name, sec: h.section, src }) : pageURL(base, h.name, h.section);
-      const name = a.querySelector(".name");
-      name.textContent = h.name;
+      a.href = src ? browseURL(base, { page: name, sec: section, src }) : pageURL(base, name, section);
+      a.querySelector(".name").textContent = name;
       const sec = document.createElement("span");
       sec.className = "sec";
-      sec.textContent = `(${h.section})`;
+      sec.textContent = `(${section})`;
       a.append(sec);
+    };
+    const fill = (li, h) => {
+      named(li, h.name, h.section);
       li.querySelector(".desc").textContent = h.description;
     };
     const page = async () => {
@@ -385,9 +455,18 @@ export async function searchPage(box, params, { current = () => true } = {}) {
           const batch = ranked.slice(next, next + PAGE);
           next += batch.length;
           more = next < ranked.length;
-          await Promise.all(batch.map(([id, score]) => {
+          // Each is named as soon as its name's in (the names are being
+          // fetched since the search started), and described after.
+          await Promise.all(batch.map(async ([id]) => {
             const li = row();
-            return s.doc(id).then(d => fill(li, hit(d, score)), () => li.remove());
+            try {
+              const [name, section] = await s.name(id);
+              named(li, name, section);
+              const [description] = await s.docOf(id);
+              li.querySelector(".desc").textContent = description;
+            } catch {
+              li.remove();
+            }
           }));
           shown += batch.length;
         } else {

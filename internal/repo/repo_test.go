@@ -372,6 +372,8 @@ func TestVariantIndex(t *testing.T) {
 }
 
 func TestVariantIndexShards(t *testing.T) {
+	defer func(n int) { sourceShardSize = n }(sourceShardSize)
+	sourceShardSize = 1000
 	s, _ := Open(t.TempDir())
 	var pages []PageRef
 	want := map[string]bool{}

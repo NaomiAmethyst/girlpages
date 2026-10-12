@@ -674,14 +674,14 @@ console.log(JSON.stringify(out));
 	for _, e := range m2.Sections {
 		live[repo.SectionIndexPath(e.Section, e.SHA256)] = true
 	}
-	for _, kind := range []string{"words", "grams", "docs"} {
-		sha := map[string]string{"words": m2.Index.Words, "grams": m2.Index.Grams, "docs": m2.Index.Docs}[kind]
+	for _, kind := range []string{"words", "grams", "names", "docs"} {
+		sha := map[string]string{"words": m2.Index.Words, "grams": m2.Index.Grams, "names": m2.Index.Names, "docs": m2.Index.Docs}[kind]
 		live[repo.IndexManifestPath(kind, sha)] = true
-		if kind == "docs" {
-			var dm repo.DocsManifest
-			s2.Read(repo.IndexManifestPath(kind, sha), &dm)
-			for _, sh := range dm.Shards {
-				live[repo.ShardPath(kind, sh)] = true
+		if kind == "names" || kind == "docs" {
+			var tm repo.TableManifest
+			s2.Read(repo.IndexManifestPath(kind, sha), &tm)
+			for _, r := range tm.Shards {
+				live[repo.ShardPath(kind, r.SHA256)] = true
 			}
 			continue
 		}
@@ -956,5 +956,36 @@ func TestPagination(t *testing.T) {
 	build(t, out, ps[:6], o)
 	if _, err := os.Stat(filepath.Join(out, "section", "6", "page", "3", "index.html")); err == nil {
 		t.Error("page 3 of section 6 is still there")
+	}
+}
+
+// TestBase91JS checks that the browser decodes basE91 as Go encodes it.
+func TestBase91JS(t *testing.T) {
+	var in [][]byte
+	var enc []string
+	for i := 0; i < 200; i++ {
+		b := make([]byte, i%40)
+		for j := range b {
+			b[j] = byte((i*131 + j*31) ^ (j * 7))
+		}
+		in = append(in, b)
+		enc = append(enc, repo.Encode91(b))
+	}
+	es, _ := json.Marshal(enc)
+	got := node(t, fmt.Sprintf(`
+const { decode91 } = await import(%q);
+console.log(JSON.stringify(%s.map(e => decode91(e))));`, staticFile(t, "girlpages.js"), es))
+	var dec [][]int
+	if err := json.Unmarshal(got, &dec); err != nil {
+		t.Fatalf("%v: %s", err, got)
+	}
+	for i, b := range in {
+		ok := len(dec[i]) == len(b)
+		for j := 0; ok && j < len(b); j++ {
+			ok = dec[i][j] == int(b[j])
+		}
+		if !ok {
+			t.Errorf("%x encoded %q, decoded %v", b, enc[i], dec[i])
+		}
 	}
 }

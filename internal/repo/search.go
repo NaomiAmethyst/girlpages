@@ -31,7 +31,8 @@ type Searcher struct {
 	man    *Manifest
 	words  *ShardManifest
 	grams  *ShardManifest
-	docs   *DocsManifest
+	names  *TableManifest
+	docs   *TableManifest
 	shards map[string]any
 }
 
@@ -259,23 +260,40 @@ func (s *Searcher) postings(ctx context.Context, w string) ([][2]int, error) {
 	if err != nil || sh == nil {
 		return nil, err
 	}
-	return sh.Words[w], nil
+	flat := sh.Words[w]
+	out := make([][2]int, 0, len(flat)/2)
+	for i := 0; i+1 < len(flat); i += 2 {
+		out = append(out, [2]int{flat[i], flat[i+1]})
+	}
+	return out, nil
 }
 
-// doc looks up a page in the page table.
+// doc looks up a page in the page table: [name, section, description,
+// sources]. A name of "" is an id no page has any more.
 func (s *Searcher) doc(ctx context.Context, id int) ([4]string, error) {
-	if s.docs.Size < 1 || id < 0 || id/s.docs.Size >= len(s.docs.Shards) {
-		return [4]string{}, fmt.Errorf("search index has no page %d", id)
+	var out [4]string
+	nr, ok := s.names.Shards.Find(id)
+	dr, ok2 := s.docs.Shards.Find(id)
+	if !ok || !ok2 {
+		return out, fmt.Errorf("search index has no page %d", id)
 	}
-	sh, err := s.shard(ctx, "docs", s.docs.Shards[id/s.docs.Size], func() any { return &DocShard{} })
+	sh, err := s.shard(ctx, "names", nr.SHA256, func() any { return &NameShard{} })
 	if err != nil {
-		return [4]string{}, err
+		return out, err
+	}
+	ns := sh.(*NameShard)
+	if i := id - ns.First; i >= 0 && i < len(ns.Names) {
+		out[0], out[1] = ns.Names[i].Name, ns.Names[i].Section
+	}
+	sh, err = s.shard(ctx, "docs", dr.SHA256, func() any { return &DocShard{} })
+	if err != nil {
+		return out, err
 	}
 	ds := sh.(*DocShard)
-	if i := id % s.docs.Size; i < len(ds.Docs) {
-		return ds.Docs[i], nil
+	if i := id - ds.First; i >= 0 && i < len(ds.Docs) {
+		out[2], out[3] = ds.Docs[i].Description, ds.Docs[i].Sources
 	}
-	return [4]string{}, fmt.Errorf("search index has no page %d", id)
+	return out, nil
 }
 
 // prefixWords lists indexed words that start with p (but aren't p).
@@ -430,11 +448,14 @@ func (s *Searcher) load(ctx context.Context) error {
 	if err := s.Client.Get(ctx, IndexManifestPath("grams", m.Index.Grams), &grams); err != nil {
 		return err
 	}
-	var docs DocsManifest
+	var names, docs TableManifest
+	if err := s.Client.Get(ctx, IndexManifestPath("names", m.Index.Names), &names); err != nil {
+		return err
+	}
 	if err := s.Client.Get(ctx, IndexManifestPath("docs", m.Index.Docs), &docs); err != nil {
 		return err
 	}
-	s.man, s.words, s.grams, s.docs = m, &words, &grams, &docs
+	s.man, s.words, s.grams, s.names, s.docs = m, &words, &grams, &names, &docs
 	s.shards = map[string]any{}
 	return nil
 }

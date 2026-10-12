@@ -131,6 +131,8 @@ func MaxTypos(word string) int {
 
 // IndexDoc is a page to index.
 type IndexDoc struct {
+	// ID is the page's doc id: its place in the page table.
+	ID                         int
 	Name, Section, Description string
 	// Sources are the keys of the sources the page comes from, for
 	// searching within one.
@@ -140,19 +142,14 @@ type IndexDoc struct {
 	Body string
 }
 
-// BuiltIndex is a search index ready to write: shards with their manifests.
+// BuiltIndex is a search index ready to write: shards with their
+// manifests. (The page table is written from the docs' ids.)
 type BuiltIndex struct {
 	Words      []WordShard
 	WordRanges []ShardRange // SHA256 left for the writer
 	Grams      []GramShard
 	GramRanges []ShardRange
-	Docs       []DocShard
-	DocCount   int
 }
-
-// docShardSize is how many pages each DocShard holds. Small, because a
-// search fetches the ones holding its top results.
-const docShardSize = 128
 
 var stopwords = map[string]bool{}
 
@@ -164,16 +161,8 @@ func init() {
 	}
 }
 
-// BuildIndex builds the search index for docs.
+// BuildIndex builds the search index for docs, by their ids.
 func BuildIndex(docs []IndexDoc) *BuiltIndex {
-	// Doc ids go in name order, so ties in score come out alphabetical.
-	docs = append([]IndexDoc(nil), docs...)
-	sort.Slice(docs, func(i, j int) bool {
-		if docs[i].Name != docs[j].Name {
-			return docs[i].Name < docs[j].Name
-		}
-		return docs[i].Section < docs[j].Section
-	})
 	type posting struct{ doc, score int }
 	type docScores struct {
 		scores map[string]int
@@ -238,7 +227,7 @@ func BuildIndex(docs []IndexDoc) *BuiltIndex {
 			bodyDF[t]++
 		}
 		for t, s := range per[di].scores {
-			postings[t] = append(postings[t], posting{di, s})
+			postings[t] = append(postings[t], posting{d.ID, s})
 		}
 		per[di] = docScores{}
 	}
@@ -287,29 +276,22 @@ func BuildIndex(docs []IndexDoc) *BuiltIndex {
 	}
 	sort.Strings(words)
 
-	bi := &BuiltIndex{DocCount: len(docs)}
-	for i := 0; i < len(docs); i += docShardSize {
-		ds := DocShard{Format: Format}
-		for _, d := range docs[i:min(i+docShardSize, len(docs))] {
-			ds.Docs = append(ds.Docs, [4]string{d.Name, d.Section, d.Description, strings.Join(d.Sources, " ")})
-		}
-		bi.Docs = append(bi.Docs, ds)
-	}
+	bi := &BuiltIndex{}
 
 	var cur *WordShard
 	var size int
 	var first, last string
 	for _, w := range words {
 		if cur == nil {
-			cur = &WordShard{Format: Format, Words: map[string][][2]int{}}
+			cur = &WordShard{Format: Format, Words: map[string][]int{}}
 			size, first = 0, w
 		}
 		ps := postings[w]
-		list := make([][2]int, len(ps))
+		list := make([]int, 0, 2*len(ps))
 		size += len(w) + 6
-		for i, p := range ps {
-			list[i] = [2]int{p.doc, p.score}
-			size += 4 + digits(p.doc) + digits(p.score)
+		for _, p := range ps {
+			list = append(list, p.doc, p.score)
+			size += 2 + digits(p.doc) + digits(p.score)
 		}
 		cur.Words[w] = list
 		last = w

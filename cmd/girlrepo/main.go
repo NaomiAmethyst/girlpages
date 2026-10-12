@@ -590,6 +590,7 @@ func (a *app) publish(ctx context.Context, args []string) error {
 	siteURL := fs.String("url", "", "the site's absolute URL, for canonical links and sitemap.xml")
 	gc := fs.Bool("gc", false, "collect garbage afterwards")
 	compress := fs.String("precompress", "zstd,br,gzip", "write compressed copies of files for the web server to send (or none)")
+	compressJobs := fs.Int("compress-jobs", 0, "files to compress at once (default: one per CPU)")
 	if err := parse(fs, args); err != nil {
 		return err
 	}
@@ -648,6 +649,7 @@ func (a *app) publish(ctx context.Context, args []string) error {
 	if *noSite {
 		root = s.Dir
 	}
+	precompress.Workers = *compressJobs
 	pst, err := precompress.SweepProgress(root, encodings, func(done, total int) { pr.report("compressing", done, total) })
 	if err != nil {
 		return err

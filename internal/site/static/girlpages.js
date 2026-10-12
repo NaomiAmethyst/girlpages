@@ -73,6 +73,64 @@ export function listingURL(base, key, sub = "", n = 1) {
   return n > 1 ? `${u}page/${n}/` : u;
 }
 
+// Indexes are compact: lists of records are tables ({keys, data}, the
+// fields named once and each record's values in turn), and hashes in them
+// are in basE91 (with ' for "), as repo.Encode91 writes them.
+const B91 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!#$%&()*+,./:;<=>?@[]^_`{|}~'";
+const B91D = new Map([...B91].map((c, i) => [c, i]));
+
+// decode91 decodes basE91 to bytes.
+export function decode91(str) {
+  const out = [];
+  let queue = 0, nbits = 0, v = -1;
+  for (const ch of str) {
+    const c = B91D.get(ch);
+    if (c === undefined) throw new Error(`${JSON.stringify(str)} isn't basE91`);
+    if (v < 0) {
+      v = c;
+      continue;
+    }
+    v += c * 91;
+    queue |= v << nbits;
+    nbits += (v & 8191) > 88 ? 13 : 14;
+    while (nbits > 7) {
+      out.push(queue & 255);
+      queue >>>= 8;
+      nbits -= 8;
+    }
+    v = -1;
+  }
+  if (v >= 0) out.push((queue | (v << nbits)) & 255);
+  return out;
+}
+
+// unhash reads a hash in basE91 as hex.
+export const unhash = (str) => (str ? decode91(str).map(b => b.toString(16).padStart(2, "0")).join("") : "");
+
+// rows reads a table as records, decoding the fields named in hashes (and
+// in hashMaps, objects whose values are hashes).
+export function rows(table, { hashes = [], hashMaps = [] } = {}) {
+  const keys = (table && table.keys) || [], data = (table && table.data) || [], out = [];
+  for (let i = 0; keys.length && i + keys.length <= data.length; i += keys.length) {
+    const r = {};
+    keys.forEach((k, j) => { r[k] = data[i + j]; });
+    for (const h of hashes) if (r[h]) r[h] = unhash(r[h]);
+    for (const h of hashMaps) {
+      if (!r[h]) continue;
+      const m = {};
+      for (const [k, v] of Object.entries(r[h])) m[k] = unhash(v);
+      r[h] = m;
+    }
+    out.push(r);
+  }
+  return out;
+}
+
+// sectionPagesOf reads a section index's (or shard's) pages.
+export const sectionPagesOf = (si) => rows(si.pages, { hashes: ["page", "source"], hashMaps: ["other"] });
+// shardsOf reads a manifest's (or section index's) shards.
+export const shardsOf = (m) => rows(m.shards, { hashes: ["sha256"] });
+
 // sectionShard is a shard of a long section's index.
 export const sectionShard = (sha) => `section/shard-${sha.slice(0, 2)}/${sha}.json`;
 
@@ -296,21 +354,20 @@ export class RepoCache {
   async gc(manifest) {
     const live = new Set();
     const ix = manifest.index || {};
-    for (const [kind, sha] of [["words", ix.words], ["grams", ix.grams], ["docs", ix.docs]]) {
+    for (const kind of ["words", "grams", "names", "docs"]) {
+      const sha = ix[kind];
       if (!sha) continue;
       const path = `index/${kind}/manifest-${sha}.json`;
       live.add(path);
       const text = await this.store.get(path);
       if (text === null) continue; // so none of its shards are stored either
-      const m = JSON.parse(text);
-      const shas = kind === "docs" ? m.shards : m.shards.map(s => s.sha256);
-      for (const s of shas) live.add(`index/${kind}/shard-${s.slice(0, 2)}/${s}.json`);
+      for (const r of shardsOf(JSON.parse(text))) live.add(`index/${kind}/shard-${r.sha256.slice(0, 2)}/${r.sha256}.json`);
     }
     for (const e of manifest.sections || []) {
       const path = `section/${enc(e.section)}-${e.sha256}.json`;
       live.add(path);
       const text = await this.store.get(path);
-      if (text !== null) for (const r of JSON.parse(text).shards || []) live.add(sectionShard(r.sha256));
+      if (text !== null) for (const r of shardsOf(JSON.parse(text))) live.add(sectionShard(r.sha256));
     }
     let removed = 0;
     for (const p of await this.store.paths()) {
@@ -401,8 +458,8 @@ export class RepoCache {
   // fetching its shards if it has them.
   async sectionPages(e) {
     const si = await this.get(`section/${enc(e.section)}-${e.sha256}.json`);
-    const shards = await Promise.all((si.shards || []).map(r => this.get(sectionShard(r.sha256))));
-    return [...(si.pages || []), ...shards.flatMap(sh => sh.pages || [])];
+    const shards = await Promise.all(shardsOf(si).map(r => this.get(sectionShard(r.sha256))));
+    return [...sectionPagesOf(si), ...shards.flatMap(sectionPagesOf)];
   }
 
   // searchFiles lists the search index files a part of search needs
@@ -414,8 +471,7 @@ export class RepoCache {
     const out = [];
     for (const kind of SEARCH_PARTS[part]) {
       const im = await this.get(`index/${kind}/manifest-${ix[kind]}.json`);
-      const shards = kind === "docs" ? im.shards.map((sha, i) => ({ sha256: sha, bytes: (im.bytes || [])[i] || 0 })) : im.shards;
-      for (const s of shards) out.push({ path: `index/${kind}/shard-${s.sha256.slice(0, 2)}/${s.sha256}.json`, bytes: s.bytes || 0 });
+      for (const s of shardsOf(im)) out.push({ path: `index/${kind}/shard-${s.sha256.slice(0, 2)}/${s.sha256}.json`, bytes: s.bytes || 0 });
     }
     return out;
   }
@@ -433,7 +489,7 @@ export class RepoCache {
     const m = JSON.parse(await this.mutable("manifest.json", { fresh: true }));
     // Search needs every part's manifest (they're small) to start.
     const ix = m.index || {};
-    await Promise.all(["words", "grams", "docs"].map(k => this.get(`index/${k}/manifest-${ix[k]}.json`)));
+    await Promise.all(["words", "grams", "names", "docs"].map(k => this.get(`index/${k}/manifest-${ix[k]}.json`)));
     const files = (await this.searchFiles(part, m)).map(f => f.path);
     let done = 0, next = 0;
     progress(0, files.length);
@@ -480,7 +536,7 @@ export class RepoCache {
 const savedKey = (key, src) => (src ? src + " " : "") + key;
 // The parts of search that can be saved for offline use, and the index
 // files each needs. saveButton takes "search:<part>" as a key.
-const SEARCH_PARTS = { words: ["words", "docs"], typos: ["grams"] };
+const SEARCH_PARTS = { words: ["words", "names", "docs"], typos: ["grams"] };
 
 // saveButton makes a button save a section for offline reading, showing how
 // it's going and whether it's done.
