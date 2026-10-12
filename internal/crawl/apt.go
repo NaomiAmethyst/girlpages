@@ -62,25 +62,21 @@ func (a *Apt) Index(ctx context.Context, f *Fetcher) (*Index, error) {
 		comps = []string{"main"}
 	}
 
-	// Which packages have man pages. Debian splits Contents by component
-	// and keeps architecture-independent files in Contents-all; older
-	// Ubuntu has one Contents per architecture for the whole suite.
-	withMan := map[string]bool{}
-	found := false
-	for _, c := range comps {
-		for _, a2 := range []string{arch, "all"} {
-			if err := a.contents(ctx, f, withMan, a.dist(c+"/Contents-"+a2)); err == nil {
-				found = true
-			} else if !errors.Is(err, ErrNotFound) {
-				return nil, err
-			}
-		}
+	withMan, found, err := a.withMan(ctx, f, comps, arch)
+	if err != nil {
+		return nil, err
 	}
-	if !found {
-		if err := a.contents(ctx, f, withMan, a.dist("Contents-"+arch)); err == nil {
-			found = true
-		} else if !errors.Is(err, ErrNotFound) {
-			return nil, err
+	if u := strings.TrimSuffix(a.URL, "/"); !found && strings.HasSuffix(u, "-security") {
+		// Debian's security archive has empty Contents, but what it
+		// updates is the main archive's packages, whose Contents say (its
+		// components are updates/main and so on, there just main).
+		main := &Apt{URL: strings.TrimSuffix(u, "-security"), Suite: idx.Release}
+		mainComps := make([]string, len(comps))
+		for i, c := range comps {
+			mainComps[i] = strings.TrimPrefix(c, "updates/")
+		}
+		if withMan, found, err = main.withMan(ctx, f, mainComps, arch); err != nil {
+			return nil, fmt.Errorf("the main archive's Contents: %w", err)
 		}
 	}
 	if !found && !a.All {
@@ -111,16 +107,51 @@ func (a *Apt) Index(ctx context.Context, f *Fetcher) (*Index, error) {
 	return idx, nil
 }
 
-// contents adds packages with English man pages from a Contents index.
-func (a *Apt) contents(ctx context.Context, f *Fetcher, withMan map[string]bool, base string) error {
+// withMan reads which packages have man pages from the suite's Contents,
+// and whether there were any Contents to say (not just empty ones).
+func (a *Apt) withMan(ctx context.Context, f *Fetcher, comps []string, arch string) (map[string]bool, bool, error) {
+	// Debian splits Contents by component and keeps architecture-
+	// independent files in Contents-all; older Ubuntu has one Contents per
+	// architecture for the whole suite.
+	withMan := map[string]bool{}
+	found := false
+	read := func(base string) error {
+		n, err := a.contents(ctx, f, withMan, base)
+		if err == nil && n > 0 {
+			found = true
+		} else if err != nil && !errors.Is(err, ErrNotFound) {
+			return err
+		}
+		return nil
+	}
+	for _, c := range comps {
+		for _, a2 := range []string{arch, "all"} {
+			if err := read(a.dist(c + "/Contents-" + a2)); err != nil {
+				return nil, false, err
+			}
+		}
+	}
+	if !found {
+		if err := read(a.dist("Contents-" + arch)); err != nil {
+			return nil, false, err
+		}
+	}
+	return withMan, found, nil
+}
+
+// contents adds packages with English man pages from a Contents index,
+// and counts its lines.
+func (a *Apt) contents(ctx context.Context, f *Fetcher, withMan map[string]bool, base string) (int, error) {
 	r, _, err := f.openIndex(ctx, base+".gz", base+".xz", base)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer r.Close()
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 1<<20), 16<<20)
+	n := 0
 	for sc.Scan() {
+		n++
 		line := sc.Text()
 		if !strings.Contains(line, "/man") {
 			continue // most lines; skip them cheaply
@@ -137,7 +168,7 @@ func (a *Apt) contents(ctx context.Context, f *Fetcher, withMan map[string]bool,
 			withMan[q[strings.LastIndexByte(q, '/')+1:]] = true
 		}
 	}
-	return sc.Err()
+	return n, sc.Err()
 }
 
 // releaseFields reads the top-level fields of a Release or InRelease file.

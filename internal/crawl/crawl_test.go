@@ -205,6 +205,39 @@ func TestApt(t *testing.T) {
 	}
 }
 
+// Debian's security archive has empty Contents; the main archive's say
+// which packages have man pages.
+func TestAptSecurity(t *testing.T) {
+	needTools(t)
+	hello, nope := deb("hello", "say hello, patched"), deb("nope", "x")
+	packages := ""
+	for _, p := range []struct {
+		name string
+		b    []byte
+	}{{"hello", hello}, {"nope", nope}} {
+		packages += fmt.Sprintf("Package: %s\nVersion: 1+deb13u1\nArchitecture: amd64\n"+
+			"Filename: pool/updates/main/%s.deb\nSize: %d\nSHA256: %s\n\n", p.name, p.name, len(p.b), sum(p.b))
+	}
+	srv := serve(map[string][]byte{
+		"/debian-security/dists/trixie-security/InRelease":                             []byte("Origin: Debian\nCodename: trixie-security\nComponents: updates/main\n"),
+		"/debian-security/dists/trixie-security/updates/main/Contents-amd64.gz":        gz(nil),
+		"/debian-security/dists/trixie-security/updates/main/binary-amd64/Packages.gz": gz([]byte(packages)),
+		"/debian-security/pool/updates/main/hello.deb":                                 hello,
+		"/debian-security/pool/updates/main/nope.deb":                                  nope,
+		"/debian/dists/trixie/main/Contents-amd64.gz":                                  gz([]byte("usr/share/man/man1/hello.1.gz utils/hello\n")),
+	})
+	defer srv.Close()
+	s, _ := repo.Open(t.TempDir())
+	st := crawlOnce(t, s, &Apt{URL: srv.URL + "/debian-security/", Suite: "trixie-security"}, filepath.Join(t.TempDir(), "state.json"))
+	if st.Total != 2 || st.WithMan != 1 || st.Fetched != 1 || srv.fetched("nope") != 0 {
+		t.Fatalf("crawl: %+v, fetched %v", st, srv.got)
+	}
+	l, _, _ := s.Listing("hello", "1")
+	if v := l.CurrentVersion(); v.Packages[0].Release != "trixie" {
+		t.Errorf("hello: %+v", v.Packages)
+	}
+}
+
 func TestAptBadChecksum(t *testing.T) {
 	needTools(t)
 	d := deb("hello", "say hello")
