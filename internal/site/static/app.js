@@ -391,18 +391,23 @@ async function pageView(name, sec, rest, src) {
   }
   const keys = sourceKeys(ver);
   const when = isSeries(sec) && ver.packages && ver.packages[0] ? publishedLabel(ver.packages[0].version) : "";
-  const inLine = keys.length ? `<div class="meta in">${isSeries(sec) ? `📅 ${when ? "published " + esc(when) + ", " : ""}from ` : `📦 ${ver.version ? "version " + esc(ver.version) + ", " : ""}in `}` +
+  // Switching between versions, as on the static page: this one first,
+  // then the latest, then the newest added.
+  let switcher = ver.version ? `version ${esc(ver.version)}, ` : "";
+  if (versions.length > 1) {
+    const items = [ver, ...versions.filter(x => x !== ver)].map(x => {
+      const label = (x.version ? x.version + " · " : "") + (sourceLabels(x).join(", ") || "added " + (x.added || "").slice(0, 10)) +
+        (x.source === l.current ? " (latest)" : "");
+      return x === ver ? `<li><strong>${esc(label)}</strong></li>`
+        : `<li><a href="${esc(x.source === l.current && !src ? staticPage(name, sec) : browse({ page: name, sec, version: slug(x), src }))}">${esc(label)}</a></li>`;
+    }).join("");
+    switcher = `<details class="versions" id="versions"><summary>${ver.version ? "version " + esc(ver.version) : "this version"} <span class="n">· ${versions.length} versions</span></summary><ul>${items}</ul></details>, `;
+  }
+  const inLine = keys.length ? `<div class="meta in">${isSeries(sec) ? `📅 ${when ? "published " + esc(when) + ", " : ""}from ` : `📦 ${switcher}in `}` +
     keys.map(k => `<a href="${esc(browse({ page: name, sec, src: k }))}">${esc(sourceLabel(k))}</a>`).join(", ") + "</div>" : "";
   let notice = "";
   if (!latest) notice += `<div class="notice">🕰️ this isn't the latest version of ${esc(name)}(${esc(sec)}). <a href="${esc(staticPage(name, sec))}">here's the latest</a>.</div>`;
   if (which === "man" && variants.length === 1) notice += `<div class="notice">💤 she hasn't gotten to this version yet, so here's the original.</div>`;
-  const vlist = versions.length > 1 ? `<div class="provenance" id="versions"><details open><summary>🕰️ ${versions.length} versions, and where they're from</summary><ul>` +
-    versions.map(x => {
-      const label = (x.version ? x.version + " · " : "") + (sourceLabels(x).join(", ") || "added " + (x.added || "").slice(0, 10)) +
-        (x.source === l.current ? " (latest)" : "");
-      return x.source === ver.source ? `<li><strong>${esc(label)}</strong> (this one)</li>`
-        : `<li><a href="${esc(browse({ page: name, sec, version: slug(x), src }))}">${esc(label)}</a></li>`;
-    }).join("") + "</ul></details></div>" : "";
   const crumbs = `<nav class="crumbs"><a href="${esc(base)}">home</a> › ` + (src
     ? `<a href="${esc(browse({ src }))}">${esc(sourceLabel(src))}</a> › <a href="${esc(browse({ src, section: chapter(sec), sub: chapter(sec) !== sec ? sec : "" }))}">${esc(sectionLabel(sec))}</a>`
     : `<a href="${esc(listingURL(chapter(sec), chapter(sec) !== sec ? sec : "", 1))}">${esc(sectionLabel(sec))}</a>`) + ` › ${esc(title)}</nav>`;
@@ -410,8 +415,16 @@ async function pageView(name, sec, rest, src) {
     toc.map(t => `<li${t.level === 2 ? ' class="sub"' : ""}><a href="#${esc(t.id)}">${esc(t.text)}</a></li>`).join("") + "</ul></nav>" : "";
   const lede = isSeries(sec) && ver.description ? `<p class="lede">${esc(ver.description)}</p>` : "";
   h(`<div class="layout"><article class="card manpage">${crumbs}<h1>${esc(title)}${esc(suffix)}</h1>${lede}` +
-    `<div class="meta">${meta}</div>${inLine}${notice}${body}${vlist}</article>${tocHTML}</div>`);
-  if (at) afterShow = () => app.querySelector(`[id="${at}"]`)?.scrollIntoView();
+    `<div class="meta">${meta}</div>${inLine}${notice}${body}</article>${tocHTML}</div>`);
+  if (at) {
+    afterShow = () => {
+      const d = app.querySelector(`[id="${at}"]`);
+      if (d) {
+        d.open = true;
+        d.scrollIntoView({ block: "center" });
+      }
+    };
+  }
 }
 
 // staticListing shows a listing by its static pages (which are smaller than

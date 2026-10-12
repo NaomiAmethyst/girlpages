@@ -130,14 +130,21 @@ a:hover { color: var(--accent); }
   border-bottom: 2px solid var(--card-edge);
 }
 
+/* The gradient is painted behind the logo's box and shows through its
+   letters, so the box needs room for all of them (descenders, heavy
+   strokes past the edges), and mustn't be squeezed. The flower has a
+   colour of its own: it turns, which browsers paint separately. */
 .logo {
-  font: 800 1.35rem/1 ui-rounded, "Nunito", "Quicksand", system-ui, sans-serif;
+  font: 800 1.35rem/1.25 ui-rounded, "Nunito", "Quicksand", system-ui, sans-serif;
   text-decoration: none;
+  display: inline-block; flex-shrink: 0;
+  padding: 0.1em 0.15em; margin: -0.1em -0.15em;
   background: var(--heading-grad);
-  -webkit-background-clip: text; background-clip: text; color: transparent;
+  -webkit-background-clip: text; background-clip: text; color: transparent; -webkit-text-fill-color: transparent;
   white-space: nowrap;
 }
-.logo span { display: inline-block; transition: transform 0.6s; }
+.logo:hover { color: transparent; }
+.logo span { display: inline-block; transition: transform 0.6s; color: var(--accent); -webkit-text-fill-color: var(--accent); }
 .logo:hover span { transform: rotate(180deg); }
 
 .search { flex: 1; max-width: 32rem; }
@@ -371,3 +378,18 @@ button.pill:disabled { cursor: progress; opacity: 0.8; }
 
 /* a document's title, under its number */
 .manpage .lede { font-size: 1.15rem; font-weight: 600; margin: -0.4rem 0 0.6rem; }
+
+/* switching between a page's versions, by where it's from */
+details.versions { display: inline-block; position: relative; }
+details.versions summary { display: inline; cursor: pointer; list-style: none; text-decoration: underline dotted; text-underline-offset: 3px; }
+details.versions summary::-webkit-details-marker { display: none; }
+details.versions summary::after { content: " ▾"; }
+details.versions[open] summary::after { content: " ▴"; }
+details.versions .n { color: var(--muted); }
+details.versions ul {
+  position: absolute; z-index: 5; left: 0; top: 1.6em; margin: 0; padding: 0.4rem 0.6rem;
+  list-style: none; min-width: 16rem; max-width: min(28rem, 90vw);
+  background: var(--card); border: 2px solid var(--card-edge); border-radius: 0.8rem;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.12);
+}
+details.versions li { padding: 0.25rem 0; }

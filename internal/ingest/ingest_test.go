@@ -656,3 +656,24 @@ func TestGirlifyResumes(t *testing.T) {
 		t.Errorf("parts left behind: %v", left)
 	}
 }
+
+// Files in a man directory that aren't its pages (documentation in other
+// formats) are left out.
+func TestScanSkipsOtherFiles(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "man")
+	for _, f := range []string{"man3/PMIx_Abort.3", "man3/PMIx_Abort.3.html", "man3/PMIx_Abort.3.rst.txt", "man1/context.man1.pdf", "man3/SSL_new.3ssl", "mann/text.n"} {
+		write(t, filepath.Join(root, f), []byte("x"))
+	}
+	cands, _, err := scan(root, "", repo.Package{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, c := range cands {
+		got = append(got, c.name+"("+c.section+")")
+	}
+	sort.Strings(got)
+	if strings.Join(got, " ") != "PMIx_Abort(3) SSL_new(3ssl) text(n)" {
+		t.Errorf("scan found %v", got)
+	}
+}

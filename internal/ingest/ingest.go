@@ -187,13 +187,21 @@ func InstalledPages(ctx context.Context, s *repo.Store, pages []manpage.Page, ro
 	owners := Owners()
 	cands := make([]candidate, 0, len(pages))
 	for _, p := range pages {
+		// The page is whatever file a link leads to, so that file's package
+		// is where it's from (ls.1.gz may be a link another package owns,
+		// such as Ubuntu's coreutils-from-uutils, version 0.0.0, to
+		// rust-ls.1.gz in rust-coreutils).
 		pkg := o.Package
-		if own, ok := owners[p.Path]; ok {
+		var own repo.Package
+		ok := false
+		if real, err := filepath.EvalSymlinks(p.Path); err == nil {
+			own, ok = owners[real]
+		}
+		if !ok {
+			own, ok = owners[p.Path]
+		}
+		if ok {
 			pkg.Name, pkg.Version, pkg.Arch = own.Name, own.Version, own.Arch
-		} else if real, err := filepath.EvalSymlinks(p.Path); err == nil {
-			if own, ok := owners[real]; ok {
-				pkg.Name, pkg.Version, pkg.Arch = own.Name, own.Version, own.Arch
-			}
 		}
 		cands = append(cands, candidate{path: p.Path, name: p.Name, section: p.Section, pkg: pkg, roots: roots})
 	}
@@ -243,8 +251,15 @@ func scan(top, sysroot string, pkg repo.Package, sections []string) ([]candidate
 				continue
 			}
 			name, sec := manpage.ParseFilename(file)
+			dirSec := strings.TrimPrefix(d.Name(), "man")
 			if sec == "" {
-				sec = strings.TrimPrefix(d.Name(), "man")
+				sec = dirSec
+			}
+			// A page's section starts as its directory's does (man3 has
+			// 3, 3p and 3ssl); anything else there (PMIx_Abort.3.html,
+			// context.man1.pdf) is another kind of file.
+			if !strings.HasPrefix(sec, dirSec[:1]) {
+				continue
 			}
 			if !manpage.SectionMatches(sec, sections) || name == "" {
 				continue

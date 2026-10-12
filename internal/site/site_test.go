@@ -140,7 +140,8 @@ func TestBuild(t *testing.T) {
 		`<meta name="twitter:card" content="summary">`, `<meta property="article:modified_time"`,
 		`<code>ls</code> slays, see <a href="/girlpages/man/1/ls/">ls(1)</a> and nope(1)`, // only real pages are links
 		`href="/girlpages/#/1/ls/man"`, "girlified by fake-1",
-		`href="/girlpages/#/1/ls/versions"`, "2 versions", "version 10, in",
+		`<details class="versions" id="versions"><summary>version 10 <span class="n">· 2 versions</span></summary>`,
+		`<strong>10 · debian trixie (latest)</strong>`, `<a href="/girlpages/#/1/ls/0">0 · debian trixie</a>`, "</details>, in",
 		`href="/girlpages/#/debian/trixie/1/ls"`, `data-keep-page="ls" data-keep-section="1"`} {
 		if !strings.Contains(ls, want) {
 			t.Errorf("ls page lacks %q", want)
@@ -749,7 +750,7 @@ func TestSources(t *testing.T) {
 	}
 	// Static pages link into the browse app for sources.
 	page := read(t, filepath.Join(out, "man", "1", "ls", "index.html"))
-	if !strings.Contains(page, "version 9.7, in") || !strings.Contains(page, `href="/#/debian/trixie/1/ls"`) {
+	if !strings.Contains(page, "<summary>version 9.7 <span") || !strings.Contains(page, `href="/#/debian/trixie/1/ls"`) {
 		t.Error("ls page should say where it's from")
 	}
 	if tp := read(t, filepath.Join(out, "man", "8", "tool", "index.html")); !strings.Contains(tp, `href="/#/upstream/8/tool">upstream</a>`) {

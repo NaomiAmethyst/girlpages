@@ -255,6 +255,42 @@ func seriesPrefix(sec string) string {
 	return ""
 }
 
+// versionLinks lists a page's versions for switching between them: the
+// latest (whose page is u) first, then the newest added, each named by its
+// upstream version and where it's from. The others are routes in the
+// browse app, by version (as its slugs are: the upstream version, if no
+// other version has it, else the start of the source hash).
+func versionLinks(l *repo.Listing, u string, route func(slug string) string) []pagerLink {
+	vs := append([]repo.Version(nil), l.Versions...)
+	sort.SliceStable(vs, func(i, j int) bool {
+		if (vs[i].Source == l.Current) != (vs[j].Source == l.Current) {
+			return vs[i].Source == l.Current
+		}
+		return vs[i].Added.After(vs[j].Added)
+	})
+	uses := map[string]int{}
+	for _, v := range vs {
+		uses[v.Version]++
+	}
+	var out []pagerLink
+	for _, v := range vs {
+		label := strings.Join(v.SourceLabels(), ", ")
+		if v.Version != "" {
+			label = v.Version + " · " + label
+		}
+		if v.Source == l.Current {
+			out = append(out, pagerLink{Label: label + " (latest)", URL: u, On: true})
+			continue
+		}
+		slug := v.Source[:12]
+		if v.Version != "" && uses[v.Version] == 1 {
+			slug = v.Version
+		}
+		out = append(out, pagerLink{Label: label, URL: route(slug)})
+	}
+	return out
+}
+
 // published is a "2022-06" date as "June 2022".
 func published(d string) string {
 	if t, err := time.Parse("2006-01", d); err == nil {
@@ -284,6 +320,9 @@ type pageView struct {
 	SectionLabel string
 	Series       bool
 	Published    string
+	// VersionLinks switch between its versions (if it has more than one):
+	// this one first, then the newest added.
+	VersionLinks []pagerLink
 	Versions     int
 	Version      string // upstream version number
 }
@@ -826,6 +865,9 @@ func (b *builder) page(p repo.PageRef) error {
 	}
 	for _, src := range sourcesIn(ver) {
 		pv.In = append(pv.In, chip{Label: src.Label(), URL: b.browseURL(src.Key(), sec, name)})
+	}
+	if len(p.Listing.Versions) > 1 {
+		pv.VersionLinks = versionLinks(p.Listing, u, func(slug string) string { return b.browseURL("", sec, name, slug) })
 	}
 
 	man, err := b.s.Variant(ver.Source, repo.VariantMan)

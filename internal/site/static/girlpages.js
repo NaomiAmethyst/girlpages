@@ -628,6 +628,10 @@ function boot() {
     navigator.serviceWorker.register(base + "sw.js", { scope: base }).catch(() => {});
   }
   forgetLocalStorage();
+  // An open version switcher closes when anything else is clicked.
+  document.addEventListener("click", (e) => {
+    for (const d of document.querySelectorAll("details.versions[open]")) if (!d.contains(e.target)) d.open = false;
+  });
   if (!repo) return;
   startApp(base);
   const cache = repoCache(repo);
