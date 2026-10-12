@@ -351,8 +351,8 @@ One generation of one variant of one page version.
 
 ### section/&lt;section&gt;-&lt;sha&gt;.json
 
-Every page in one section, sorted by name (numbers by value), for
-listings.
+Every page in one section, sorted by name as listings are (ignoring
+case, then by it; numbers by value).
 
 ```json
 {

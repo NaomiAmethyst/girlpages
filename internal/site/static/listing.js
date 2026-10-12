@@ -1,45 +1,24 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Naomi Persephone Amethyst <naomi@amethyst.name>
 //
-// A static listing's pages, scrolled through as one: the other pages are
-// fetched (from their own static HTML) in the background and go into the
-// list as they're neared, the address follows the page on screen, and
-// letters jump within the list. Without JavaScript, the pager links them.
+// A static listing page, on its first load, taken over by the browse app:
+// it's made again from the repository's section indexes, from this page's
+// first entry, and scrolls through the whole section, the address
+// following the page on screen. Without JavaScript, the pager links the
+// static pages.
 
-import { VirtualList } from "./vlist.js";
-
-const listing = document.querySelector(".listing[data-pages]");
+const listing = document.querySelector(".listing[data-key]");
 if (listing && "IntersectionObserver" in globalThis && +listing.dataset.pages > 1) {
+  const base = document.documentElement.dataset.base;
   const first = listing.dataset.first;
   const url = (n) => (n <= 1 ? first : `${first}page/${n}/`);
-  const pageOf = (href) => {
-    const m = new URL(href, location.href).pathname.match(/\/page\/(\d+)\/$/);
-    return m ? +m[1] : 1;
-  };
-  const load = async (n) => {
-    const r = await fetch(url(n));
-    if (!r.ok) throw new Error(`page ${n}: ${r.status}`);
-    const doc = new DOMParser().parseFromString(await r.text(), "text/html");
-    const c = doc.querySelector(".listing .chunk");
-    if (!c) throw new Error(`page ${n} has no listing`);
-    return c.innerHTML;
-  };
-  const list = new VirtualList(listing, {
-    count: +listing.dataset.pages,
-    load,
-    onChunk: (n) => history.replaceState(history.state, "", url(n)),
+  import(new URL(base + "static/app.js", location.href).href).then(async (app) => {
+    const list = await app.attachListing(listing, {
+      key: listing.dataset.key, sub: listing.dataset.sub, pageURL: url,
+      letters: document.querySelector(".letters"),
+    });
+    if (list) document.querySelector(".pager")?.setAttribute("hidden", "");
+  }).catch(() => {
+    // Offline, or the repository's unreachable: the pager still works.
   });
-  document.querySelector(".pager")?.setAttribute("hidden", "");
-  document.querySelector(".letters")?.addEventListener("click", (e) => {
-    const a = e.target.closest("a[href]");
-    if (!a) return;
-    e.preventDefault();
-    const id = decodeURIComponent(new URL(a.href).hash.slice(1));
-    list.jump(pageOf(a.href), id).catch(() => { location.href = a.href; });
-  });
-  list.fill();
-  // The pages are small; it's the DOM that needs keeping down. So fetch
-  // them all now, while there's time.
-  const idle = globalThis.requestIdleCallback || ((f) => setTimeout(f, 200));
-  idle(() => list.prefetch());
 }

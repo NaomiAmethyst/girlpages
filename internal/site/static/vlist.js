@@ -89,13 +89,13 @@ export class VirtualList {
     return this.pending.get(n);
   }
 
-  // prefetch loads every chunk's HTML (not into the page: only those near
-  // the screen go there), nearest first, a few at a time, so scrolling
-  // rarely has to wait. It stops if the network goes.
-  async prefetch(jobs = 2) {
+  // prefetch loads chunks' HTML (not into the page: only those near the
+  // screen go there), nearest first, a few at a time, up to radius chunks
+  // away, so scrolling rarely has to wait. It stops if the network goes.
+  async prefetch(jobs = 2, radius = Infinity) {
     const from = this.first() || 1;
     const todo = Array.from({ length: this.count }, (_, i) => i + 1)
-      .filter(n => !this.html.has(n))
+      .filter(n => !this.html.has(n) && Math.abs(n - from) <= radius)
       .sort((a, b) => Math.abs(a - from) - Math.abs(b - from) || a - b);
     let stop = false;
     const worker = async () => {

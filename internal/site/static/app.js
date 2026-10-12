@@ -167,26 +167,9 @@ async function sourceSection(src, key, sub, { start = 1, pageURL = null } = {}) 
     const se = (m.sources || []).find(x => (x.release ? `${x.distro}/${x.release}` : x.distro) === src);
     total = se && se.sections ? se.sections[chapter(key)] : null;
   }
-  const chunkHTML = async (n) => {
-    const items = await plan.load(n);
-    let out = "", prev = plan.prevLetter(n), open = false;
-    for (const it of items) {
-      const l = letterOf(it.name);
-      if (!open || l !== prev) {
-        if (open) out += "</ul>";
-        out += l === prev ? `<h2 class="letter cont">${esc(l)} <span class="sub">(continued)</span></h2>` : `<h2 class="letter" id="letter-${esc(l)}">${esc(l)}</h2>`;
-        out += '<ul class="pages">';
-        open = true;
-        prev = l;
-      }
-      const name = isSeries(it.sec) ? `${it.sec.toUpperCase()} ${it.name}` : it.name;
-      out += `<li><a href="${esc(it.url)}"><span class="name">${esc(name)}</span>${isSeries(it.sec) ? "" : `<span class="sec">(${esc(it.sec)})</span>`}</a>` +
-        `<span class="desc">${esc(it.desc)}</span>${it.girl ? '<span class="done" title="girlified">✨</span>' : ""}</li>`;
-    }
-    return open ? out + "</ul>" : out;
-  };
+  const chunkHTML = chunkMaker(plan);
   const chunks = Math.max(1, plan.count);
-  const first = Math.min(Math.max(1, start), chunks);
+  const first = Math.min(Math.max(1, plan.chunkForPage(start)), chunks);
   let body = `<nav class="letters" aria-label="Jump to letter">${[...plan.letters].map(([l, c]) => `<a href="#letter-${esc(l)}" data-chunk="${c}">${esc(l)}</a>`).join("")}</nav>` +
     `<div class="listing"><div class="chunk" data-chunk="${first}">${await chunkHTML(first)}</div></div>`;
   if (!plan.count || total === 0) body = '<div class="empty">nothing here, bestie 😭</div>';
@@ -201,21 +184,89 @@ async function sourceSection(src, key, sub, { start = 1, pageURL = null } = {}) 
   const button = app.querySelector("#save");
   if (button) saveButton(button, cache, sub || key, src);
   const listing = app.querySelector(".listing");
-  if (listing && chunks > 1 && "IntersectionObserver" in globalThis) {
-    const list = new VirtualList(listing, { count: chunks, load: chunkHTML,
-      onChunk: pageURL ? (n) => { if (location.href === routingFor) { history.replaceState(history.state, "", pageURL(n)); shown = routingFor = renderedFor = revealedFor = location.href; } } : undefined });
-    current = list;
-    app.querySelector(".letters").addEventListener("click", (e) => {
-      const a = e.target.closest("a[data-chunk]");
-      if (!a) return;
-      e.preventDefault();
-      e.stopPropagation();
-      list.jump(+a.dataset.chunk, a.getAttribute("href").slice(1));
-    });
-    list.fill();
-  } else if (listing) {
+  if (listing) current = await listInto(listing, plan, first, { pageURL, letters: app.querySelector(".letters"), app: true });
+}
+
+// chunkMaker renders a plan's chunks: its items, under letters (or
+// thousands) as they start, a letter carried over from the chunk before
+// being marked as such.
+function chunkMaker(plan) {
+  return async (n) => {
+    const items = await plan.load(n);
+    let out = "", prev = plan.prevLetter(n), open = false;
+    for (const it of items) {
+      const l = letterOf(it.name);
+      if (!open || l !== prev) {
+        if (open) out += "</ul>";
+        out += l === prev ? `<h2 class="letter cont">${esc(l)} <span class="sub">(continued)</span></h2>` : `<h2 class="letter" id="letter-${esc(l)}">${esc(l)}</h2>`;
+        out += '<ul class="pages">';
+        open = true;
+        prev = l;
+      }
+      const name = isSeries(it.sec) ? `${it.sec.toUpperCase()} ${it.name}` : it.name;
+      out += `<li data-name="${esc(it.name)}"><a href="${esc(it.url)}"><span class="name">${esc(name)}</span>${isSeries(it.sec) ? "" : `<span class="sec">(${esc(it.sec)})</span>`}</a>` +
+        `<span class="desc">${esc(it.desc)}</span>${it.girl ? '<span class="done" title="girlified">✨</span>' : ""}</li>`;
+    }
+    return open ? out + "</ul>" : out;
+  };
+}
+
+// listInto makes a listing element, holding chunk first, scroll through
+// the rest of a plan: loading chunks as they're neared (and a few more in
+// idle time), following along with the address (pageURL(n) is a static
+// page's) if it's given, and jumping by its letters. app says whether
+// it's the app's own view (so the address it follows is the route's).
+async function listInto(listing, plan, first, { pageURL = null, letters = null, app: inApp = false } = {}) {
+  const chunks = Math.max(1, plan.count);
+  const chunkHTML = chunkMaker(plan);
+  if (chunks < 2 || !("IntersectionObserver" in globalThis)) {
     for (let n = first + 1; n <= chunks; n++) listing.insertAdjacentHTML("beforeend", `<div class="chunk" data-chunk="${n}">${await chunkHTML(n)}</div>`);
+    return null;
   }
+  let page = plan.pageOf(first);
+  const list = new VirtualList(listing, {
+    count: chunks, load: chunkHTML,
+    onChunk: pageURL ? (n) => {
+      const p = plan.pageOf(n);
+      if (p === page || (inApp && location.href !== routingFor)) return;
+      page = p;
+      history.replaceState(history.state, "", pageURL(p));
+      if (inApp) shown = routingFor = renderedFor = revealedFor = location.href;
+    } : undefined,
+  });
+  letters?.addEventListener("click", (e) => {
+    const a = e.target.closest("a[href]");
+    if (!a) return;
+    const l = a.textContent.trim();
+    if (!plan.letters.has(l)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    list.jump(plan.letters.get(l), "letter-" + l);
+  });
+  list.fill();
+  (globalThis.requestIdleCallback || ((f) => setTimeout(f, 200)))(() => list.prefetch(2, 4));
+  return list;
+}
+
+// attachListing takes over a static listing page (on its first load) with
+// one made from the repository's section indexes, which then scrolls
+// through the whole section: starting where the static page does, with
+// its first entry kept where it is on the screen.
+export async function attachListing(listing, { key, sub = "", pageURL, letters = null }) {
+  const m = await manifest();
+  const plan = await listingPlan(m.sections.filter(e => chapter(e.section) === chapter(key)), "", sub);
+  const firstLi = listing.querySelector("li[data-name]");
+  if (!firstLi || !plan.count) return null;
+  const name = firstLi.dataset.name;
+  const n = plan.chunkOf(name);
+  const html = await chunkMaker(plan)(n);
+  const y = firstLi.getBoundingClientRect().top;
+  listing.innerHTML = `<div class="chunk" data-chunk="${n}">${html}</div>`;
+  const list = await listInto(listing, plan, n, { pageURL, letters });
+  // Keep the entry that was first on the page where it was.
+  const again = [...listing.querySelectorAll("li[data-name]")].find(li => li.dataset.name === name);
+  if (again) scrollBy(0, again.getBoundingClientRect().top - y);
+  return list;
 }
 
 // letterOf is the group a name is listed under, as in site.letterOf: its
@@ -223,6 +274,12 @@ async function sourceSection(src, key, sub, { start = 1, pageURL = null } = {}) 
 function letterOf(n) {
   if (/^[0-9]+$/.test(n)) return +n < 1000 ? "1–999" : `${Math.floor(+n / 1000) * 1000}s`;
   return /^[a-z]/i.test(n) ? n[0].toUpperCase() : "#";
+}
+// listCmp orders names as manpage.ListLess does: ignoring case (then by
+// it), numbers by value.
+function listCmp(a, b) {
+  const la = a.toLowerCase(), lb = b.toLowerCase();
+  return la !== lb ? nameCmp(la, lb) : (a < b ? -1 : a > b ? 1 : 0);
 }
 // nameCmp orders names as manpage.NameLess does: numbers by value.
 function nameCmp(a, b) {
@@ -232,14 +289,16 @@ function nameCmp(a, b) {
   }
   return a < b ? -1 : a > b ? 1 : 0;
 }
-const byName = (a, b) => nameCmp(a.name, b.name) || (a.sec < b.sec ? -1 : a.sec > b.sec ? 1 : 0);
+const byName = (a, b) => listCmp(a.name, b.name) || (a.sec < b.sec ? -1 : a.sec > b.sec ? 1 : 0);
 
 // listingPlan works out a listing's chunks: {count, load(n) resolving to
 // the chunk's items, letters (letter → the chunk it starts in), total
-// (null if unknown), subs (section → count, or null), prevLetter(n)}. Short
-// sections' indexes are read whole and cut into chunks of CHUNK; long
-// sections' shards are read as they're needed, a chunk being the names
-// between one shard's start and the next's, across the chapter's sections.
+// (null if unknown), subs (section → count, or null), prevLetter(n),
+// pageOf(n), chunkForPage(p), chunkOf(name)}. Short sections' indexes are
+// read whole and cut into chunks of CHUNK (the static listing's pages);
+// long sections' shards are read as they're needed, a chunk being the
+// names between one shard's start and the next's, across the chapter's
+// sections.
 async function listingPlan(entries, src, sub) {
   const indexes = await Promise.all(entries.map(sectionIndex));
   const want = (p) => !src || (p.sources || []).includes(src);
@@ -259,13 +318,17 @@ async function listingPlan(entries, src, sub) {
       }
     }
     // In the static listings' order, so chunks are their pages.
-    items.sort((a, b) => nameCmp(a.name.toLowerCase(), b.name.toLowerCase()) || (a.sec < b.sec ? -1 : a.sec > b.sec ? 1 : 0));
+    items.sort(byName);
     const letters = new Map();
     items.forEach((it, i) => { const l = letterOf(it.name); if (!letters.has(l)) letters.set(l, Math.floor(i / CHUNK) + 1); });
     return {
       count: Math.ceil(items.length / CHUNK), total: items.length, subs, letters,
       load: async (n) => items.slice((n - 1) * CHUNK, n * CHUNK),
       prevLetter: (n) => (n > 1 ? letterOf(items[(n - 1) * CHUNK - 1].name) : ""),
+      // Chunks are the static listing's pages.
+      pageOf: (n) => n,
+      chunkForPage: (p) => p,
+      chunkOf: (name) => Math.floor(Math.max(0, items.findIndex(it => it.name === name)) / CHUNK) + 1,
     };
   }
   const parts = [], subs = new Map();
@@ -275,27 +338,56 @@ async function listingPlan(entries, src, sub) {
     subs.set(si.section, src ? null : n);
     if (sub && si.section !== sub) continue;
     total += n;
-    for (const r of si.shards || []) parts.push({ sec: si.section, first: r.first, last: r.last, sha: r.sha256 });
+    for (const r of si.shards || []) parts.push({ sec: si.section, first: r.first, last: r.last, sha: r.sha256, count: r.count || 0 });
     const ps = si.pages || [];
-    if (ps.length) parts.push({ sec: si.section, first: ps[0].name, last: ps[ps.length - 1].name, pages: ps });
+    if (ps.length) parts.push({ sec: si.section, first: ps[0].name, last: ps[ps.length - 1].name, pages: ps, count: ps.length });
   }
-  const bounds = [...new Set(parts.map(p => p.first))].sort(nameCmp);
+  const bounds = [...new Set(parts.map(p => p.first))].sort(listCmp);
+  // A letter's chunk is where names starting with it would begin.
   const letters = new Map();
-  bounds.forEach((b, i) => { const l = letterOf(b); if (!letters.has(l)) letters.set(l, i + 1); });
+  for (const b of bounds) {
+    const l = letterOf(b);
+    if (!letters.has(l)) letters.set(l, 0);
+  }
+  for (const l of letters.keys()) letters.set(l, chunkOf(l === "#" ? "" : l.toLowerCase()));
   return {
     count: bounds.length, total: src ? null : total, subs, letters,
     load: async (n) => {
       const lo = bounds[n - 1], hi = n < bounds.length ? bounds[n] : null;
-      const inRange = (name) => nameCmp(name, lo) >= 0 && (hi === null || nameCmp(name, hi) < 0);
+      const inRange = (name) => listCmp(name, lo) >= 0 && (hi === null || listCmp(name, hi) < 0);
       const items = [];
-      await Promise.all(parts.filter(p => nameCmp(p.last, lo) >= 0 && (hi === null || nameCmp(p.first, hi) < 0)).map(async (part) => {
+      await Promise.all(parts.filter(p => listCmp(p.last, lo) >= 0 && (hi === null || listCmp(p.first, hi) < 0)).map(async (part) => {
         const pages = part.pages || (await cache.get(sectionShard(part.sha))).pages;
         for (const p of pages) if (inRange(p.name) && want(p)) items.push(toItem(p, part.sec));
       }));
       return items.sort(byName);
     },
     prevLetter: (n) => (n > 1 && letterOf(bounds[n - 2]) === letterOf(bounds[n - 1]) ? letterOf(bounds[n - 1]) : ""),
+    // Chunks don't line up with the static listing's pages, so where a
+    // chunk falls among them is reckoned from the shards' counts.
+    pageOf: (n) => Math.floor(before(n) / CHUNK) + 1,
+    chunkForPage: (p) => {
+      let n = 1;
+      while (n < bounds.length && Math.floor(before(n + 1) / CHUNK) + 1 <= p) n++;
+      return n;
+    },
+    chunkOf,
   };
+  function chunkOf(name) {
+    let n = 1;
+    while (n < bounds.length && listCmp(bounds[n], name) <= 0) n++;
+    return n;
+  }
+  // before is about how many pages come before chunk n.
+  function before(n) {
+    const b = bounds[n - 1];
+    let k = 0;
+    for (const p of parts) {
+      if (listCmp(p.last, b) < 0) k += p.count;
+      else if (listCmp(p.first, b) < 0) k += p.count / 2;
+    }
+    return k;
+  }
 }
 
 // LAYOUT is how series of documents are laid out, where it isn't man's: as
@@ -376,10 +468,10 @@ async function pageView(name, sec, rest, src) {
       doc.sections.map(s => (s.heading ? `<h2>${esc(s.heading)}</h2>` : "") + `<pre>${esc(s.body)}</pre>`).join("\n") +
       (doc.footer ? `<pre class="manhead">${esc(doc.footer)}</pre>` : "") + "</div>";
   }
-  let meta = "";
+  let meta = "", made = "";
   if (doc.generator) {
     const g = doc.generator, when = g.generated && !g.generated.startsWith("0001") ? g.generated.slice(0, 10) : "";
-    meta += `<span>${which === "girl" ? "girlified" : "rewritten"} by ${esc(g.model || g.backend || "a model")}${when ? " on " + esc(when) : ""} 💖</span>`;
+    made = `<li>💖 ${which === "girl" ? "girlified" : "rewritten"} by ${esc(g.model || g.backend || "a model")}${when ? " on " + esc(when) : ""}</li>`;
   }
   if (variants.length > 1) {
     meta += variants.map(k => k === which ? `<span class="pill on">${esc(variantLabel(k))}</span>`
@@ -414,8 +506,11 @@ async function pageView(name, sec, rest, src) {
   const tocHTML = toc.length ? `<nav class="toc card" aria-label="Contents"><h2>✨ contents</h2><ul>` +
     toc.map(t => `<li${t.level === 2 ? ' class="sub"' : ""}><a href="#${esc(t.id)}">${esc(t.text)}</a></li>`).join("") + "</ul></nav>" : "";
   const lede = isSeries(sec) && ver.description ? `<p class="lede">${esc(ver.description)}</p>` : "";
+  // Where it's from, as on the static page: its packages, and what made it.
+  const from = (ver.packages || []).map(p => `<li>${esc(packageLabel(p))}</li>`).join("") + made;
+  const provenance = from ? `<div class="provenance"><details><summary>📦 where this page comes from</summary><ul>${from}</ul></details></div>` : "";
   h(`<div class="layout"><article class="card manpage">${crumbs}<h1>${esc(title)}${esc(suffix)}</h1>${lede}` +
-    `<div class="meta">${meta}</div>${inLine}${notice}${body}</article>${tocHTML}</div>`);
+    `${inLine}${meta ? `<div class="meta">${meta}</div>` : ""}${notice}${body}${provenance}</article>${tocHTML}</div>`);
   if (at) {
     afterShow = () => {
       const d = app.querySelector(`[id="${at}"]`);
@@ -425,64 +520,6 @@ async function pageView(name, sec, rest, src) {
       }
     };
   }
-}
-
-// staticListing shows a listing by its static pages (which are smaller than
-// the section indexes they're made from, and so the same as what's served),
-// scrolling through them as the static page itself does. Offline, it's made
-// from the section indexes saved, if they are.
-async function staticListing(key, sub, start) {
-  const pageURL = (n) => listingURL(key, sub, n);
-  const fetchPage = async (n) => {
-    const r = await fetch(pageURL(n));
-    if (!r.ok) {
-      const e = new Error(`${pageURL(n)}: ${r.status}`);
-      e.status = r.status;
-      throw e;
-    }
-    return new DOMParser().parseFromString(await r.text(), "text/html");
-  };
-  let doc;
-  try {
-    doc = await fetchPage(start);
-  } catch (e) {
-    if (e instanceof TypeError) return sourceSection("", key, sub, { start, pageURL });
-    throw e;
-  }
-  const card = doc.querySelector(".static-view > .card");
-  if (!card) return oops("that listing's broken 💔");
-  h(card.outerHTML);
-  if (location.href !== routingFor) return;
-  document.title = doc.title;
-  app.querySelector(".pager")?.setAttribute("hidden", "");
-  for (const b of app.querySelectorAll("button[data-save-section]")) {
-    b.hidden = !("caches" in globalThis);
-    saveButton(b, cache, b.dataset.saveSection);
-  }
-  const listing = app.querySelector(".listing[data-pages]");
-  const pages = listing ? +listing.dataset.pages : 1;
-  if (pages < 2 || !("IntersectionObserver" in globalThis)) return;
-  const list = new VirtualList(listing, {
-    count: pages,
-    load: async (n) => (await fetchPage(n)).querySelector(".listing .chunk")?.innerHTML || "",
-    onChunk: (n) => {
-      if (location.href !== routingFor) return;
-      history.replaceState(history.state, "", pageURL(n));
-      shown = routingFor = renderedFor = revealedFor = location.href;
-    },
-  });
-  current = list;
-  app.querySelector(".letters")?.addEventListener("click", (e) => {
-    const a = e.target.closest("a[href]");
-    if (!a) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const u = new URL(a.href);
-    const m = u.pathname.match(/\/page\/(\d+)\/$/);
-    list.jump(m ? +m[1] : 1, decodeURIComponent(u.hash.slice(1)));
-  });
-  list.fill();
-  (globalThis.requestIdleCallback || ((f) => setTimeout(f, 200)))(() => list.prefetch());
 }
 
 // searchView is the search page, in the app.
@@ -604,6 +641,14 @@ function viewOf(u) {
 // unsegment undoes site.SegmentName (names starting with a dot are escaped).
 const unsegment = (s) => (s.startsWith("%") ? decodeURIComponent(s) : s);
 
+// packageLabel describes a package, as repo.Package.String does.
+function packageLabel(p) {
+  const parts = [];
+  if (p.distro) parts.push(p.release ? `${p.distro} ${p.release}` : p.distro);
+  if (p.name) parts.push(p.version ? `${p.name} ${p.version}` : p.name);
+  return parts.join(": ") + (p.url ? ` from ${p.url}` : "");
+}
+
 // publishedLabel is a "2022-06" date as "June 2022", as site.published.
 function publishedLabel(d) {
   const m = /^(\d{4})-(\d{2})$/.exec(d || "");
@@ -630,7 +675,7 @@ async function route() {
     case "home": return sourceHome("");
     case "page": return pageView(v.name, v.sec, [], "");
     case "search": return searchView(v.params);
-    case "section": return staticListing(v.key, v.sub, v.page);
+    case "section": return sourceSection("", v.key, v.sub, { start: v.page, pageURL: (n) => listingURL(v.key, v.sub, n) });
   }
   const r = await parse(location.hash);
   switch (r.kind) {

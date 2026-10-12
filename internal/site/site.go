@@ -170,8 +170,11 @@ type view struct {
 	// of them (ListPage, from 1, of ListPages), with links around it.
 	ListPage, ListPages int
 	ListFirst           string // the first page's URL, which the others go under
-	Pager               []pagerLink
-	Prev, Next          string
+	// ListKey and ListSub are the chapter and section (or "") listed, for
+	// the browse app to make the listing again from the repository.
+	ListKey, ListSub string
+	Pager            []pagerLink
+	Prev, Next       string
 
 	// page
 	Page *pageView
@@ -676,6 +679,7 @@ func (b *builder) sections(pages []repo.PageRef) error {
 				n := i + 1
 				pv.Groups, pv.Letters = gs, letters
 				pv.ListPage, pv.ListPages, pv.ListFirst = n, len(pages), u
+				pv.ListKey, pv.ListSub = key, sec
 				if len(pages) > 1 {
 					pv.Pager = pager(u, n, len(pages))
 					pv.Sub = fmt.Sprintf("%s · page %d of %d", v.Sub, n, len(pages))

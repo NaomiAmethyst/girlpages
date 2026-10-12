@@ -214,7 +214,7 @@ var sectionShardBytes = 64 << 10
 // long, returning its hash.
 func (s *Store) writeSectionIndex(si *SectionIndex) (string, error) {
 	// By name, so each shard is a range of them.
-	sort.SliceStable(si.Pages, func(i, j int) bool { return manpage.NameLess(si.Pages[i].Name, si.Pages[j].Name) })
+	sort.SliceStable(si.Pages, func(i, j int) bool { return manpage.ListLess(si.Pages[i].Name, si.Pages[j].Name) })
 	write := func(v *SectionIndex) (string, error) {
 		return s.WriteAddressed(func(sha string) string { return SectionIndexPath(si.Section, sha) }, v)
 	}

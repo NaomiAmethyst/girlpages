@@ -251,6 +251,15 @@ func Chapter(sec string) string {
 	return sec
 }
 
+// ListLess orders page names as listings do: ignoring case (then by it),
+// numbers by value.
+func ListLess(a, b string) bool {
+	if la, lb := strings.ToLower(a), strings.ToLower(b); la != lb {
+		return NameLess(la, lb)
+	}
+	return a < b
+}
+
 // NameLess orders page names: numbers (as series of documents have) by
 // value, anything else as text.
 func NameLess(a, b string) bool {

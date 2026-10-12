@@ -9,12 +9,12 @@
 {{if .Sources}}<nav class="chips sources" aria-label="Browse by source">{{range .Sources}}<a class="pill{{if .On}} on{{end}}" href="{{.URL}}">{{.Label}}</a>{{end}}</nav>{{end}}
 {{if .Chips}}<div class="chips">{{range .Chips}}<a class="pill{{if .On}} on{{end}}" href="{{.URL}}">{{.Label}}</a>{{end}}</div>{{end}}
 {{if .Letters}}<nav class="letters" aria-label="Jump to letter">{{range .Letters}}<a href="{{.URL}}">{{.Letter}}</a>{{end}}</nav>{{end}}
-<div class="listing" data-first="{{.ListFirst}}" data-page="{{.ListPage}}" data-pages="{{.ListPages}}">
+<div class="listing" data-first="{{.ListFirst}}" data-page="{{.ListPage}}" data-pages="{{.ListPages}}" data-key="{{.ListKey}}" data-sub="{{.ListSub}}">
 <div class="chunk" data-chunk="{{.ListPage}}">
 {{range .Groups}}
 {{if .Cont}}<h2 class="letter cont">{{.Letter}} <span class="sub">(continued)</span></h2>{{else}}<h2 class="letter" id="letter-{{.Letter}}">{{.Letter}}</h2>{{end}}
 <ul class="pages">
-{{range .Items}}<li><a href="{{.URL}}"><span class="name">{{.Prefix}}{{.Name}}</span>{{if not .Series}}<span class="sec">({{.Section}})</span>{{end}}</a><span class="desc">{{.Desc}}</span>{{if .Girlified}}<span class="done" title="girlified">✨</span>{{end}}</li>
+{{range .Items}}<li data-name="{{.Name}}"><a href="{{.URL}}"><span class="name">{{.Prefix}}{{.Name}}</span>{{if not .Series}}<span class="sec">({{.Section}})</span>{{end}}</a><span class="desc">{{.Desc}}</span>{{if .Girlified}}<span class="done" title="girlified">✨</span>{{end}}</li>
 {{end}}</ul>
 {{else}}<div class="empty">nothing here, bestie 😭</div>
 {{end}}

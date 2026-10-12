@@ -200,6 +200,34 @@ export class Searcher {
   // to pages from that source ("debian", "debian/trixie"), and accept, if
   // given, to hits it resolves true for.
   async search(query, limit = 50, source = "", accept = null) {
+    const ranked = await this.rank(query);
+    if (!source && !accept) {
+      const top = limit > 0 ? ranked.slice(0, limit) : ranked;
+      return Promise.all(top.map(async ([id, score]) => hit(await this.doc(id), score)));
+    }
+    return (await this.filtered(ranked, 0, limit, source, accept)).hits;
+  }
+
+  // filtered walks down the ranking from start, a batch at a time, for up
+  // to limit hits from source that accept (if given) takes, resolving to
+  // {hits, next}: where to go on from (-1 at the end).
+  async filtered(ranked, start, limit, source = "", accept = null) {
+    const hits = [];
+    let i = start;
+    for (; i < ranked.length && i < MAX_FILTERED && (limit <= 0 || hits.length < limit); i += 64) {
+      const batch = ranked.slice(i, Math.min(i + 64, MAX_FILTERED));
+      const docs = await Promise.all(batch.map(([id]) => this.doc(id)));
+      const ok = await Promise.all(docs.map(d => (!source || d[3].split(" ").includes(source)) && (!accept || accept(hit(d, 0)))));
+      docs.forEach((d, j) => {
+        if ((limit <= 0 || hits.length < limit) && ok[j]) hits.push(hit(d, batch[j][1]));
+      });
+    }
+    return { hits, next: i < ranked.length && i < MAX_FILTERED ? i : -1 };
+  }
+
+  // rank finds the pages for a query, best first, as [doc id, score]
+  // pairs: everything but what doc says about each.
+  async rank(query) {
     this.missedTypos = false;
     await this.load();
     const terms = [...new Set(seriesTerms(tokens(query), this.manifest))];
@@ -229,22 +257,7 @@ export class Searcher {
     };
     let res = combine(true);
     if (res.size === bonus.size) res = combine(false);
-    const ranked = [...res].sort((a, b) => b[1] - a[1] || a[0] - b[0]);
-    if (!source && !accept) {
-      const top = limit > 0 ? ranked.slice(0, limit) : ranked;
-      return Promise.all(top.map(async ([id, score]) => hit(await this.doc(id), score)));
-    }
-    // Within a source: look further down the ranking, a batch at a time.
-    const hits = [];
-    for (let i = 0; i < ranked.length && i < MAX_FILTERED && (limit <= 0 || hits.length < limit); i += 64) {
-      const batch = ranked.slice(i, Math.min(i + 64, MAX_FILTERED));
-      const docs = await Promise.all(batch.map(([id]) => this.doc(id)));
-      const ok = await Promise.all(docs.map(d => (!source || d[3].split(" ").includes(source)) && (!accept || accept(hit(d, 0)))));
-      docs.forEach((d, j) => {
-        if ((limit <= 0 || hits.length < limit) && ok[j]) hits.push(hit(d, batch[j][1]));
-      });
-    }
-    return hits;
+    return [...res].sort((a, b) => b[1] - a[1] || a[0] - b[0]);
   }
 }
 
@@ -328,37 +341,78 @@ export async function searchPage(box, params, { current = () => true } = {}) {
   const where = src ? ` in ${src.replace("/", " ")}` : "";
   if (current()) document.title = `${q}${where} · search · girlpages 💅`;
   status.textContent = "looking… 🔎";
+  const saved = savedOnly ? " saved" : "";
   try {
     const accept = savedOnly ? (h) => s.cache.hasPage(h.name, h.section, src) : null;
-    const hits = await s.search(q, 100, src, accept);
+    const ranked = await s.rank(q);
     if (!current()) return;
     list.replaceChildren();
-    const saved = savedOnly ? " saved" : "";
-    const typos = s.missedTypos ? " (typo matching isn't saved, so typos won't be caught)" : "";
-    if (!hits.length) {
-      status.textContent = `nothing${saved} for “${q}”${where}, bestie 😭 try another word?${typos}`;
-      return;
-    }
-    status.textContent = `${hits.length === 100 ? "the top 100" : hits.length}${saved} page${hits.length === 1 ? "" : "s"} for “${q}”${where} ✨${typos}`;
-    for (const h of hits) {
+    const typos = () => (s.missedTypos ? " (typo matching isn't saved, so typos won't be caught)" : "");
+    const none = () => { status.textContent = `nothing${saved} for “${q}”${where}, bestie 😭 try another word?${typos()}`; };
+    if (!ranked.length) return none();
+    const plural = (n) => `${n.toLocaleString()}${saved} page${n === 1 ? "" : "s"}`;
+    // Results show a screenful at a time, each as soon as what it says
+    // about itself (in the page table, a shard per 128 pages) arrives,
+    // so the first appear long before the rest would have.
+    const filter = Boolean(src || accept);
+    let shown = 0, next = 0, more = true, busy = false;
+    status.textContent = filter ? `looking through ${plural(ranked.length).replace(saved, "")} for “${q}”${where}… 🔎${typos()}`
+      : `${plural(ranked.length)} for “${q}”${where} ✨${typos()}`;
+    const row = () => {
       const li = document.createElement("li");
-      const a = document.createElement("a");
-      a.href = src
-        ? browseURL(base, { page: h.name, sec: h.section, src })
-        : pageURL(base, h.name, h.section);
-      const name = document.createElement("span");
-      name.className = "name";
+      li.className = "loading";
+      li.innerHTML = '<a><span class="name">…</span></a><span class="desc"></span>';
+      list.append(li);
+      return li;
+    };
+    const fill = (li, h) => {
+      li.className = "";
+      const a = li.querySelector("a");
+      a.href = src ? browseURL(base, { page: h.name, sec: h.section, src }) : pageURL(base, h.name, h.section);
+      const name = a.querySelector(".name");
       name.textContent = h.name;
       const sec = document.createElement("span");
       sec.className = "sec";
       sec.textContent = `(${h.section})`;
-      a.append(name, sec);
-      const desc = document.createElement("span");
-      desc.className = "desc";
-      desc.textContent = h.description;
-      li.append(a, desc);
-      list.append(li);
+      a.append(sec);
+      li.querySelector(".desc").textContent = h.description;
+    };
+    const page = async () => {
+      if (busy || !more || !current()) return;
+      busy = true;
+      try {
+        if (!filter) {
+          const batch = ranked.slice(next, next + PAGE);
+          next += batch.length;
+          more = next < ranked.length;
+          await Promise.all(batch.map(([id, score]) => {
+            const li = row();
+            return s.doc(id).then(d => fill(li, hit(d, score)), () => li.remove());
+          }));
+          shown += batch.length;
+        } else {
+          const r = await s.filtered(ranked, next, PAGE, src, accept);
+          if (!current()) return;
+          for (const h of r.hits) fill(row(), h);
+          shown += r.hits.length;
+          next = r.next;
+          more = next >= 0;
+          status.textContent = shown ? `${more ? "the top " : ""}${plural(shown)} for “${q}”${where} ✨${typos()}` : "";
+          if (!shown && !more) none();
+        }
+      } finally {
+        busy = false;
+      }
+      if (more && nearEnd()) page();
+    };
+    const sentinel = document.createElement("div");
+    list.after(sentinel);
+    const nearEnd = () => sentinel.getBoundingClientRect().top < innerHeight + 800;
+    if ("IntersectionObserver" in globalThis) {
+      const io = new IntersectionObserver((es) => { if (es.some(e => e.isIntersecting)) page(); }, { rootMargin: "800px 0px" });
+      io.observe(sentinel);
     }
+    await page();
   } catch (e) {
     // fetch fails with a TypeError when there's no network at all.
     status.textContent = e instanceof TypeError && e.status === undefined
@@ -366,6 +420,9 @@ export async function searchPage(box, params, { current = () => true } = {}) {
       : `search broke 💔 ${e.message}`;
   }
 }
+
+// PAGE is how many results show at a time.
+const PAGE = 20;
 
 // The static search page runs itself.
 if (typeof document !== "undefined") {
