@@ -50,7 +50,9 @@ func (a *Apt) Index(ctx context.Context, f *Fetcher) (*Index, error) {
 	rel.Close()
 	idx.Distro = strings.ToLower(fields["Origin"])
 	if c := fields["Codename"]; c != "" {
-		idx.Release = c
+		// Debian's bookworm-updates and bookworm-security are bookworm's
+		// (Ubuntu's -updates already say just noble).
+		idx.Release, _, _ = strings.Cut(c, "-")
 	}
 	comps := a.Components
 	if len(comps) == 0 {

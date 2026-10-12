@@ -175,7 +175,7 @@ func TestApt(t *testing.T) {
 			"Filename: pool/main/%s_%s_amd64.deb\nSize: %d\nSHA256: %s\n\n", p.name, p.ver, p.name, p.ver, len(p.b), sum(p.b))
 	}
 	srv := serve(map[string][]byte{
-		"/debian/dists/stable/InRelease":                     []byte("-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA512\n\nOrigin: Debian\nCodename: trixie\nComponents: main\n"),
+		"/debian/dists/stable/InRelease":                     []byte("-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA512\n\nOrigin: Debian\nCodename: trixie-security\nComponents: main\n"),
 		"/debian/dists/stable/main/Contents-amd64.gz":        gz([]byte(contents)),
 		"/debian/dists/stable/main/binary-amd64/Packages.gz": gz([]byte(packages)),
 		"/debian/pool/main/hello_1.0-1_amd64.deb":            old,
