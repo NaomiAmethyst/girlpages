@@ -3,14 +3,14 @@
 //
 // Bits of pages: save buttons, and the sources' menus.
 
-import { esc } from "./html.js";
+import { html } from "./html.js";
 
 // sourceNav is a manifest's sources as chips, as site.sourceChips makes
 // them: everything first, then each distribution, with a menu of its
 // releases if it has any. on is the source shown ("" for everything), and
 // href(key) a source's link ("" for everything).
 export function sourceNav(sources, { on = "", href, all = "✨ latest of everything" }) {
-  const pill = (key, text) => `<a class="pill${key === on ? " on" : ""}" href="${esc(href(key))}">${esc(text)}</a>`;
+  const pill = (key, text) => html`<a class="pill${key === on ? " on" : ""}" href="${href(key)}">${text}</a>`;
   const groups = new Map();
   for (const s of sources || []) {
     if (!groups.has(s.distro)) groups.set(s.distro, { whole: false, releases: [] });
@@ -18,18 +18,14 @@ export function sourceNav(sources, { on = "", href, all = "✨ latest of everyth
     if (s.release) g.releases.push(s.release);
     else g.whole = true;
   }
-  let out = pill("", all);
-  for (const [distro, g] of groups) {
-    if (!g.releases.length) {
-      out += pill(distro, distro);
-      continue;
-    }
+  const menus = [...groups].map(([distro, g]) => {
+    if (!g.releases.length) return pill(distro, distro);
     const release = on.startsWith(distro + "/") ? on.slice(distro.length + 1) : "";
     const here = on === distro || g.releases.includes(release);
-    out += `<details class="source"><summary class="pill${here ? " on" : ""}">${esc(release ? `${distro} · ${release}` : distro)}</summary><div class="menu">` +
-      (g.whole ? pill(distro, `all of ${distro}`) : "") + g.releases.map(r => pill(`${distro}/${r}`, r)).join("") + "</div></details>";
-  }
-  return out;
+    return html`<details class="source"><summary class="pill${here ? " on" : ""}">${release ? `${distro} · ${release}` : distro}</summary><div class="menu">${
+      g.whole && pill(distro, `all of ${distro}`)}${g.releases.map(r => pill(`${distro}/${r}`, r))}</div></details>`;
+  });
+  return html`${pill("", all)}${menus}`;
 }
 
 // saveButton makes a button save a section for offline reading, showing how

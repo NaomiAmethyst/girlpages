@@ -3,7 +3,7 @@
 //
 // The app's view of a page: any version, any variant, from any source.
 
-import { esc } from "./html.js";
+import { html, raw } from "./html.js";
 import { renderHTML, renderOriginalHTML } from "./render.js";
 import { chapter, isSeries, sectionLabel, sourceLabel } from "./manual.js";
 
@@ -131,62 +131,75 @@ export function createPageView({ el: app, base, listing, variant, browse, static
     nav.setTitle(`${name}(${sec})${ver.description ? " — " + ver.description : ""}${suffix} · girlpages 💅`);
     const here = (extra) => browse({ page: name, sec, version: slug(ver), src, ...extra });
 
-    let body = "", toc = [];
+    // The page itself: rendered from markup, reflowed from the original,
+    // or the original as man prints it.
+    let body, toc = [];
     const link = src ? (n, s) => browse({ page: n, sec: s, src }) : (n, s) => staticPage(n, s);
     if (doc.syntax === "girlpages-markup") {
-      ({ html: body, toc } = renderHTML(variantText(doc), { link }));
-      body = `<div class="content">${body}</div>`;
+      const r = renderHTML(variantText(doc), { link });
+      body = html`<div class="content">${raw(r.html)}</div>`;
+      toc = r.toc;
     } else if (!mono) {
-      ({ html: body, toc } = renderOriginalHTML(doc, { link, ...(LAYOUT[sec] || {}) }));
-      body = `<div class="content reflowed">${body}</div>`;
+      const r = renderOriginalHTML(doc, { link, ...(LAYOUT[sec] || {}) });
+      body = html`<div class="content reflowed">${raw(r.html)}</div>`;
+      toc = r.toc;
     } else {
-      body = '<div class="original">' + (doc.header ? `<pre class="manhead">${esc(doc.header)}</pre>` : "") +
-        doc.sections.map(s => (s.heading ? `<h2>${esc(s.heading)}</h2>` : "") + `<pre>${esc(s.body)}</pre>`).join("\n") +
-        (doc.footer ? `<pre class="manhead">${esc(doc.footer)}</pre>` : "") + "</div>";
+      body = html`<div class="original">${doc.header && html`<pre class="manhead">${doc.header}</pre>`}${
+        doc.sections.map(s => html`${s.heading && html`<h2>${s.heading}</h2>`}<pre>${s.body}</pre>
+`)}${
+        doc.footer && html`<pre class="manhead">${doc.footer}</pre>`}</div>`;
     }
-    let meta = "", made = "";
-    if (doc.generator) {
-      const g = doc.generator, when = g.generated && !g.generated.startsWith("0001") ? g.generated.slice(0, 10) : "";
-      made = `<li>💖 ${which === "girl" ? "girlified" : "rewritten"} by ${esc(g.model || g.backend || "a model")}${when ? " on " + esc(when) : ""}</li>`;
-    }
+
+    // Its variants, and the original monospaced.
+    const pills = [];
     if (variants.length > 1) {
-      meta += variants.map(k => k === which ? `<span class="pill on">${esc(variantLabel(k))}</span>`
-        : `<a class="pill" href="${esc(here({ variant: k === variants[0] ? "" : k }))}">${esc(variantLabel(k))}</a>`).join("");
+      for (const k of variants) {
+        pills.push(k === which ? html`<span class="pill on">${variantLabel(k)}</span>`
+          : html`<a class="pill" href="${here({ variant: k === variants[0] ? "" : k })}">${variantLabel(k)}</a>`);
+      }
     }
     if (doc.syntax !== "girlpages-markup") {
-      const href = here({ variant: which === variants[0] ? "" : which, mono: !mono });
-      meta += `<a class="pill${mono ? " on" : ""}" href="${esc(href)}" title="as man prints it">⌨️ monospace</a>`;
+      pills.push(html`<a class="pill${mono ? " on" : ""}" href="${here({ variant: which === variants[0] ? "" : which, mono: !mono })}" title="as man prints it">⌨️ monospace</a>`);
     }
+
+    // Where it's from, and its versions, as on the static page: this one
+    // first, then the latest, then the newest added.
     const keys = sourceKeys(ver);
     const when = isSeries(sec) && ver.packages && ver.packages[0] ? publishedLabel(ver.packages[0].version) : "";
-    // Switching between versions, as on the static page: this one first,
-    // then the latest, then the newest added.
-    let switcher = ver.version ? `version ${esc(ver.version)}, ` : "";
+    let switcher = ver.version && `version ${ver.version}, `;
     if (versions.length > 1) {
       const items = [ver, ...versions.filter(x => x !== ver)].map(x => {
         const label = (x.version ? x.version + " · " : "") + (sourceLabels(x).join(", ") || "added " + (x.added || "").slice(0, 10)) +
           (x.source === l.current ? " (latest)" : "");
-        return x === ver ? `<li><strong>${esc(label)}</strong></li>`
-          : `<li><a href="${esc(x.source === l.current && !src ? staticPage(name, sec) : browse({ page: name, sec, version: slug(x), src }))}">${esc(label)}</a></li>`;
-      }).join("");
-      switcher = `<details class="versions" id="versions"><summary>${ver.version ? "version " + esc(ver.version) : "this version"} <span class="n">· ${versions.length} versions</span></summary><ul>${items}</ul></details>, `;
+        return x === ver ? html`<li><strong>${label}</strong></li>`
+          : html`<li><a href="${x.source === l.current && !src ? staticPage(name, sec) : browse({ page: name, sec, version: slug(x), src })}">${label}</a></li>`;
+      });
+      switcher = html`<details class="versions" id="versions"><summary>${ver.version ? "version " + ver.version : "this version"} <span class="n">· ${versions.length} versions</span></summary><ul>${items}</ul></details>, `;
     }
-    const inLine = keys.length ? `<div class="meta in">${isSeries(sec) ? `📅 ${when ? "published " + esc(when) + ", " : ""}from ` : `📦 ${switcher}in `}` +
-      keys.map(k => `<a href="${esc(browse({ page: name, sec, src: k }))}">${esc(sourceLabel(k))}</a>`).join(", ") + "</div>" : "";
-    let notice = "";
-    if (!latest) notice += `<div class="notice">🕰️ this isn't the latest version of ${esc(name)}(${esc(sec)}). <a href="${esc(staticPage(name, sec))}">here's the latest</a>.</div>`;
-    if (which === "man" && variants.length === 1) notice += `<div class="notice">💤 she hasn't gotten to this version yet, so here's the original.</div>`;
-    const crumbs = `<nav class="crumbs"><a href="${esc(base)}">home</a> › ` + (src
-      ? `<a href="${esc(browse({ src }))}">${esc(sourceLabel(src))}</a> › <a href="${esc(browse({ src, section: chapter(sec), sub: chapter(sec) !== sec ? sec : "" }))}">${esc(sectionLabel(sec))}</a>`
-      : `<a href="${esc(listingURL(chapter(sec), chapter(sec) !== sec ? sec : "", 1))}">${esc(sectionLabel(sec))}</a>`) + ` › ${esc(title)}</nav>`;
-    const tocHTML = toc.length ? `<nav class="toc card" aria-label="Contents"><h2>✨ contents</h2><ul>` +
-      toc.map(t => `<li${t.level === 2 ? ' class="sub"' : ""}><a href="#${esc(t.id)}">${esc(t.text)}</a></li>`).join("") + "</ul></nav>" : "";
-    const lede = isSeries(sec) && ver.description ? `<p class="lede">${esc(ver.description)}</p>` : "";
-    // Where it's from, as on the static page: its packages, and what made it.
-    const from = (ver.packages || []).map(p => `<li>${esc(packageLabel(p))}</li>`).join("") + made;
-    const provenance = from ? `<div class="provenance"><details><summary>📦 where this page comes from</summary><ul>${from}</ul></details></div>` : "";
-    nav.render(`<div class="layout"><article class="card manpage">${crumbs}<h1>${esc(title)}${esc(suffix)}</h1>${lede}` +
-      `${inLine}${meta ? `<div class="meta">${meta}</div>` : ""}${notice}${body}${provenance}</article>${tocHTML}</div>`);
+    const inLine = keys.length > 0 && html`<div class="meta in">${isSeries(sec) ? `📅 ${when ? `published ${when}, ` : ""}from ` : html`📦 ${switcher}in `}${
+      keys.map((k, i) => html`${i > 0 && ", "}<a href="${browse({ page: name, sec, src: k })}">${sourceLabel(k)}</a>`)}</div>`;
+
+    const notices = [
+      !latest && html`<div class="notice">🕰️ this isn't the latest version of ${name}(${sec}). <a href="${staticPage(name, sec)}">here's the latest</a>.</div>`,
+      which === "man" && variants.length === 1 && html`<div class="notice">💤 she hasn't gotten to this version yet, so here's the original.</div>`,
+    ];
+    const sub = chapter(sec) !== sec ? sec : "";
+    const crumbs = html`<nav class="crumbs"><a href="${base}">home</a> › ${src
+      ? html`<a href="${browse({ src })}">${sourceLabel(src)}</a> › <a href="${browse({ src, section: chapter(sec), sub })}">${sectionLabel(sec)}</a>`
+      : html`<a href="${listingURL(chapter(sec), sub, 1)}">${sectionLabel(sec)}</a>`} › ${title}</nav>`;
+    const contents = toc.length > 0 && html`<nav class="toc card" aria-label="Contents"><h2>✨ contents</h2><ul>${
+      toc.map(t => html`<li${t.level === 2 && raw(' class="sub"')}><a href="#${t.id}">${t.text}</a></li>`)}</ul></nav>`;
+    const lede = isSeries(sec) && ver.description && html`<p class="lede">${ver.description}</p>`;
+    // Where it's from: its packages, and what made it.
+    const g = doc.generator, made = g && (g.generated && !g.generated.startsWith("0001") ? g.generated.slice(0, 10) : "");
+    const from = [
+      ...(ver.packages || []).map(p => html`<li>${packageLabel(p)}</li>`),
+      g && html`<li>💖 ${which === "girl" ? "girlified" : "rewritten"} by ${g.model || g.backend || "a model"}${made && ` on ${made}`}</li>`,
+    ].filter(Boolean);
+    const provenance = from.length > 0 && html`<div class="provenance"><details><summary>📦 where this page comes from</summary><ul>${from}</ul></details></div>`;
+
+    nav.render(html`<div class="layout"><article class="card manpage">${crumbs}<h1>${title}${suffix}</h1>${lede}${inLine}${
+      pills.length > 0 && html`<div class="meta">${pills}</div>`}${notices}${body}${provenance}</article>${contents}</div>`);
     if (at) {
       nav.scrollTo(() => {
         const d = app.querySelector(`[id="${at}"]`);

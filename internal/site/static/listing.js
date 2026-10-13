@@ -5,7 +5,7 @@
 // chapter's index, a chunk at a time, scrolling through all of them.
 
 import { VirtualList } from "./vlist.js";
-import { esc } from "./html.js";
+import { html } from "./html.js";
 import { rows, chapterShardsOf } from "./format.js";
 import { chapter, isSeries, letterOf, nameCmp } from "./manual.js";
 
@@ -99,23 +99,25 @@ export function createListings({ cache, manifest, browse, staticPage, router }) 
   // thousands) as they start, a letter carried over from the chunk before
   // being marked as such.
   function chunkMaker(plan) {
+    const entry = (it) => {
+      const series = isSeries(it.sec);
+      return html`<li data-name="${it.name}"><a href="${it.url}"><span class="name">${series ? `${it.sec.toUpperCase()} ${it.name}` : it.name}</span>${
+        !series && html`<span class="sec">(${it.sec})</span>`}</a><span class="desc">${it.desc}</span>${
+        it.girl && html`<span class="done" title="girlified">✨</span>`}</li>`;
+    };
     return async (n) => {
-      const items = await plan.load(n);
-      let out = "", prev = plan.prevLetter(n), open = false;
-      for (const it of items) {
+      // Runs of a letter, each under its heading: marked as carried on if
+      // the chunk before ended with it.
+      const runs = [];
+      for (const it of await plan.load(n)) {
         const l = letterOf(it.name);
-        if (!open || l !== prev) {
-          if (open) out += "</ul>";
-          out += l === prev ? `<h2 class="letter cont">${esc(l)} <span class="sub">(continued)</span></h2>` : `<h2 class="letter" id="letter-${esc(l)}">${esc(l)}</h2>`;
-          out += '<ul class="pages">';
-          open = true;
-          prev = l;
-        }
-        const name = isSeries(it.sec) ? `${it.sec.toUpperCase()} ${it.name}` : it.name;
-        out += `<li data-name="${esc(it.name)}"><a href="${esc(it.url)}"><span class="name">${esc(name)}</span>${isSeries(it.sec) ? "" : `<span class="sec">(${esc(it.sec)})</span>`}</a>` +
-          `<span class="desc">${esc(it.desc)}</span>${it.girl ? '<span class="done" title="girlified">✨</span>' : ""}</li>`;
+        if (!runs.length || runs[runs.length - 1].letter !== l) runs.push({ letter: l, items: [] });
+        runs[runs.length - 1].items.push(it);
       }
-      return open ? out + "</ul>" : out;
+      const prev = plan.prevLetter(n);
+      return html`${runs.map(({ letter, items }, i) => html`${i === 0 && letter === prev
+        ? html`<h2 class="letter cont">${letter} <span class="sub">(continued)</span></h2>`
+        : html`<h2 class="letter" id="letter-${letter}">${letter}</h2>`}<ul class="pages">${items.map(entry)}</ul>`)}`;
     };
   }
 
@@ -130,7 +132,7 @@ export function createListings({ cache, manifest, browse, staticPage, router }) 
     const chunks = Math.max(1, plan.count);
     const chunkHTML = chunkMaker(plan);
     if (chunks < 2 || !("IntersectionObserver" in globalThis)) {
-      for (let n = first + 1; n <= chunks; n++) listing.insertAdjacentHTML("beforeend", `<div class="chunk" data-chunk="${n}">${await chunkHTML(n)}</div>`);
+      for (let n = first + 1; n <= chunks; n++) listing.insertAdjacentHTML("beforeend", html`<div class="chunk" data-chunk="${n}">${await chunkHTML(n)}</div>`);
       return null;
     }
     // The static page the entry at the top of the screen is on, if it's
@@ -199,9 +201,9 @@ export function createListings({ cache, manifest, browse, staticPage, router }) 
     if (!firstLi || !plan.count) return null;
     const name = firstLi.dataset.name;
     const n = plan.chunkOf(name);
-    const html = await chunkMaker(plan)(n);
+    const markup = await chunkMaker(plan)(n);
     const y = firstLi.getBoundingClientRect().top;
-    listing.innerHTML = `<div class="chunk" data-chunk="${n}">${html}</div>`;
+    listing.innerHTML = html`<div class="chunk" data-chunk="${n}">${markup}</div>`;
     // The static view's address, while history's at it and the app isn't
     // showing anything over it.
     let at = location.href;
