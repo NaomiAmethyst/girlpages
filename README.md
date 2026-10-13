@@ -241,6 +241,7 @@ girl --bulk [sections]  # convert everything
 
 ```sh
 make check   # tests, vet, gofmt
+make e2e     # the website's navigation in a real browser (needs Python playwright)
 ```
 
 Pages are stored as a small Markdown dialect with colour tags (`<pink>…</pink>`

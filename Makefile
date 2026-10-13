@@ -51,7 +51,7 @@ ifeq ($(SYSTEMD),auto)
   SYSTEMD := $(if $(wildcard /run/systemd/system),yes,no)
 endif
 
-.PHONY: all build test check install install-user install-girlrepo uninstall uninstall-user clean
+.PHONY: all build test check e2e install install-user install-girlrepo uninstall uninstall-user clean
 
 all: build
 
@@ -73,6 +73,11 @@ test:
 check: test
 	$(GO) vet ./...
 	@test -z "$$(gofmt -l .)" || { gofmt -l .; echo 'run gofmt -w .'; exit 1; }
+
+# The website's navigation, in a real browser (needs Python's playwright and
+# man; skipped without them).
+e2e: girlrepo
+	python3 test/e2e/navigation.py ./girlrepo
 
 install-girlrepo: girlrepo
 	install -Dm755 girlrepo '$(DESTDIR)$(BINDIR)/girlrepo'

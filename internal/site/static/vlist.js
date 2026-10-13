@@ -186,7 +186,17 @@ export class VirtualList {
       this.earlier.hidden = n <= 1;
     }
     this.restore(c);
-    (id && this.el.querySelector(`[id="${CSS.escape(id)}"]`) || c).scrollIntoView();
+    const target = () => (id && this.el.querySelector(`[id="${CSS.escape(id)}"]`)) || c;
+    target().scrollIntoView();
+    // Entries not laid out yet have guessed sizes (see style.css), so once
+    // those around it are, put it back where it went, until it stays.
+    const want = target().getBoundingClientRect().top;
+    for (let i = 0; i < 5; i++) {
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const d = target().getBoundingClientRect().top - want;
+      if (Math.abs(d) < 1) break;
+      scrollBy(0, d);
+    }
     this.track();
     this.fill();
   }

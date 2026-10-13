@@ -681,14 +681,9 @@ function startApp(base) {
     return m;
   }));
   const open = () => load().then(m => m.start());
-  const go = (href) => {
-    // Remember where this was, and whether it's the page's own (static)
-    // view, to come back to.
-    const own = !document.documentElement.classList.contains("routed");
-    history.replaceState({ ...(history.state || {}), y: scrollY, own }, "");
-    history.pushState({}, "", href);
-    open();
-  };
+  // Following a link: the app's router takes it from here (see router.js).
+  // If the app can't load, the link's followed as a plain one.
+  const go = (href) => load().then(m => m.navigate(href), () => { location.href = href; });
   // A link the app shows, from an event on it, or null: routes always,
   // anything else once the app has loaded (but not links within a page).
   const appLink = (e) => {
