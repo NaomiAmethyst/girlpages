@@ -62,20 +62,24 @@ func (s *Store) Import(ctx context.Context, c *Client, o ImportOptions) (ImportS
 	}
 	var todo []IndexPage
 	var secs []string
-	for _, se := range m.Sections {
-		if !manpage.SectionMatches(se.Section, o.Sections) {
+	for _, ce := range m.Chapters {
+		wanted := false
+		for _, se := range m.Sections {
+			wanted = wanted || (manpage.Chapter(se.Section) == ce.Chapter && manpage.SectionMatches(se.Section, o.Sections))
+		}
+		if !wanted {
 			continue
 		}
-		pages, err := c.SectionPages(ctx, se)
+		pages, err := c.ChapterPages(ctx, ce)
 		if err != nil {
 			return st, err
 		}
 		for _, p := range pages {
-			if o.Match != nil && !o.Match.MatchString(p.Name) {
+			if !manpage.SectionMatches(p.Section, o.Sections) || (o.Match != nil && !o.Match.MatchString(p.Name)) {
 				continue
 			}
 			todo = append(todo, p)
-			secs = append(secs, se.Section)
+			secs = append(secs, p.Section)
 		}
 	}
 	st.Pages = len(todo)

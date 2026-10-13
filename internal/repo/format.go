@@ -70,6 +70,9 @@ type Manifest struct {
 	// version has it.
 	Variants map[string]int `json:"variants"`
 	Sections []SectionEntry `json:"sections"`
+	// Chapters are the chapters' indexes, each listing all of a chapter's
+	// sections' pages.
+	Chapters []ChapterEntry `json:"chapters"`
 	Index    IndexEntry     `json:"index"`
 	// Sources are the distributions (and releases) pages come from.
 	Sources []SourceEntry `json:"sources,omitempty"`
@@ -78,7 +81,6 @@ type Manifest struct {
 // SectionEntry is a section in the manifest.
 type SectionEntry struct {
 	Section string `json:"section"`
-	SHA256  string `json:"sha256"`
 	Pages   int    `json:"pages"`
 	// Variants counts, for each variant, the section's pages whose latest
 	// version has it.
@@ -93,9 +95,6 @@ type IndexEntry struct {
 	// and what it says about itself.
 	Names string `json:"names"`
 	Docs  string `json:"docs"`
-	// Listings is the section listings' manifest (a ListingsManifest):
-	// what the website's listing pages show, in chunks.
-	Listings string `json:"listings,omitempty"`
 	// Variants names, for each variant, the manifest of its index (a
 	// ShardManifest of SourceShards), which says which page versions have
 	// that variant without asking for each.
@@ -311,110 +310,6 @@ type Generator struct {
 	Model         string    `json:"model,omitempty"`
 	PromptVersion int       `json:"prompt_version,omitempty"`
 	Generated     time.Time `json:"generated"`
-}
-
-// SectionIndex lists every page in one section, sorted by name as listings
-// are (manpage.ListLess). A long section's index has no Pages, but Shards:
-// ranges of names (and how many pages each has), each another
-// SectionIndex with those pages. See Store.SectionPages and
-// Client.SectionPages.
-type SectionIndex struct {
-	Format  int        `json:"format"`
-	Section string     `json:"section"`
-	Count   int        `json:"count,omitempty"`
-	Pages   IndexPages `json:"pages,omitempty"`
-	Shards  Shards     `json:"shards,omitempty"`
-}
-
-// IndexPage is a page in a SectionIndex.
-type IndexPage struct {
-	Name        string
-	Title       string
-	Description string
-	// Page is the SHA-256 of the page's Listing.
-	Page string
-	// Source is the latest version's source hash, and Variants the
-	// variants it has.
-	Source   string
-	Variants []string
-	// Version is the latest version's upstream version number, if known.
-	Version string
-	// Versions is how many versions the page has.
-	Versions int
-	// Sources are the keys of the sources the page has versions from
-	// ("debian", "debian/trixie", "upstream"); Other gives, for those whose
-	// version isn't the latest, the source hash of theirs.
-	Sources []string
-	Other   map[string]string
-}
-
-// IndexPages are a section's pages, as a Table: name, title, description,
-// page and source (hashes, in basE91), variants, version, versions,
-// sources, and other (each a hash in basE91).
-type IndexPages []IndexPage
-
-var indexPageKeys = []string{"name", "title", "description", "page", "source", "variants", "version", "versions", "sources", "other"}
-
-func (p IndexPage) values() []any {
-	vs, ss := p.Variants, p.Sources
-	if vs == nil {
-		vs = []string{}
-	}
-	if ss == nil {
-		ss = []string{}
-	}
-	other := map[string]string{}
-	for k, h := range p.Other {
-		other[k] = hash91(h)
-	}
-	return []any{p.Name, p.Title, p.Description, hash91(p.Page), hash91(p.Source), vs, p.Version, p.Versions, ss, other}
-}
-
-func (ps IndexPages) MarshalJSON() ([]byte, error) {
-	t := newTable(indexPageKeys...)
-	for _, p := range ps {
-		t.add(p.values()...)
-	}
-	return t.MarshalJSON()
-}
-
-func (ps *IndexPages) UnmarshalJSON(b []byte) error {
-	var t Table
-	if err := json.Unmarshal(b, &t); err != nil {
-		return err
-	}
-	*ps = nil
-	return t.rows(func(get func(string) json.RawMessage) error {
-		var p IndexPage
-		var page, source string
-		var other map[string]string
-		for _, f := range []struct {
-			key string
-			v   any
-		}{{"name", &p.Name}, {"title", &p.Title}, {"description", &p.Description}, {"page", &page}, {"source", &source},
-			{"variants", &p.Variants}, {"version", &p.Version}, {"versions", &p.Versions}, {"sources", &p.Sources}, {"other", &other}} {
-			if err := field(get(f.key), f.v); err != nil {
-				return fmt.Errorf("section index %s: %w", f.key, err)
-			}
-		}
-		var err error
-		if p.Page, err = unhash91(page); err != nil {
-			return err
-		}
-		if p.Source, err = unhash91(source); err != nil {
-			return err
-		}
-		for k, h := range other {
-			if p.Other == nil {
-				p.Other = map[string]string{}
-			}
-			if p.Other[k], err = unhash91(h); err != nil {
-				return err
-			}
-		}
-		*ps = append(*ps, p)
-		return nil
-	})
 }
 
 // ShardManifest lists index shards by the range of keys each holds. Shards

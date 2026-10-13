@@ -530,9 +530,10 @@ const l = await c1.get("page/page-" + ptr.sha256.slice(0, 2) + "/" + ptr.sha256 
 const ver = l.versions.find(v => v.source === l.current);
 const body = await c1.get("contents/" + l.current.slice(0, 2) + "/" + l.current + "/girl-" + ver.variants.girl.sha256 + ".json");
 out.offlinePage = body.variant + " " + body.title;
-// Its listing too, the quick way.
-const lst = await c1.listing(await c1.get("manifest.json"), "1");
-out.offlineListing = [String(lst.count), ...(await c1.listingChunk(lst.chunks[0])).map(p => p.name + (p.girl ? "✨" : ""))];
+// Its chapter's index too.
+const ce = (await c1.get("manifest.json")).chapters.find(c => c.chapter === "1");
+const ci = await c1.chapterIndex(ce);
+out.offlineListing = [String(ci.count), ...(await c1.chapterChunk(ci, 1)).map(p => p.name + (p.variants.includes("girl") ? "✨" : ""))];
 down = false;
 
 // A page read is kept for offline.
@@ -678,8 +679,13 @@ console.log(JSON.stringify(out));
 	s2, _ := repo.Open(filepath.Join(v2, "repo"))
 	m2, _ := s2.Manifest()
 	live := map[string]bool{}
-	for _, e := range m2.Sections {
-		live[repo.SectionIndexPath(e.Section, e.SHA256)] = true
+	for _, e := range m2.Chapters {
+		live[repo.SectionIndexPath(e.Chapter, e.SHA256)] = true
+		var ci repo.ChapterIndex
+		s2.Read(repo.SectionIndexPath(e.Chapter, e.SHA256), &ci)
+		for _, r := range ci.Shards {
+			live[repo.SectionShardPath(r.SHA256)] = true
+		}
 	}
 	for _, kind := range []string{"words", "grams", "names", "docs"} {
 		sha := map[string]string{"words": m2.Index.Words, "grams": m2.Index.Grams, "names": m2.Index.Names, "docs": m2.Index.Docs}[kind]
@@ -745,14 +751,23 @@ func TestSources(t *testing.T) {
 		l.Sources["debian/trixie"] != l.Current || l.Versions[0].Version == "" {
 		t.Errorf("ls listing: %+v", l)
 	}
-	// The section index says which sources have a page, and which version
-	// those that don't have the latest have.
-	var si repo.SectionIndex
-	s.Read(repo.SectionIndexPath("1", m.Sections[0].SHA256), &si)
+	// The chapter index says which sources have a page, and which of
+	// their versions are girly.
+	var si repo.ChapterIndex
+	s.Read(repo.SectionIndexPath("1", m.Chapters[0].SHA256), &si)
 	for _, p := range si.Pages {
-		if p.Name == "ls" && (strings.Join(p.Sources, " ") != "debian debian/trixie ubuntu ubuntu/noble" ||
-			p.Other["ubuntu/noble"] != l.Sources["ubuntu/noble"] || p.Other["debian"] != "" || p.Versions != 2 || p.Version != "9.7") {
-			t.Errorf("ls in section 1: %+v", p)
+		if p.Name != "ls" {
+			continue
+		}
+		var girl []string
+		for _, k := range p.Sources {
+			if v := l.Find(l.Sources[k]); v != nil && v.Variants[repo.VariantGirl].SHA256 != "" {
+				girl = append(girl, k)
+			}
+		}
+		if strings.Join(p.Sources, " ") != "debian debian/trixie ubuntu ubuntu/noble" || fmt.Sprint(p.Girl) != fmt.Sprint(girl) ||
+			p.Section != "1" || p.Versions != 2 || p.Version != "9.7" {
+			t.Errorf("ls in chapter 1: %+v (girly in %v)", p, girl)
 		}
 	}
 	// Static pages link into the browse app for sources.
@@ -806,7 +821,7 @@ func TestHandler(t *testing.T) {
 		"/repo/" + repo.ContentsPath(ls.Current): CachePointer,
 		"/repo/" + repo.VariantPath(ls.Current, repo.VariantGirl, ls.CurrentVersion().Variants[repo.VariantGirl].SHA256): CacheImmutable,
 		"/repo/manifest.json": CachePointer,
-		"/repo/" + repo.SectionIndexPath("1", m.Sections[0].SHA256): CacheImmutable,
+		"/repo/" + repo.SectionIndexPath("1", m.Chapters[0].SHA256): CacheImmutable,
 		"/repo/" + repo.NamePath("ls", "1"):                         CachePointer,
 		"/man/1/ls/":                                                CacheSite,
 		"/sw.js":                                                    CacheRevalidate,

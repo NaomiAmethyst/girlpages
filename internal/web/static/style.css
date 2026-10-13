@@ -217,6 +217,9 @@ h1, h2, h3, h4 { font-family: ui-rounded, "Nunito", "Quicksand", system-ui, sans
 ul.pages { list-style: none; margin: 0; padding: 0; }
 ul.pages li { padding: 0.35rem 0.6rem; border-radius: 0.6rem; display: flex; gap: 0.6rem; align-items: baseline; }
 ul.pages li:hover { background: var(--accent-soft); }
+/* Long listings: entries off the screen aren't laid out until they're
+   near it (sizes estimated until then), so a big chunk shows quickly. */
+.chunk ul.pages li { content-visibility: auto; contain-intrinsic-size: auto 2.3rem; }
 ul.pages .name { font-weight: 700; white-space: nowrap; }
 ul.pages .sec { color: var(--muted); font-weight: 400; }
 ul.pages .desc { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
@@ -317,6 +320,7 @@ ul.pages .done { flex: none; }
   .content code { font-size: 0.85em; }
   .content ul, .content ol { padding-left: 1.2rem; }
   ul.pages li { flex-wrap: wrap; gap: 0 0.5rem; }
+  .chunk ul.pages li { contain-intrinsic-size: auto 3.7rem; }
   ul.pages .desc { flex-basis: 100%; white-space: normal; font-size: 0.9rem; }
 }
 

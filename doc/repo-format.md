@@ -72,7 +72,7 @@ when the content matters.
 
 ### Tables
 
-Indexes (section indexes, shard manifests, the page table) are made to be
+Indexes (chapter indexes, shard manifests, the page table) are made to be
 small, so lists of records in them are *tables*: the fields are named once,
 in `keys`, and `data` holds each record's values in turn:
 
@@ -180,7 +180,7 @@ the date (`2022-06`) as its `version`. Names in a series sort by number.
 
 A *source* is where pages come from: a distribution (`debian`), a release
 of one (`debian/trixie`), or `upstream` for pages from git repositories.
-These *source keys* appear in listings, section indexes and the search
+These *source keys* appear in listings, chapter indexes and the search
 index. A package (see [Listing](#pagepage-absha-json--listing)) belongs to
 the source named by its `distro`, with `upstream` for packages with a
 `url` and no `distro`; and to `distro/release` too if it has a `release`
@@ -210,9 +210,9 @@ highest number.
 | `page/page-ab/<sha>.json` | no | [Listing: every version of a page](#pagepage-absha-json--listing) |
 | `contents/ab/<source>/variants.json` | yes | [A version's variants and their generations](#contentsabsourcevariantsjson) |
 | `contents/ab/<source>/<variant>-<sha>.json` | no | [One generation of a variant](#contentsabsourcevariant-shajson) |
-| `section/<section>.json` | yes | [Pointer to a section's index](#pointers) |
-| `section/<section>-<sha>.json` | no | [Section index: every page in a section](#sectionsection-shajson) |
-| `section/shard-ab/<sha>.json` | no | ″ a shard of a long one |
+| `section/<chapter>.json` | yes | [Pointer to a chapter's index](#pointers) |
+| `section/<chapter>-<sha>.json` | no | [Chapter index: every page in a chapter](#sectionchapter-shajson) |
+| `section/shard-ab/<sha>.json` | no | ″ the rest of it, in shards |
 | `index/variants/<variant>/manifest-<sha>.json` | no | [Which versions have a variant](#variant-indexes) |
 | `index/variants/<variant>/shard-ab/<sha>.json` | no | ″ |
 | `index/words/manifest-<sha>.json` | no | [Search index](#the-search-index): words |
@@ -223,8 +223,6 @@ highest number.
 | `index/names/shard-ab/<sha>.json` | no | ″ |
 | `index/docs/manifest-<sha>.json` | no | ″ the page table: the rest |
 | `index/docs/shard-ab/<sha>.json` | no | ″ |
-| `index/listings/manifest-<sha>.json` | no | [Section listings](#section-listings) |
-| `index/listings/shard-ab/<sha>.json` | no | ″ a listing, or a chunk of one |
 
 `<section>` and `<name>` are [escaped](#paths); `<source>` is a source
 hash, `<sha>` the file's own hash, and `ab` the first two digits of the
@@ -261,16 +259,16 @@ The root. Fetch it fresh to see the repository as it is now.
 | `generated` | When it was published. |
 | `pages` | How many pages (name and section pairs) there are. |
 | `variants` | For each variant, how many pages' [latest versions](#which-version-is-the-latest) have it. |
-| `sections` | Each section (exact, like `3ssl`), sorted: the hash of its [section index](#sectionsection-shajson), and counts as above. |
+| `sections` | Each section (exact, like `3ssl`), sorted, with counts as above. |
+| `chapters` | Each [chapter](#names-and-sections), sorted: the hash of its [index](#sectionchapter-shajson), and how many pages it has. |
 | `index.words`, `.grams`, `.names`, `.docs` | Hashes of the [search index](#the-search-index) manifests. |
 | `index.variants` | For each variant, the hash of its [variant index](#variant-indexes) manifest. |
-| `index.listings` | The hash of the [section listings](#section-listings) manifest. |
 | `sources` | Each [source](#sources), sorted by distro then release (a distro's entry, with no `release`, first): how many pages have a version from it, in all and by [chapter](#names-and-sections). |
 
 ### Pointers
 
 `page/name-<section>/<name>.json` names a page's current listing, and
-`section/<section>.json` a section's current index:
+`section/<chapter>.json` a chapter's current index:
 
 ```json
 {"format": 1, "name": "ls", "section": "1", "sha256": "f0e6…"}
@@ -379,91 +377,75 @@ One generation of one variant of one page version.
 | `sections` | The page, cut at its top-level headings: each `heading` (`""` for anything before the first) and `body`, the lines after it, each ending in `\n`, exactly as they were. |
 | `generator` | What made it, for rewritten variants: `backend`, `model`, `prompt_version` (of that backend's prompt for this variant), and when. |
 
-### section/&lt;section&gt;-&lt;sha&gt;.json
+### section/&lt;chapter&gt;-&lt;sha&gt;.json
 
-Every page in one section, sorted by name as listings are (ignoring
-case, then by it; numbers by value), as a [table](#tables):
+Every page in a [chapter](#names-and-sections) (all its sections: `3`,
+`3ssl`, `3pm`…), in the order its listing shows them: by name ignoring
+case, numbers by value, then by section. So a listing reads it in order,
+and it's split into shards that start with letters where that's near
+enough, so a listing shows its start, or a letter's, from one small
+file. The index holds the first shard's pages itself:
 
 ```json
 {
   "format": 1,
-  "section": "1",
-  "count": 1963,
+  "chapter": "1",
+  "count": 56682,
   "pages": {
-    "keys": ["name", "title", "description", "page", "source", "variants", "version", "versions", "sources", "other"],
-    "data": [
-      "tar", "TAR(1)", "an archiving utility", "Ak9}…", "q(Lz…", ["girl", "man"], "1.35", 2,
-      ["arch", "arch/rolling", "debian", "debian/trixie", "rocky"], {"rocky": "8^bX…"},
-      …
-    ]
-  }
+    "keys": ["name", "section", "title", "description", "page", "version", "versions", "sources", "variants", "girl"],
+    "sections": ["1", "1ssl"],
+    "sources": ["arch", "arch/rolling", "debian", "debian/trixie", "rocky"],
+    "variants": ["girl", "man"],
+    "versions": ["", "1.35", …],
+    "data": ["tar", 0, "TAR(1)", "an archiving utility", "Ak9}…", 1, 2, 31, 3, 15, …]
+  },
+  "shards": {"keys": ["sha256", "bytes", "count", "first", "last", "prev"],
+             "data": ["Lw]u…", 262144, 1702, "aa-enabled", "azure", "#", …]},
+  "letters": {"keys": ["letter", "chunk"], "data": ["#", 1, "A", 2, …]}
 }
 ```
+
+`pages` is a [table](#tables) whose records refer to the lists beside its
+keys, of the values that appear in it (sorted):
 
 | Field | |
 |---|---|
 | `name`, `title`, `description` | The page's name, and its latest version's title and description. |
-| `page` | The hash of the page's [listing](#pagepage-absha-json--listing). |
-| `source`, `variants`, `version` | Its latest version's source hash, variants and upstream version (`""` if unknown). |
+| `section` | Its exact section, as an index into `sections`. |
+| `page` | The hash of the page's [listing](#pagepage-absha-json--listing), in basE91. |
+| `version` | Its latest version's upstream version, as an index into `versions` (whose `""` is unknown). |
 | `versions` | How many versions it has (`0` for one). |
-| `sources` | The [source keys](#sources) it has versions from. |
-| `other` | For those of its sources whose version isn't the latest, that version's source hash. |
+| `sources` | The [source keys](#sources) it has versions from, as a bitmask: bit *i* (the number's 2<sup>*i*</sup>) for `sources[i]`. |
+| `variants` | Its latest version's variants, as a bitmask over `variants`. |
+| `girl` | The sources whose version of it has a girly variant, as a bitmask over `sources`. |
 
-Hashes (`page`, `source` and `other`'s) are in basE91. A long section's
-index (over about a megabyte) is split: it has no `pages`, but `shards`, a
-table of ranges of names (`first`, `last`, `sha256`, `bytes`, `count`),
-each shard being a section index of its own (at
-`section/shard-ab/<sha>.json`) with a run of the pages:
+Bitmasks stay below 2<sup>53</sup>, so a file has at most 53 sources;
+readers in JavaScript must decode them with arithmetic, not its 32-bit
+bitwise operators.
 
-```json
-{"format": 1, "section": "1", "count": 12034,
- "shards": {"keys": ["first", "last", "sha256", "bytes", "count"],
-            "data": ["2to3", "fakeroot", "Lw]u…", 1048601, 4401, …]}}
-```
-
-Readers must read the shards (in order) when there are any.
-
-### Section listings
-
-What a listing of a chapter (or of one of its sections) shows, without
-the rest of what section indexes say: for a big chapter, those run to
-tens of megabytes, and a listing's first screen needs a few kilobytes.
-There's a listing of each [chapter](#names-and-sections), and of each of
-its sections if it has more than one, made of chunks of 200 pages, in the
-order (and so with the chunks) of the website's listing pages: by name
-ignoring case, numbers by value, then by section.
-
-`index/listings/manifest-<sha>.json` is a [table](#tables) of them: each
-one's `key` (its chapter), `sub` (its section, or `""` for the whole
-chapter), `sha256` and `count` (of pages). A chapter's listings' counts
-say how many pages each of its sections has.
+`shards` are the rest of the pages, in order, each
+`section/shard-ab/<sha>.json` holding a `pages` table like the index's
+(with its own lists):
 
 ```json
-{"format": 1, "listings": {"keys": ["key", "sub", "sha256", "count"],
-  "data": ["1", "", "…", 56682, "1", "1", "…", 52970, "1", "1ssl", "…", 112, …]}}
+{"format": 1, "chapter": "1", "pages": {"keys": [...], "sections": [...], …, "data": [...]}}
 ```
 
-A listing, `index/listings/shard-ab/<sha>.json`, has its `count`, the
-chunk (from 1) each first letter starts in, in order, and its chunks: the
-first page's name, and the letter of the page before (`""` for the first
-chunk), so a chunk shown alone can say its first letter carries on. A
+Each shard's entry gives its size, how many pages it has, its first and
+last pages' names, and `prev`, the letter of the page before it, so a
+shard shown on its own knows whether its first letter carries on. A
 letter is a name's first letter, upper case, `#` if that isn't an ASCII
-letter, or for a number, `1–999` or its thousand (`9000s`).
+letter, or for a number, `1–999` or its thousand (`9000s`). Counting the
+index's own pages as chunk 1 and the shards as 2 on, `letters` gives the
+chunk each letter starts in.
 
-```json
-{"format": 1, "key": "1", "count": 56682,
- "letters": {"keys": ["letter", "chunk"], "data": ["#", 1, "A", 2, …]},
- "chunks": {"keys": ["sha256", "first", "prev"], "data": ["…", "0desktop", "", "…", "aa-enabled", "A", …]}}
-```
+Shards are cut by size, ending with a letter where that's near: the first
+(the index's own pages) aims at 64 KiB and the others at 256 KiB, but one
+goes on to the end of a letter if that's no more than 20% over, or else
+stops at its start if that's no less than half; after one that ends with a
+letter, the next aims at 64 KiB again, so a letter's first shard is small.
 
-A chunk, also `index/listings/shard-ab/<sha>.json`, is its pages:
-
-```json
-{"format": 1, "pages": {"keys": ["name", "section", "description", "girl"],
-  "data": ["ls", "1", "list directory contents", 1, …]}}
-```
-
-`girl` is 1 if the page's latest version has a girly variant, else 0.
+Readers must read the shards (in order) for every page.
 
 ### Variant indexes
 
@@ -701,10 +683,11 @@ does): fetch `page/name-<section>/<name>.json`, then the listing it names;
 pick the version (`current`, or `sources[<key>]`); and fetch its variant by
 the hash the listing gives, `contents/ab/<source>/<variant>-<sha>.json`.
 
-**List a section**: fetch `manifest.json`, then the section indexes it
-names for every section in that chapter (`3`, `3p`, `3ssl`…).
+**List a section**: fetch `manifest.json`, then its chapter's index (and
+its shards, as they're scrolled to), keeping just that section's pages if
+it's one of several (`3ssl` of `3`, `3p`, `3ssl`…).
 
-**Mirror a repository**: fetch `manifest.json`; every section index; every
+**Mirror a repository**: fetch `manifest.json`; every chapter index; every
 listing they name, every `variants.json` for every version in them, and
 every generation those list; and the index manifests and their shards.
 Skip anything you already have whose name is its hash. Write

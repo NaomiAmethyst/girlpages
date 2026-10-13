@@ -290,21 +290,9 @@ func (x *VariantIndex) Has(ctx context.Context, source string) (bool, error) {
 	return set[key], nil
 }
 
-// SectionPages fetches every page in a section's index, shards and all.
-func (c *Client) SectionPages(ctx context.Context, e SectionEntry) ([]IndexPage, error) {
-	var si SectionIndex
-	if err := c.Get(ctx, SectionIndexPath(e.Section, e.SHA256), &si); err != nil {
-		return nil, err
-	}
-	pages := si.Pages
-	for _, r := range si.Shards {
-		var sh SectionIndex
-		if err := c.Get(ctx, SectionShardPath(r.SHA256), &sh); err != nil {
-			return nil, err
-		}
-		pages = append(pages, sh.Pages...)
-	}
-	return pages, nil
+// ChapterPages fetches every page in a chapter's index, shards and all.
+func (c *Client) ChapterPages(ctx context.Context, e ChapterEntry) ([]IndexPage, error) {
+	return chapterPages(func(path string, v any) error { return c.Get(ctx, path, v) }, e)
 }
 
 // Page fetches a page's listing by its name and section.

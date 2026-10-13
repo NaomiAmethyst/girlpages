@@ -14,12 +14,15 @@ const FAR = 4000;
 export class VirtualList {
   // container holds div.chunk[data-chunk] elements, numbered from 1, of
   // which there are count; load(n) resolves to a chunk's inner HTML.
-  // onChunk(n) is told which chunk is at the top of the screen.
-  constructor(container, { count, load, onChunk = () => {} }) {
+  // onChunk(n) is told which chunk is at the top of the screen when that
+  // changes, and onTop(c) is given its element whenever the screen moves.
+  constructor(container, { count, load, onChunk = () => {}, onTop = () => {} }) {
     this.el = container;
     this.count = count;
     this.loadHTML = load;
     this.onChunk = onChunk;
+    this.onTop = onTop;
+    this.dead = false;
     this.html = new Map();
     this.busy = false;
     this.current = 0;
@@ -66,6 +69,7 @@ export class VirtualList {
 
   // destroy stops watching, for when the list goes.
   destroy() {
+    this.dead = true;
     this.near.disconnect();
     this.far.disconnect();
     removeEventListener("scroll", this.onScroll);
@@ -87,27 +91,6 @@ export class VirtualList {
       }).finally(() => this.pending.delete(n)));
     }
     return this.pending.get(n);
-  }
-
-  // prefetch loads chunks' HTML (not into the page: only those near the
-  // screen go there), nearest first, a few at a time, up to radius chunks
-  // away, so scrolling rarely has to wait. It stops if the network goes.
-  async prefetch(jobs = 2, radius = Infinity) {
-    const from = this.first() || 1;
-    const todo = Array.from({ length: this.count }, (_, i) => i + 1)
-      .filter(n => !this.html.has(n) && Math.abs(n - from) <= radius)
-      .sort((a, b) => Math.abs(a - from) - Math.abs(b - from) || a - b);
-    let stop = false;
-    const worker = async () => {
-      while (todo.length && !stop) {
-        try {
-          await this.get(todo.shift());
-        } catch (e) {
-          if (e instanceof TypeError) stop = true;
-        }
-      }
-    };
-    await Promise.all(Array.from({ length: jobs }, worker));
   }
 
   make(n, html) {
@@ -171,7 +154,7 @@ export class VirtualList {
     delete c.dataset.empty;
   }
 
-  // track tells onChunk which chunk is at the top of the screen.
+  // track tells onChunk and onTop which chunk is at the top of the screen.
   track() {
     for (const c of this.chunks()) {
       const r = c.getBoundingClientRect();
@@ -181,6 +164,7 @@ export class VirtualList {
           this.current = n;
           this.onChunk(n);
         }
+        this.onTop(c);
         return;
       }
     }

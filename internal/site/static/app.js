@@ -18,7 +18,7 @@
 // It's also where static pages go when offline. /browse/?page=… (from
 // earlier versions) redirects here.
 
-import { repoCache, saveButton, browseURL, chapter, isSeries, pageURL, listingURL as listingAt, sourceNav } from "./girlpages.js";
+import { repoCache, saveButton, browseURL, chapter, isSeries, pageURL, listingURL as listingAt, sourceNav, chapterShardsOf, rows } from "./girlpages.js";
 import { VirtualList } from "./vlist.js";
 import { renderHTML, renderOriginalHTML, esc } from "./render.js";
 import { escapeName, segmentName, searchPage } from "./search.js";
@@ -144,8 +144,7 @@ const plural = (n) => (n === 1 ? "1 page" : `${n} pages`);
 async function sourceSection(src, key, sub, { start = 1, pageURL = null } = {}) {
   const m = await manifest();
   const [name, emoji] = sectionName(key);
-  const entries = m.sections.filter(e => chapter(e.section) === chapter(key));
-  const plan = (!src && await chunkedPlan(m, key, sub).catch(() => null)) || await listingPlan(entries, src, sub);
+  const plan = await chapterPlan(m, key, sub, src);
   const label = sub || key;
   document.title = `${sourceLabel(src)} · ${sectionLabel(label)} · girlpages 💅`;
   let chips = "";
@@ -163,7 +162,7 @@ async function sourceSection(src, key, sub, { start = 1, pageURL = null } = {}) 
   }
   const chunkHTML = chunkMaker(plan);
   const chunks = Math.max(1, plan.count);
-  const first = Math.min(Math.max(1, plan.chunkForPage(start)), chunks);
+  const first = Math.min(Math.max(1, await plan.chunkForPage(start)), chunks);
   let body = `<nav class="letters" aria-label="Jump to letter">${[...plan.letters].map(([l, c]) => `<a href="#letter-${esc(l)}" data-chunk="${c}">${esc(l)}</a>`).join("")}</nav>` +
     `<div class="listing"><div class="chunk" data-chunk="${first}">${await chunkHTML(first)}</div></div>`;
   if (!plan.count || total === 0) body = '<div class="empty">nothing here, bestie 😭</div>';
@@ -178,7 +177,7 @@ async function sourceSection(src, key, sub, { start = 1, pageURL = null } = {}) 
   const button = app.querySelector("#save");
   if (button) saveButton(button, cache, sub || key, src);
   const listing = app.querySelector(".listing");
-  if (listing) current = await listInto(listing, plan, first, { pageURL, letters: app.querySelector(".letters"), app: true });
+  if (listing) current = await listInto(listing, plan, first, { pageURL, page: start, letters: app.querySelector(".letters"), app: true });
 }
 
 // chunkMaker renders a plan's chunks: its items, under letters (or
@@ -206,27 +205,48 @@ function chunkMaker(plan) {
 }
 
 // listInto makes a listing element, holding chunk first, scroll through
-// the rest of a plan: loading chunks as they're neared (and a few more in
-// idle time), following along with the address (pageURL(n) is a static
-// page's) if it's given, and jumping by its letters. app says whether
-// it's the app's own view (so the address it follows is the route's).
-async function listInto(listing, plan, first, { pageURL = null, letters = null, app: inApp = false } = {}) {
+// the rest of a plan: loading chunks as they're neared, and all of them
+// meanwhile (in plan.order: letters' first), following along with the
+// address if pageURL is given (pageURL(n) is a static listing page's, of
+// PAGE pages each; page is the one it's at), and jumping by its letters.
+// app says whether it's the app's own view (so the address it follows is
+// the route's).
+async function listInto(listing, plan, first, { pageURL = null, page = 1, letters = null, app: inApp = false } = {}) {
   const chunks = Math.max(1, plan.count);
   const chunkHTML = chunkMaker(plan);
   if (chunks < 2 || !("IntersectionObserver" in globalThis)) {
     for (let n = first + 1; n <= chunks; n++) listing.insertAdjacentHTML("beforeend", `<div class="chunk" data-chunk="${n}">${await chunkHTML(n)}</div>`);
     return null;
   }
-  let page = plan.pageOf(first);
   // The address it follows along with is the one it was shown at, or last
   // set: once something else is being shown (or loaded, out of sight, while
   // this one's still on the screen), it leaves the address alone.
   let owned = location.href;
+  // The static page the entry at the top of the screen is on, if it's
+  // known where in the listing its chunk starts.
+  const topPage = (c) => {
+    const start = plan.startOf(+c.dataset.chunk);
+    const lis = c.querySelectorAll("li[data-name]");
+    if (start == null || !lis.length) return 0;
+    let lo = 0, hi = lis.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (lis[mid].getBoundingClientRect().bottom > 80) hi = mid;
+      else lo = mid + 1;
+    }
+    return Math.floor((start + lo) / PAGE) + 1;
+  };
+  // Where the list starts is where the address already is, even if a
+  // page before it shows above (a static page taken over keeps its first
+  // entry where it was): the address follows once that changes.
+  let from = 0;
   const list = new VirtualList(listing, {
     count: chunks, load: chunkHTML,
-    onChunk: pageURL ? (n) => {
-      const p = plan.pageOf(n);
-      if (p === page || location.href !== owned || (inApp && location.href !== routingFor)) return;
+    onTop: pageURL ? (c) => {
+      const p = topPage(c);
+      if (p && !from) from = p;
+      if (!p || p === from || p === page || location.href !== owned || (inApp && location.href !== routingFor)) return;
+      from = -1;
       page = p;
       history.replaceState(history.state, "", pageURL(p));
       owned = location.href;
@@ -243,7 +263,19 @@ async function listInto(listing, plan, first, { pageURL = null, letters = null, 
     list.jump(plan.letters.get(l), "letter-" + l);
   });
   list.fill();
-  (globalThis.requestIdleCallback || ((f) => setTimeout(f, 200)))(() => list.prefetch(2, 4));
+  // The rest, a couple at a time, until the list goes or the network does.
+  const todo = plan.order(first);
+  let stop = false;
+  const worker = async () => {
+    while (todo.length && !stop && !list.dead) {
+      try {
+        await plan.load(todo.shift());
+      } catch (e) {
+        if (e instanceof TypeError) stop = true;
+      }
+    }
+  };
+  (globalThis.requestIdleCallback || ((f) => setTimeout(f, 200)))(() => Promise.all([worker(), worker()]));
   return list;
 }
 
@@ -253,21 +285,25 @@ async function listInto(listing, plan, first, { pageURL = null, letters = null, 
 // its first entry kept where it is on the screen.
 export async function attachListing(listing, { key, sub = "", pageURL, letters = null }) {
   const m = await manifest();
-  const plan = await chunkedPlan(m, key, sub).catch(() => null) ||
-    await listingPlan(m.sections.filter(e => chapter(e.section) === chapter(key)), "", sub);
+  const plan = await chapterPlan(m, key, sub, "");
   const firstLi = listing.querySelector("li[data-name]");
   if (!firstLi || !plan.count) return null;
   const name = firstLi.dataset.name;
-  // The static page is that chunk (they're made together), or else where
-  // its first entry is.
-  const n = plan.chunkOf ? plan.chunkOf(name) : Math.min(Math.max(1, +listing.dataset.page || 1), plan.count);
+  const n = plan.chunkOf(name);
   const html = await chunkMaker(plan)(n);
   const y = firstLi.getBoundingClientRect().top;
   listing.innerHTML = `<div class="chunk" data-chunk="${n}">${html}</div>`;
-  const list = await listInto(listing, plan, n, { pageURL, letters });
-  // Keep the entry that was first on the page where it was.
-  const again = [...listing.querySelectorAll("li[data-name]")].find(li => li.dataset.name === name);
-  if (again) scrollBy(0, again.getBoundingClientRect().top - y);
+  const list = await listInto(listing, plan, n, { pageURL, page: +listing.dataset.page || 1, letters });
+  // Keep the entry that was first on the page where it was: again once
+  // the entries around it are laid out, as the sizes of those that aren't
+  // yet are guesses (see style.css), until it stays put.
+  for (let i = 0; i < 5; i++) {
+    const again = [...listing.querySelectorAll("li[data-name]")].find(li => li.dataset.name === name);
+    const d = again ? again.getBoundingClientRect().top - y : 0;
+    if (Math.abs(d) < 1) break;
+    scrollBy(0, d);
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+  }
   return list;
 }
 
@@ -277,12 +313,6 @@ function letterOf(n) {
   if (/^[0-9]+$/.test(n)) return +n < 1000 ? "1–999" : `${Math.floor(+n / 1000) * 1000}s`;
   return /^[a-z]/i.test(n) ? n[0].toUpperCase() : "#";
 }
-// listCmp orders names as manpage.ListLess does: ignoring case (then by
-// it), numbers by value.
-function listCmp(a, b) {
-  const la = a.toLowerCase(), lb = b.toLowerCase();
-  return la !== lb ? nameCmp(la, lb) : (a < b ? -1 : a > b ? 1 : 0);
-}
 // nameCmp orders names as manpage.NameLess does: numbers by value.
 function nameCmp(a, b) {
   const num = (x) => /^[0-9]+$/.test(x);
@@ -291,73 +321,93 @@ function nameCmp(a, b) {
   }
   return a < b ? -1 : a > b ? 1 : 0;
 }
-const byName = (a, b) => listCmp(a.name, b.name) || (a.sec < b.sec ? -1 : a.sec > b.sec ? 1 : 0);
 
-// listingPlan works out a listing's chunks: {count, load(n) resolving to
-// the chunk's items, letters (letter → the chunk it starts in), total,
-// subs (section → count), prevLetter(n), pageOf(n), chunkForPage(p),
-// chunkOf(name)}. Chunks are CHUNK pages, as the static listing's pages
-// are.
-async function listingPlan(entries, src, sub) {
-  // Sections' indexes are a megabyte a shard, so a chapter's are a few
-  // files at most: read them whole.
-  const indexes = await Promise.all(entries.map(async e => ({ section: e.section, pages: await cache.sectionPages(e) })));
-  const want = (p) => !src || (p.sources || []).includes(src);
-  const toItem = (p, sec) => {
-    const other = src && p.other ? p.other[src] : "";
-    return { name: p.name, sec, desc: p.description || "", girl: !other && (p.variants || []).includes("girl"),
-      url: src ? browse({ page: p.name, sec, src }) : staticPage(p.name, sec) };
-  };
-  const subs = new Map();
-  const items = [];
-  for (const si of indexes) {
-    for (const p of si.pages) {
-      if (!want(p)) continue;
-      subs.set(si.section, (subs.get(si.section) || 0) + 1);
-      if (!sub || si.section === sub) items.push(toItem(p, si.section));
-    }
+// chapterPlan works out a listing of a chapter (key), or of one of its
+// sections (sub), from one source (src) or all, from the chapter's index:
+// its chunks are the index's, {count, load(n) resolving to a chunk's
+// items, letters (letter → the chunk it starts in), total (if it's known),
+// subs (section → count, if known), prevLetter(n), startOf(n) (where in
+// the listing chunk n starts, if it's known), chunkOf(name),
+// chunkForPage(p) (the chunk static listing page p starts in), order(n)
+// (the order to load chunks in, from n)}. Listing just some of the
+// chapter (a section, or a source's pages), chunks hold the ones wanted,
+// which may be none, and where they start is known once all before them
+// are loaded.
+async function chapterPlan(m, key, sub, src) {
+  const e = (m.chapters || []).find(c => c.chapter === chapter(key));
+  const secs = (m.sections || []).filter(x => chapter(x.section) === chapter(key));
+  const subs = new Map(secs.map(x => [x.section, src ? null : x.pages]));
+  if (!e) {
+    return { count: 0, total: 0, subs, letters: new Map(), load: async () => [], prevLetter: () => "", startOf: () => 0,
+      chunkOf: () => 1, chunkForPage: async () => 1, order: () => [] };
   }
-  // In the static listings' order, so chunks are their pages.
-  items.sort(byName);
-  const letters = new Map();
-  items.forEach((it, i) => { const l = letterOf(it.name); if (!letters.has(l)) letters.set(l, Math.floor(i / CHUNK) + 1); });
+  const ci = await cache.chapterIndex(e);
+  const shards = chapterShardsOf(ci);
+  const count = 1 + shards.length;
+  const sizes = [ci.count - shards.reduce((n, r) => n + r.count, 0), ...shards.map(r => r.count)];
+  const filtered = !!(sub || src);
+  const keep = (p) => (!sub || p.section === sub) && (!src || p.sources.includes(src));
+  const toItem = (p) => ({
+    name: p.name, sec: p.section, desc: p.description || "", girl: src ? p.girl.includes(src) : p.variants.includes("girl"),
+    url: src ? browse({ page: p.name, sec: p.section, src }) : staticPage(p.name, p.section),
+  });
+  // For a filtered listing: how many of each chunk's pages are wanted, and
+  // the last one's letter, once it's loaded.
+  const wanted = new Map(), lastLetter = new Map();
+  const load = async (n) => {
+    const items = (await cache.chapterChunk(ci, n)).filter(keep).map(toItem);
+    wanted.set(n, items.length);
+    lastLetter.set(n, items.length ? letterOf(items[items.length - 1].name) : "");
+    return items;
+  };
+  const startOf = (n) => {
+    let at = 0;
+    for (let k = 1; k < n; k++) {
+      if (!filtered) at += sizes[k - 1];
+      else if (wanted.has(k)) at += wanted.get(k);
+      else return null;
+    }
+    return at;
+  };
+  const prevLetter = (n) => {
+    if (!filtered) return n > 1 ? shards[n - 2].prev || "" : "";
+    for (let k = n - 1; k >= 1; k--) {
+      if (!lastLetter.has(k)) return "";
+      if (lastLetter.get(k)) return lastLetter.get(k);
+    }
+    return "";
+  };
+  const letters = new Map(rows(ci.letters).map(l => [l.letter, l.chunk]));
+  let total = filtered ? null : ci.count;
+  if (sub && !src) total = (secs.find(x => x.section === sub) || {}).pages || 0;
   return {
-    count: Math.ceil(items.length / CHUNK), total: items.length, subs, letters,
-    load: async (n) => items.slice((n - 1) * CHUNK, n * CHUNK),
-    prevLetter: (n) => (n > 1 ? letterOf(items[(n - 1) * CHUNK - 1].name) : ""),
-    pageOf: (n) => n,
-    chunkForPage: (p) => p,
-    chunkOf: (name) => Math.floor(Math.max(0, items.findIndex(it => it.name === name)) / CHUNK) + 1,
+    count, total, subs, letters, load, prevLetter, startOf,
+    chunkOf: (name) => {
+      const low = name.toLowerCase();
+      let n = 1;
+      shards.forEach((r, i) => { if (nameCmp(r.first.toLowerCase(), low) <= 0) n = i + 2; });
+      return n;
+    },
+    chunkForPage: async (p) => {
+      const at = (p - 1) * PAGE;
+      for (let n = 1, from = 0; n <= count; n++) {
+        const size = filtered ? (wanted.has(n) ? wanted.get(n) : (await load(n)).length) : sizes[n - 1];
+        if (at < from + size) return n;
+        from += size;
+      }
+      return 1;
+    },
+    order: (from) => [...new Set([from, ...letters.values(), ...Array.from({ length: count }, (_, i) => i + 1)])],
   };
 }
 
-// chunkedPlan is a listing's plan the quick way, for everything (not one
-// source's): from the repository's listing of it, a chunk at a time, so
-// it's shown as soon as its first chunk is fetched rather than once the
-// whole chapter's section indexes are. It's null if the repository hasn't
-// one.
-async function chunkedPlan(m, key, sub) {
-  const l = await cache.listing(m, chapter(key), sub || "");
-  if (!l) return null;
-  const chunks = l.chunks;
-  return {
-    count: chunks.length, total: l.count, subs: l.subs, letters: l.letters,
-    load: async (n) => (await cache.listingChunk(chunks[n - 1])).map(p => ({
-      name: p.name, sec: p.section, desc: p.description || "", girl: p.girl, url: staticPage(p.name, p.section),
-    })),
-    prevLetter: (n) => (n > 1 ? chunks[n - 1].prev || "" : ""),
-    pageOf: (n) => n,
-    chunkForPage: (p) => p,
-  };
-}
+// PAGE is how many pages each of the static listing's pages shows.
+const PAGE = 200;
 
 // LAYOUT is how series of documents are laid out, where it isn't man's: as
 // rfc.Indent and rfc.Width.
 const LAYOUT = { rfc: { indent: 3, width: 72, titleBlock: true } };
 
-// CHUNK is how many pages a listing shows at a time, as the static
-// listings' pages do.
-const CHUNK = 200;
 // current is the listing on screen, stopped when the route changes.
 let current = null;
 

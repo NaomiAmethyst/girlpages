@@ -204,50 +204,119 @@ func TestImport(t *testing.T) {
 	}
 }
 
-// A long section's index is split into shards, which are read back whole,
-// kept by GC, and followed by import.
-func TestSectionShards(t *testing.T) {
-	defer func(n int) { sectionShardBytes = n }(sectionShardBytes)
-	sectionShardBytes = 1500
+// Shards end with letters when that's near enough.
+func TestLetterShards(t *testing.T) {
+	defer func(f, m int) { shardFirst, shardMore = f, m }(shardFirst, shardMore)
+	shardFirst, shardMore = 10, 20
+	run := func(spec ...any) ([]int, []string) {
+		var sizes []int
+		var letters []string
+		for i := 0; i < len(spec); i += 2 {
+			for j := 0; j < spec[i+1].(int); j++ {
+				sizes = append(sizes, 1)
+				letters = append(letters, spec[i].(string))
+			}
+		}
+		return sizes, letters
+	}
+	for _, c := range []struct {
+		spec []any
+		want string
+	}{
+		// Back to B's start (5 of 10 is half), then on to its end (12 of
+		// 10 is 20% over), then the rest.
+		{[]any{"A", 5, "B", 12, "C", 3}, "[0 5 17]"},
+		// A letter too long for either: cut at the target, then the bigger.
+		{[]any{"A", 50}, "[0 10 30]"},
+		// Small letters share a shard; one that would make it too big
+		// starts the next.
+		{[]any{"A", 3, "B", 3, "C", 3, "D", 8}, "[0 9]"},
+		{[]any{"A", 4}, "[0]"},
+		{nil, "[]"},
+	} {
+		sizes, letters := run(c.spec...)
+		if got := fmt.Sprint(letterShards(sizes, letters)); got != c.want && !(c.want == "[]" && got == "[]") {
+			t.Errorf("%v: %s, want %s", c.spec, got, c.want)
+		}
+	}
+}
+
+// A chapter's index has all its sections' pages, in order, in shards
+// starting with letters, read back whole, kept by GC, and followed by
+// import.
+func TestChapterIndex(t *testing.T) {
+	defer func(f, m int) { shardFirst, shardMore = f, m }(shardFirst, shardMore)
+	shardFirst, shardMore = 600, 1200
 	s, _ := Open(t.TempDir())
 	pkg := Package{Distro: "debian", Release: "trixie", Name: "p", Version: "1"}
 	for i := 0; i < 40; i++ {
 		addVersion(t, s, fmt.Sprintf("page%02d", i), "1", "a page", "girly", pkg, int64(i))
 	}
-	addVersion(t, s, "lonely", "5", "a short section", "", pkg, 1)
+	addVersion(t, s, "apple", "1", "a fruit", "", pkg, 1)
+	addVersion(t, s, "pear", "1ssl", "another section", "", Package{Distro: "arch", Release: "rolling", Name: "q"}, 1)
+	addVersion(t, s, "lonely", "5", "a short chapter", "", pkg, 1)
 	publish(t, s)
 	m, _ := s.Manifest()
-	var si SectionIndex
-	if err := s.Read(SectionIndexPath("1", m.Sections[0].SHA256), &si); err != nil {
+	if len(m.Chapters) != 2 || m.Chapters[0].Chapter != "1" || m.Chapters[0].Pages != 42 || len(m.Sections) != 3 {
+		t.Fatalf("manifest: %+v, %+v", m.Chapters, m.Sections)
+	}
+	var ci ChapterIndex
+	if err := s.Read(SectionIndexPath("1", m.Chapters[0].SHA256), &ci); err != nil {
 		t.Fatal(err)
 	}
-	if len(si.Shards) < 3 || len(si.Pages) != 0 || si.Count != 40 {
-		t.Fatalf("section 1's index: %d shards, %d pages inline, count %d", len(si.Shards), len(si.Pages), si.Count)
+	// A is too short to end the first shard (under half of it), so P
+	// starts in it too.
+	if ci.Count != 42 || len(ci.Shards) < 2 || fmt.Sprint(ci.Letters) != "[{A 1} {P 1}]" {
+		t.Fatalf("chapter 1's index: count %d, %d inline, %d shards, letters %v", ci.Count, len(ci.Pages), len(ci.Shards), ci.Letters)
 	}
-	n := 0
-	for i, r := range si.Shards {
+	if ci.Pages[0].Name != "apple" || ci.Shards[0].Prev != "P" {
+		t.Errorf("first shard %+v, then %+v", ci.Pages, ci.Shards[0])
+	}
+	n := len(ci.Pages)
+	for i, r := range ci.Shards {
 		n += r.Count
-		if r.Bytes == 0 || (i > 0 && si.Shards[i-1].Last >= r.First) {
+		if r.Bytes == 0 || (i > 0 && ci.Shards[i-1].Last >= r.First) {
 			t.Errorf("shard %d: %+v", i, r)
 		}
 	}
-	pages, err := s.SectionPages(m.Sections[0])
-	if err != nil || len(pages) != 40 || n != 40 || pages[0].Name != "page00" || pages[39].Name != "page39" {
+	pages, err := s.ChapterPages(m.Chapters[0])
+	if err != nil || len(pages) != 42 || n != 42 {
 		t.Fatalf("pages: %d (shards say %d), %v", len(pages), n, err)
 	}
-	if short, _ := s.SectionPages(m.Sections[1]); len(short) != 1 {
-		t.Errorf("section 5 should stay whole: %v", short)
+	var names []string
+	for _, p := range pages {
+		names = append(names, p.Name+"("+p.Section+")")
+	}
+	if names[0] != "apple(1)" || names[40] != "page39(1)" || names[41] != "pear(1ssl)" {
+		t.Errorf("order: %v", names)
+	}
+	p0 := pages[1]
+	if p0.Name != "page00" || fmt.Sprint(p0.Sources) != "[debian debian/trixie]" || fmt.Sprint(p0.Girl) != "[debian debian/trixie]" ||
+		fmt.Sprint(p0.Variants) != "[girl man]" || p0.Page == "" {
+		t.Errorf("page00: %+v", p0)
+	}
+	if pear := pages[41]; fmt.Sprint(pear.Sources) != "[arch arch/rolling]" || pear.Girl != nil {
+		t.Errorf("pear: %+v", pear)
+	}
+	if short, _ := s.ChapterPages(m.Chapters[1]); len(short) != 1 {
+		t.Errorf("chapter 5 should be one page: %v", short)
 	}
 	if _, err := s.GC(false); err != nil {
 		t.Fatal(err)
 	}
-	if again, err := s.SectionPages(m.Sections[0]); err != nil || len(again) != 40 {
+	if again, err := s.ChapterPages(m.Chapters[0]); err != nil || len(again) != 42 {
 		t.Fatalf("after GC: %d pages, %v", len(again), err)
 	}
 	dst, _ := Open(t.TempDir())
 	st, err := dst.Import(context.Background(), NewClient(s.Dir, 5*time.Second), ImportOptions{Jobs: 2})
-	if err != nil || st.Pages != 41 {
+	if err != nil || st.Pages != 43 {
 		t.Fatalf("import: %+v, %v", st, err)
+	}
+	// Just one section of a chapter.
+	dst2, _ := Open(t.TempDir())
+	st, err = dst2.Import(context.Background(), NewClient(s.Dir, 5*time.Second), ImportOptions{Jobs: 2, Sections: []string{"1ssl"}})
+	if err != nil || st.Pages != 1 {
+		t.Fatalf("import of 1ssl: %+v, %v", st, err)
 	}
 }
 

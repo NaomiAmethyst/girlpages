@@ -128,55 +128,61 @@ func (s *Store) Publish(pages []PageRef) (*Manifest, error) {
 		return nil, err
 	}
 
-	bySection := map[string]*SectionIndex{}
-	var order []string
+	byChapter := map[string][]IndexPage{}
+	bySection := map[string]*SectionEntry{}
 	for _, p := range pages {
 		v := p.Current()
 		sec := p.Pointer.Section
-		si := bySection[sec]
-		if si == nil {
-			si = &SectionIndex{Format: Format, Section: sec}
-			bySection[sec] = si
-			order = append(order, sec)
-		}
-		keys, other := p.Listing.SourceKeys()
+		keys, girl := p.Listing.SourceKeys()
 		ip := IndexPage{
-			Name: p.Pointer.Name, Title: v.Title, Description: v.Description,
-			Page: p.Pointer.SHA256, Source: v.Source, Variants: variantNames(v),
-			Version: v.Upstream(), Sources: keys, Other: other,
+			Name: p.Pointer.Name, Section: sec, Title: v.Title, Description: v.Description,
+			Page: p.Pointer.SHA256, Version: v.Upstream(), Variants: variantNames(v), Sources: keys, Girl: girl,
 		}
 		if n := len(p.Listing.Versions); n > 1 {
 			ip.Versions = n
 		}
-		si.Pages = append(si.Pages, ip)
+		ch := manpage.Chapter(sec)
+		byChapter[ch] = append(byChapter[ch], ip)
+		e := bySection[sec]
+		if e == nil {
+			e = &SectionEntry{Section: sec}
+			bySection[sec] = e
+		}
+		e.Pages++
 		m.Pages++
-		for _, variant := range variantNames(v) {
+		for _, variant := range ip.Variants {
+			if e.Variants == nil {
+				e.Variants = map[string]int{}
+			}
+			e.Variants[variant]++
 			m.Variants[variant]++
 		}
 	}
+	for _, e := range bySection {
+		m.Sections = append(m.Sections, *e)
+	}
+	sort.Slice(m.Sections, func(i, j int) bool { return m.Sections[i].Section < m.Sections[j].Section })
 
-	sort.Strings(order)
-	sc := s.counter("writing section indexes", len(order))
-	for _, sec := range order {
-		sc.add()
-		si := bySection[sec]
-		sha, err := s.writeSectionIndex(si)
-		if err != nil {
-			return nil, err
+	chapters := make([]string, 0, len(byChapter))
+	for ch := range byChapter {
+		chapters = append(chapters, ch)
+	}
+	sort.Strings(chapters)
+	sc := s.counter("writing chapter indexes", len(chapters))
+	m.Chapters = make([]ChapterEntry, len(chapters))
+	cerrs := make([]error, len(chapters))
+	parallel(len(chapters), func(i int) {
+		defer sc.add()
+		ch := chapters[i]
+		sha, err := s.writeChapterIndex(ch, byChapter[ch])
+		if err == nil {
+			_, _, err = s.Write(SectionPointerPath(ch), &Pointer{Format: Format, Section: ch, SHA256: sha})
 		}
-		if _, _, err := s.Write(SectionPointerPath(sec), &Pointer{Format: Format, Section: sec, SHA256: sha}); err != nil {
-			return nil, err
-		}
-		e := SectionEntry{Section: sec, SHA256: sha, Pages: len(si.Pages)}
-		for _, ip := range si.Pages {
-			for _, variant := range ip.Variants {
-				if e.Variants == nil {
-					e.Variants = map[string]int{}
-				}
-				e.Variants[variant]++
-			}
-		}
-		m.Sections = append(m.Sections, e)
+		m.Chapters[i] = ChapterEntry{Chapter: ch, SHA256: sha, Pages: len(byChapter[ch])}
+		cerrs[i] = err
+	})
+	if err := errors.Join(cerrs...); err != nil {
+		return nil, err
 	}
 
 	s.counter("building the search index", 0)
@@ -194,10 +200,6 @@ func (s *Store) Publish(pages []PageRef) (*Manifest, error) {
 	}
 
 	if m.Index.Variants, err = s.writeVariantIndexes(pages); err != nil {
-		return nil, err
-	}
-	s.counter("writing section listings", 0)
-	if m.Index.Listings, err = s.writeListings(pages); err != nil {
 		return nil, err
 	}
 
@@ -312,66 +314,6 @@ func (s *Store) writePageTable(docs []IndexDoc, count int) (string, string, erro
 	return nsha, dsha, err
 }
 
-// sectionShardBytes is about how big a section index (or a shard of one)
-// grows before it's split.
-var sectionShardBytes = 1 << 20
-
-// writeSectionIndex writes a section's index, split into shards if it's
-// long, returning its hash.
-func (s *Store) writeSectionIndex(si *SectionIndex) (string, error) {
-	// By name, so each shard is a range of them.
-	sort.SliceStable(si.Pages, func(i, j int) bool { return manpage.ListLess(si.Pages[i].Name, si.Pages[j].Name) })
-	write := func(v *SectionIndex) (string, error) {
-		return s.WriteAddressed(func(sha string) string { return SectionIndexPath(si.Section, sha) }, v)
-	}
-	var sizes []int
-	total := 0
-	for _, p := range si.Pages {
-		b, err := marshal(p.values())
-		if err != nil {
-			return "", err
-		}
-		sizes = append(sizes, len(b))
-		total += len(b)
-	}
-	if total <= sectionShardBytes {
-		return write(si)
-	}
-	idx := &SectionIndex{Format: Format, Section: si.Section, Count: len(si.Pages)}
-	for i := 0; i < len(si.Pages); {
-		j, n := i, 0
-		for j < len(si.Pages) && (j == i || n+sizes[j] <= sectionShardBytes) {
-			n += sizes[j]
-			j++
-		}
-		part := si.Pages[i:j]
-		sha, size, err := s.writeSized(SectionShardPath, &SectionIndex{Format: Format, Section: si.Section, Pages: part})
-		if err != nil {
-			return "", err
-		}
-		idx.Shards = append(idx.Shards, ShardRange{First: part[0].Name, Last: part[len(part)-1].Name, SHA256: sha, Bytes: size, Count: len(part)})
-		i = j
-	}
-	return write(idx)
-}
-
-// SectionPages reads every page in a section's index, shards and all.
-func (s *Store) SectionPages(e SectionEntry) ([]IndexPage, error) {
-	var si SectionIndex
-	if err := s.Read(SectionIndexPath(e.Section, e.SHA256), &si); err != nil {
-		return nil, err
-	}
-	pages := si.Pages
-	for _, r := range si.Shards {
-		var sh SectionIndex
-		if err := s.Read(SectionShardPath(r.SHA256), &sh); err != nil {
-			return nil, err
-		}
-		pages = append(pages, sh.Pages...)
-	}
-	return pages, nil
-}
-
 // sourceShardSize is how many keys go in each variant index shard: about
 // a megabyte (fetched once, for a bulk run).
 var sourceShardSize = 55000
@@ -451,14 +393,14 @@ func (s *Store) GC(dryRun bool) (GCStats, error) {
 	if err != nil {
 		return st, fmt.Errorf("publish before collecting garbage: %w", err)
 	}
-	for _, e := range m.Sections {
-		live[SectionPointerPath(e.Section)] = true
-		live[SectionIndexPath(e.Section, e.SHA256)] = true
-		var si SectionIndex
-		if err := s.Read(SectionIndexPath(e.Section, e.SHA256), &si); err != nil {
+	for _, e := range m.Chapters {
+		live[SectionPointerPath(e.Chapter)] = true
+		live[SectionIndexPath(e.Chapter, e.SHA256)] = true
+		var ci ChapterIndex
+		if err := s.Read(SectionIndexPath(e.Chapter, e.SHA256), &ci); err != nil {
 			return st, err
 		}
-		for _, r := range si.Shards {
+		for _, r := range ci.Shards {
 			live[SectionShardPath(r.SHA256)] = true
 		}
 	}
@@ -470,23 +412,6 @@ func (s *Store) GC(dryRun bool) (GCStats, error) {
 		}
 		for _, r := range tm.Shards {
 			live[ShardPath(kind, r.SHA256)] = true
-		}
-	}
-	if m.Index.Listings != "" {
-		live[IndexManifestPath("listings", m.Index.Listings)] = true
-		var lm ListingsManifest
-		if err := s.Read(IndexManifestPath("listings", m.Index.Listings), &lm); err != nil {
-			return st, err
-		}
-		for _, r := range lm.Listings {
-			live[ShardPath("listings", r.SHA256)] = true
-			var sl SectionListing
-			if err := s.Read(ShardPath("listings", r.SHA256), &sl); err != nil {
-				return st, err
-			}
-			for _, c := range sl.Chunks {
-				live[ShardPath("listings", c.SHA256)] = true
-			}
 		}
 	}
 	kinds := map[string]string{"words": m.Index.Words, "grams": m.Index.Grams}

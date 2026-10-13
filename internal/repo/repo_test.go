@@ -168,19 +168,19 @@ func TestPublishAndGC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.Pages != 37 || m.Variants["girl"] != 3 || len(m.Sections) != 2 {
+	if m.Pages != 37 || m.Variants["girl"] != 3 || len(m.Sections) != 2 || len(m.Chapters) != 2 || m.Sections[1].Variants["girl"] != 1 {
 		t.Fatalf("manifest: %+v", m)
 	}
 	var p Pointer
-	if err := s.Read(SectionPointerPath("1"), &p); err != nil || p.SHA256 != m.Sections[0].SHA256 {
-		t.Fatalf("section pointer %+v, %v", p, err)
+	if err := s.Read(SectionPointerPath("1"), &p); err != nil || p.SHA256 != m.Chapters[0].SHA256 {
+		t.Fatalf("chapter pointer %+v, %v", p, err)
 	}
-	var si SectionIndex
+	var si ChapterIndex
 	if err := s.Read(SectionIndexPath("1", p.SHA256), &si); err != nil {
 		t.Fatal(err)
 	}
 	if len(si.Pages) != 6 || si.Pages[0].Name != "[" || fmt.Sprint(si.Pages[3].Variants) != "[girl man]" {
-		t.Errorf("section 1: %+v", si.Pages)
+		t.Errorf("chapter 1: %+v", si.Pages)
 	}
 	// Content-addressed files really are named after their contents.
 	b, _ := os.ReadFile(filepath.Join(s.Dir, SectionIndexPath("1", p.SHA256)))

@@ -124,22 +124,18 @@ func sourcesOf(l *Listing) []SourceEntry {
 	return out
 }
 
-// SourceKeys lists the keys of the sources a page has versions from, and,
-// for each whose version isn't the latest, which version it has.
-func (l *Listing) SourceKeys() ([]string, map[string]string) {
-	var keys []string
-	var other map[string]string
-	latest := l.Latest()
+// SourceKeys lists the keys of the sources a page has versions from, and
+// those whose version of it has a girly variant.
+func (l *Listing) SourceKeys() (keys, girl []string) {
 	for _, src := range sourcesOf(l) {
 		keys = append(keys, src.Key())
-		if v := l.VersionFrom(src.Distro, src.Release); v != nil && latest != nil && v.Source != latest.Source {
-			if other == nil {
-				other = map[string]string{}
+		if v := l.VersionFrom(src.Distro, src.Release); v != nil {
+			if _, ok := v.Variants[VariantGirl]; ok {
+				girl = append(girl, src.Key())
 			}
-			other[src.Key()] = v.Source
 		}
 	}
-	return keys, other
+	return keys, girl
 }
 
 // Sources lists every source the pages come from, distributions before
