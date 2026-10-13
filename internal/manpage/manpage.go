@@ -17,7 +17,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
+	"unicode"
 )
 
 // Page is one man page source file.
@@ -258,6 +260,31 @@ func ListLess(a, b string) bool {
 		return NameLess(la, lb)
 	}
 	return a < b
+}
+
+// ListingLess orders a section listing's pages, as the website's listings
+// (and the repository's, for the app) have them: by name ignoring case,
+// numbers by value, then by section.
+func ListingLess(nameA, secA, nameB, secB string) bool {
+	if a, b := strings.ToLower(nameA), strings.ToLower(nameB); a != b {
+		return NameLess(a, b)
+	}
+	return secA < secB
+}
+
+// Letter is the group a name is listed under: its first letter, or for a
+// number (an RFC's), its thousand.
+func Letter(name string) string {
+	if n, err := strconv.Atoi(name); err == nil && n >= 0 {
+		if n < 1000 {
+			return "1–999"
+		}
+		return fmt.Sprintf("%ds", n/1000*1000)
+	}
+	if r := []rune(name); len(r) > 0 && unicode.IsLetter(r[0]) && r[0] < 0x80 {
+		return strings.ToUpper(string(r[0]))
+	}
+	return "#"
 }
 
 // NameLess orders page names: numbers (as series of documents have) by

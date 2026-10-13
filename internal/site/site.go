@@ -33,7 +33,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unicode"
 
 	"github.com/NaomiAmethyst/girlpages/internal/manpage"
 	"github.com/NaomiAmethyst/girlpages/internal/render"
@@ -674,11 +673,7 @@ func (b *builder) sections(pages []repo.PageRef) error {
 					URL: b.pageURL(p.Pointer.Name, p.Pointer.Section), Girlified: p.Girlified()})
 			}
 			sort.SliceStable(items, func(i, j int) bool {
-				a, c := strings.ToLower(items[i].Name), strings.ToLower(items[j].Name)
-				if a != c {
-					return manpage.NameLess(a, c)
-				}
-				return items[i].Section < items[j].Section
+				return manpage.ListingLess(items[i].Name, items[i].Section, items[j].Name, items[j].Section)
 			})
 			pages, letters := paginate(u, items)
 			if len(pages) == 0 {
@@ -762,20 +757,8 @@ func pluralPages(n int) string {
 	return fmt.Sprintf("%d pages", n)
 }
 
-// letterOf is the group a name is listed under: its first letter, or for
-// a number (an RFC's), its thousand.
-func letterOf(name string) string {
-	if n, err := strconv.Atoi(name); err == nil && n >= 0 {
-		if n < 1000 {
-			return "1–999"
-		}
-		return fmt.Sprintf("%ds", n/1000*1000)
-	}
-	if r := []rune(name); len(r) > 0 && unicode.IsLetter(r[0]) && r[0] < 0x80 {
-		return strings.ToUpper(string(r[0]))
-	}
-	return "#"
-}
+// letterOf is the group a name is listed under.
+func letterOf(name string) string { return manpage.Letter(name) }
 
 // paginate splits a listing at u into pages of listPage items, grouped by
 // first letter; letters link to the page each starts on.

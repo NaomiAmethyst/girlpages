@@ -530,6 +530,9 @@ const l = await c1.get("page/page-" + ptr.sha256.slice(0, 2) + "/" + ptr.sha256 
 const ver = l.versions.find(v => v.source === l.current);
 const body = await c1.get("contents/" + l.current.slice(0, 2) + "/" + l.current + "/girl-" + ver.variants.girl.sha256 + ".json");
 out.offlinePage = body.variant + " " + body.title;
+// Its listing too, the quick way.
+const lst = await c1.listing(await c1.get("manifest.json"), "1");
+out.offlineListing = [String(lst.count), ...(await c1.listingChunk(lst.chunks[0])).map(p => p.name + (p.girl ? "✨" : ""))];
 down = false;
 
 // A page read is kept for offline.
@@ -614,6 +617,7 @@ console.log(JSON.stringify(out));
 		Progress                            string
 		SavedState                          struct{ Pages int }
 		OfflinePage                         string
+		OfflineListing                      []string
 		Removed                             int
 		Kept                                []string
 		SecondGC                            bool
@@ -659,6 +663,9 @@ console.log(JSON.stringify(out));
 	}
 	if got.Saved.Pages != n1 || got.Saved.Failed != 0 || got.Progress != fmt.Sprintf("%d/%d", n1, n1) || got.SavedState.Pages != n1 {
 		t.Errorf("saving section 1 (%d pages): %+v, progress %s, state %+v", n1, got.Saved, got.Progress, got.SavedState)
+	}
+	if strings.Join(got.OfflineListing, " ") != "3 [ git-commit ls✨" {
+		t.Errorf("a saved listing offline: %v", got.OfflineListing)
 	}
 	if got.OfflinePage != "girl LS(1)" {
 		t.Errorf("a saved page offline: %q", got.OfflinePage)

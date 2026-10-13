@@ -150,7 +150,7 @@ async function sourceSection(src, key, sub, { start = 1, pageURL = null } = {}) 
   const m = await manifest();
   const [name, emoji] = sectionName(key);
   const entries = m.sections.filter(e => chapter(e.section) === chapter(key));
-  const plan = await listingPlan(entries, src, sub);
+  const plan = (!src && await chunkedPlan(m, key, sub).catch(() => null)) || await listingPlan(entries, src, sub);
   const label = sub || key;
   document.title = `${sourceLabel(src)} · ${sectionLabel(label)} · girlpages 💅`;
   let chips = "";
@@ -258,11 +258,14 @@ async function listInto(listing, plan, first, { pageURL = null, letters = null, 
 // its first entry kept where it is on the screen.
 export async function attachListing(listing, { key, sub = "", pageURL, letters = null }) {
   const m = await manifest();
-  const plan = await listingPlan(m.sections.filter(e => chapter(e.section) === chapter(key)), "", sub);
+  const plan = await chunkedPlan(m, key, sub).catch(() => null) ||
+    await listingPlan(m.sections.filter(e => chapter(e.section) === chapter(key)), "", sub);
   const firstLi = listing.querySelector("li[data-name]");
   if (!firstLi || !plan.count) return null;
   const name = firstLi.dataset.name;
-  const n = plan.chunkOf(name);
+  // The static page is that chunk (they're made together), or else where
+  // its first entry is.
+  const n = plan.chunkOf ? plan.chunkOf(name) : Math.min(Math.max(1, +listing.dataset.page || 1), plan.count);
   const html = await chunkMaker(plan)(n);
   const y = firstLi.getBoundingClientRect().top;
   listing.innerHTML = `<div class="chunk" data-chunk="${n}">${html}</div>`;
@@ -330,6 +333,26 @@ async function listingPlan(entries, src, sub) {
     pageOf: (n) => n,
     chunkForPage: (p) => p,
     chunkOf: (name) => Math.floor(Math.max(0, items.findIndex(it => it.name === name)) / CHUNK) + 1,
+  };
+}
+
+// chunkedPlan is a listing's plan the quick way, for everything (not one
+// source's): from the repository's listing of it, a chunk at a time, so
+// it's shown as soon as its first chunk is fetched rather than once the
+// whole chapter's section indexes are. It's null if the repository hasn't
+// one.
+async function chunkedPlan(m, key, sub) {
+  const l = await cache.listing(m, chapter(key), sub || "");
+  if (!l) return null;
+  const chunks = l.chunks;
+  return {
+    count: chunks.length, total: l.count, subs: l.subs, letters: l.letters,
+    load: async (n) => (await cache.listingChunk(chunks[n - 1])).map(p => ({
+      name: p.name, sec: p.section, desc: p.description || "", girl: p.girl, url: staticPage(p.name, p.section),
+    })),
+    prevLetter: (n) => (n > 1 ? chunks[n - 1].prev || "" : ""),
+    pageOf: (n) => n,
+    chunkForPage: (p) => p,
   };
 }
 

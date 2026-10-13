@@ -134,6 +134,11 @@ export const shardsOf = (m) => rows(m.shards, { hashes: ["sha256"] });
 // sectionShard is a shard of a long section's index.
 export const sectionShard = (sha) => `section/shard-${sha.slice(0, 2)}/${sha}.json`;
 
+// listingFile is a section listing's file, or one of its chunks; the
+// listings' manifest is listingsManifest.
+export const listingFile = (sha) => `index/listings/shard-${sha.slice(0, 2)}/${sha}.json`;
+const listingsManifest = (sha) => `index/listings/manifest-${sha}.json`;
+
 // browseURL is a view in the browse app, which lives in the home page's
 // hash: #/[<source>/]<sec>/<name>[/<version>][/<variant>][/mono] for a page
 // (the latest version, or as a source has it, unless a version is given:
@@ -363,6 +368,16 @@ export class RepoCache {
       if (text === null) continue; // so none of its shards are stored either
       for (const r of shardsOf(JSON.parse(text))) live.add(`index/${kind}/shard-${r.sha256.slice(0, 2)}/${r.sha256}.json`);
     }
+    if (ix.listings) {
+      const path = listingsManifest(ix.listings);
+      live.add(path);
+      const text = await this.store.get(path);
+      for (const r of text === null ? [] : rows(JSON.parse(text).listings, { hashes: ["sha256"] })) {
+        live.add(listingFile(r.sha256));
+        const lt = await this.store.get(listingFile(r.sha256));
+        if (lt !== null) for (const c of rows(JSON.parse(lt).chunks, { hashes: ["sha256"] })) live.add(listingFile(c.sha256));
+      }
+    }
     for (const e of manifest.sections || []) {
       const path = `section/${enc(e.section)}-${e.sha256}.json`;
       live.add(path);
@@ -431,6 +446,12 @@ export class RepoCache {
       }
     };
     await Promise.all(Array.from({ length: Math.min(SAVE_JOBS, pages.length) }, worker));
+    // And its listing, to show it the quick way.
+    if (!src) {
+      const sub = exact && chapter(key) !== key ? key : "";
+      const l = await this.listing(m, chapter(key), sub).catch(() => null);
+      if (l) for (const c of l.chunks) await this.get(listingFile(c.sha256)).catch(() => {});
+    }
     const meta = this.meta.load();
     meta.saved = { ...(meta.saved || {}), [savedKey(key, src)]: { generated: m.generated, pages: pages.length, failed } };
     this.meta.save(meta);
@@ -453,7 +474,33 @@ export class RepoCache {
     if (vs[which]) await this.get(`contents/${source.slice(0, 2)}/${source}/${which}-${vs[which].sha256}.json`);
   }
 
-  // keepListing fetches the section indexes a section's listing needs.
+  // listing is a section listing (see repo.SectionListing) from a
+  // manifest, or null if it hasn't one: key is a chapter, and sub one of
+  // its sections ("" for all of it). Its chunks are listing.chunks, each
+  // {sha256, first, prev}, its letters a Map from letter to chunk, and its
+  // subs a Map from each of the chapter's sections to its count (if it has
+  // several).
+  async listing(m, key, sub = "") {
+    const sha = m.index && m.index.listings;
+    if (!sha) return null;
+    const lm = await this.get(listingsManifest(sha));
+    const refs = rows(lm.listings, { hashes: ["sha256"] }).filter(r => r.key === key);
+    const ref = refs.find(r => r.sub === sub);
+    if (!ref) return null;
+    const sl = await this.get(listingFile(ref.sha256));
+    return {
+      count: sl.count,
+      subs: new Map(refs.filter(r => r.sub).map(r => [r.sub, r.count])),
+      letters: new Map(rows(sl.letters).map(l => [l.letter, l.chunk])),
+      chunks: rows(sl.chunks, { hashes: ["sha256"] }),
+    };
+  }
+
+  // listingChunk is a listing chunk's pages: {name, section, description, girl}.
+  async listingChunk(c) {
+    return rows((await this.get(listingFile(c.sha256))).pages).map(p => ({ ...p, girl: !!p.girl }));
+  }
+
   // sectionPages is every page in a section's index (a manifest entry),
   // fetching its shards if it has them.
   async sectionPages(e) {

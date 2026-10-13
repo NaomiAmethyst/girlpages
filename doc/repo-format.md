@@ -223,6 +223,8 @@ highest number.
 | `index/names/shard-ab/<sha>.json` | no | ″ |
 | `index/docs/manifest-<sha>.json` | no | ″ the page table: the rest |
 | `index/docs/shard-ab/<sha>.json` | no | ″ |
+| `index/listings/manifest-<sha>.json` | no | [Section listings](#section-listings) |
+| `index/listings/shard-ab/<sha>.json` | no | ″ a listing, or a chunk of one |
 
 `<section>` and `<name>` are [escaped](#paths); `<source>` is a source
 hash, `<sha>` the file's own hash, and `ab` the first two digits of the
@@ -262,6 +264,7 @@ The root. Fetch it fresh to see the repository as it is now.
 | `sections` | Each section (exact, like `3ssl`), sorted: the hash of its [section index](#sectionsection-shajson), and counts as above. |
 | `index.words`, `.grams`, `.names`, `.docs` | Hashes of the [search index](#the-search-index) manifests. |
 | `index.variants` | For each variant, the hash of its [variant index](#variant-indexes) manifest. |
+| `index.listings` | The hash of the [section listings](#section-listings) manifest. |
 | `sources` | Each [source](#sources), sorted by distro then release (a distro's entry, with no `release`, first): how many pages have a version from it, in all and by [chapter](#names-and-sections). |
 
 ### Pointers
@@ -419,6 +422,48 @@ each shard being a section index of its own (at
 ```
 
 Readers must read the shards (in order) when there are any.
+
+### Section listings
+
+What a listing of a chapter (or of one of its sections) shows, without
+the rest of what section indexes say: for a big chapter, those run to
+tens of megabytes, and a listing's first screen needs a few kilobytes.
+There's a listing of each [chapter](#names-and-sections), and of each of
+its sections if it has more than one, made of chunks of 200 pages, in the
+order (and so with the chunks) of the website's listing pages: by name
+ignoring case, numbers by value, then by section.
+
+`index/listings/manifest-<sha>.json` is a [table](#tables) of them: each
+one's `key` (its chapter), `sub` (its section, or `""` for the whole
+chapter), `sha256` and `count` (of pages). A chapter's listings' counts
+say how many pages each of its sections has.
+
+```json
+{"format": 1, "listings": {"keys": ["key", "sub", "sha256", "count"],
+  "data": ["1", "", "…", 56682, "1", "1", "…", 52970, "1", "1ssl", "…", 112, …]}}
+```
+
+A listing, `index/listings/shard-ab/<sha>.json`, has its `count`, the
+chunk (from 1) each first letter starts in, in order, and its chunks: the
+first page's name, and the letter of the page before (`""` for the first
+chunk), so a chunk shown alone can say its first letter carries on. A
+letter is a name's first letter, upper case, `#` if that isn't an ASCII
+letter, or for a number, `1–999` or its thousand (`9000s`).
+
+```json
+{"format": 1, "key": "1", "count": 56682,
+ "letters": {"keys": ["letter", "chunk"], "data": ["#", 1, "A", 2, …]},
+ "chunks": {"keys": ["sha256", "first", "prev"], "data": ["…", "0desktop", "", "…", "aa-enabled", "A", …]}}
+```
+
+A chunk, also `index/listings/shard-ab/<sha>.json`, is its pages:
+
+```json
+{"format": 1, "pages": {"keys": ["name", "section", "description", "girl"],
+  "data": ["ls", "1", "list directory contents", 1, …]}}
+```
+
+`girl` is 1 if the page's latest version has a girly variant, else 0.
 
 ### Variant indexes
 

@@ -196,6 +196,10 @@ func (s *Store) Publish(pages []PageRef) (*Manifest, error) {
 	if m.Index.Variants, err = s.writeVariantIndexes(pages); err != nil {
 		return nil, err
 	}
+	s.counter("writing section listings", 0)
+	if m.Index.Listings, err = s.writeListings(pages); err != nil {
+		return nil, err
+	}
 
 	if _, _, err := s.Write(ManifestPath(), m); err != nil {
 		return nil, err
@@ -466,6 +470,23 @@ func (s *Store) GC(dryRun bool) (GCStats, error) {
 		}
 		for _, r := range tm.Shards {
 			live[ShardPath(kind, r.SHA256)] = true
+		}
+	}
+	if m.Index.Listings != "" {
+		live[IndexManifestPath("listings", m.Index.Listings)] = true
+		var lm ListingsManifest
+		if err := s.Read(IndexManifestPath("listings", m.Index.Listings), &lm); err != nil {
+			return st, err
+		}
+		for _, r := range lm.Listings {
+			live[ShardPath("listings", r.SHA256)] = true
+			var sl SectionListing
+			if err := s.Read(ShardPath("listings", r.SHA256), &sl); err != nil {
+				return st, err
+			}
+			for _, c := range sl.Chunks {
+				live[ShardPath("listings", c.SHA256)] = true
+			}
 		}
 	}
 	kinds := map[string]string{"words": m.Index.Words, "grams": m.Index.Grams}

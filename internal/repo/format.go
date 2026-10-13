@@ -93,6 +93,9 @@ type IndexEntry struct {
 	// and what it says about itself.
 	Names string `json:"names"`
 	Docs  string `json:"docs"`
+	// Listings is the section listings' manifest (a ListingsManifest):
+	// what the website's listing pages show, in chunks.
+	Listings string `json:"listings,omitempty"`
 	// Variants names, for each variant, the manifest of its index (a
 	// ShardManifest of SourceShards), which says which page versions have
 	// that variant without asking for each.
