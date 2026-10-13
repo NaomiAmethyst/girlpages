@@ -4,7 +4,7 @@
 // girlpages service worker: keeps the app shell (the scripts, styles, and
 // the home, search and offline pages) for offline use. Repository files
 // aren't touched here; the pages cache those themselves
-// (static/girlpages.js). Static pages aren't kept either: offline, they're
+// (static/cache.js). Static pages aren't kept either: offline, they're
 // sent to the browse app, which renders the same thing from the cached
 // repository.
 

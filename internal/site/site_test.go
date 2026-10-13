@@ -475,11 +475,13 @@ func TestRepoCacheJS(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	gp, _ := filepath.Abs("static/girlpages.js")
+	gp, _ := filepath.Abs("static/cache.js")
 	sj, _ := filepath.Abs("static/search.js")
+	fm, _ := filepath.Abs("static/format.js")
 	script := fmt.Sprintf(`
-const { RepoCache, MemoryStore, escapeName } = await import(%q);
+const { RepoCache, MemoryStore } = await import(%q);
 const { Searcher } = await import(%q);
+const { escapeName } = await import(%q);
 class Local {
   constructor() { this.m = new Map(); }
   getItem(k) { return this.m.has(k) ? this.m.get(k) : null; }
@@ -597,7 +599,7 @@ const small = new MemoryStore(40000);
 out.small = await names(cache(small), "list directory");
 out.smallSize = small.size();
 console.log(JSON.stringify(out));
-`, "file://"+gp, "file://"+sj, srv.URL+"/repo/")
+`, "file://"+gp, "file://"+sj, "file://"+fm, srv.URL+"/repo/")
 	cmd := exec.Command(node, "--input-type=module", "-e", script)
 	b, err := cmd.CombinedOutput()
 	if err != nil {
@@ -946,7 +948,7 @@ func TestPagination(t *testing.T) {
 	for name, want := range map[string][]string{
 		"page 1": {"apple", "blueberry", `<link rel="next" href="/section/6/page/2/">`, `href="/section/6/#letter-A">A</a>`,
 			`href="/section/6/page/2/#letter-C">C</a>`, `<span class="pill on" aria-current="page">1</span>`,
-			`data-first="/section/6/" data-page="1" data-pages="3"`, "page 1 of 3", `src="/static/listing.js"`},
+			`data-first="/section/6/" data-page="1" data-pages="3"`, "page 1 of 3", `src="/static/takeover.js"`},
 		"page 2": {"cherry", "fig", `<link rel="prev" href="/section/6/">`, `<link rel="next" href="/section/6/page/3/">`,
 			`<link rel="canonical" href="https://example.test/section/6/page/2/">`, "· page 2 · girlpages 💅</title>"},
 		"page 3": {"grape", "guava", `<h2 class="letter" id="letter-G">G</h2>`},
@@ -996,7 +998,7 @@ func TestBase91JS(t *testing.T) {
 	es, _ := json.Marshal(enc)
 	got := node(t, fmt.Sprintf(`
 const { decode91 } = await import(%q);
-console.log(JSON.stringify(%s.map(e => decode91(e))));`, staticFile(t, "girlpages.js"), es))
+console.log(JSON.stringify(%s.map(e => decode91(e))));`, staticFile(t, "format.js"), es))
 	var dec [][]int
 	if err := json.Unmarshal(got, &dec); err != nil {
 		t.Fatalf("%v: %s", err, got)

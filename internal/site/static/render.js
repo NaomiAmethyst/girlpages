@@ -5,6 +5,10 @@
 // doesn't render itself. It's a port of internal/render (inline.go and
 // html.go) and must give exactly the same HTML; a test checks.
 
+import { esc } from "./html.js";
+
+export { esc };
+
 const PALETTE = new Set(["pink", "hotpink", "purple", "lavender", "cyan", "mint", "yellow", "peach", "red", "blue", "green"]);
 // Go's \s and unicode.IsPunct, for ASCII.
 const S = "[\\t\\n\\f\\r ]";
@@ -212,10 +216,6 @@ export function parseInline(s) {
 
 const plainInline = (s) => parseInline(s).map(g => g.text).join("");
 
-// esc matches Go's html.EscapeString.
-export function esc(s) {
-  return s.replace(/[&'<>"]/g, c => ({ "&": "&amp;", "'": "&#39;", "<": "&lt;", ">": "&gt;", '"': "&#34;" })[c]);
-}
 
 const linkRE = new RegExp("(https?://[^\\t\\n\\f\\r <>()\"'`]*[^\\t\\n\\f\\r <>()\"'`.,;:!?])" +
   "|([A-Za-z_][A-Za-z0-9_.:+-]*)\\(([0-9][a-z0-9]*|n|l)\\)" +

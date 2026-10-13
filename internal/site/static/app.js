@@ -3,7 +3,7 @@
 //
 // The browse app: everything the static site doesn't render itself, read
 // straight from the repository, in the home page's hash (see browseURL in
-// girlpages.js):
+// urls.js):
 //
 //   #/debian/trixie                 a source's home
 //   #/section/3, #/section/3/3ssl   a section's listing, or a subsection's
@@ -15,714 +15,133 @@
 //   #/1/ls/9.4/man/mono             the original as man prints it, not reflowed
 //   …/versions                      scrolled to the list of versions
 //
-// It's also where static pages go when offline. /browse/?page=… (from
-// earlier versions) redirects here.
+// Once it's running it shows the static site's pages too, in place, and
+// it's where static pages go when offline. /browse/?page=… (from earlier
+// versions) redirects here. Which view shows when is router.js's; the
+// views are views.js's and pageview.js's.
 
-import { repoCache, saveButton, browseURL, chapter, isSeries, pageURL, listingURL as listingAt, sourceNav, chapterShardsOf, rows } from "./girlpages.js";
-import { VirtualList } from "./vlist.js";
 import { Router } from "./router.js";
-import { renderHTML, renderOriginalHTML, esc } from "./render.js";
-import { escapeName, segmentName, searchPage } from "./search.js";
+import { repoCache } from "./cache.js";
+import { namePath, listingPath, variantPath } from "./format.js";
+import { pageURL, listingURL as listingAt, browseURL } from "./urls.js";
+import { viewOf, parse, legacyRoute } from "./routes.js";
+import { createListings } from "./listing.js";
+import { createViews } from "./views.js";
+import { createPageView } from "./pageview.js";
 
-const SECTIONS = {
-  "1": ["User commands", "💻"], "2": ["System calls", "📞"], "3": ["Library functions", "📚"],
-  "4": ["Special files", "🔌"], "5": ["File formats & config", "📝"], "6": ["Games", "🎮"],
-  "7": ["Miscellany", "🌈"], "8": ["System administration", "👑"], "9": ["Kernel routines", "🧠"],
-  "n": ["Tcl/Tk", "🪶"], "l": ["Local", "🏡"], "o": ["Old", "🕰️"],
-  "rfc": ["Requests for Comments", "🌐"],
-};
-const sectionName = (k) => SECTIONS[k] || SECTIONS[chapter(k)] || ["Section " + k, "📖"];
+// createApp makes the app, showing its views in el (#app), whose data
+// attributes say where the site and repository are.
+function createApp(el) {
+  const base = el.dataset.base;
+  const cache = repoCache(el.dataset.repo);
+  const manifest = () => cache.get("manifest.json");
+  const listing = async (name, sec) => cache.get(listingPath((await cache.get(namePath(name, sec))).sha256));
+  // A variant is named after its own hash (the listing gives it), so it's
+  // cached forever.
+  const variant = (source, which, sha) => cache.get(variantPath(source, which, sha));
+  const staticPage = (name, sec) => pageURL(base, name, sec);
+  const browse = (params) => browseURL(base, params);
+  const listingURL = (key, sub, n) => listingAt(base, key, sub, n);
 
-const app = document.getElementById("app");
-const base = app.dataset.base;
-const cache = repoCache(app.dataset.repo);
-const enc = (s) => encodeURIComponent(escapeName(s));
+  let router = null;
+  const listings = createListings({ cache, manifest, browse, staticPage, router: { followStatic: (from, to) => router.followStatic(from, to) } });
+  const views = createViews({ el, base, cache, manifest, browse, listingURL, listings });
+  const { sourceHome, sourceSection, searchView, oops } = views;
+  const { loadPage, pageView } = createPageView({ el, base, listing, variant, browse, staticPage, listingURL, oops });
 
-// Where things are.
-const staticPage = (name, sec) => pageURL(base, name, sec);
-const browse = (params) => browseURL(base, params);
-const sourceLabel = (key) => (key ? key.replace("/", " ") : "everything");
-
-// How variants are offered. Others (made with other prompts) get their name.
-function variantLabel(v) {
-  return v === "girl" ? "💅 girly" : v === "man" ? "📜 original" : "✨ " + v;
-}
-// Girly first, the original last, anything else between.
-function variantOrder(a, b) {
-  const rank = (v) => (v === "girl" ? 0 : v === "man" ? 2 : 1);
-  return rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0);
-}
-
-// The repository's files.
-const manifest = () => cache.get("manifest.json");
-async function listing(name, sec) {
-  const p = await cache.get(`page/name-${enc(sec)}/${enc(name)}.json`);
-  return cache.get(`page/page-${p.sha256.slice(0, 2)}/${p.sha256}.json`);
-}
-// A variant is named after its own hash (the listing gives it), so it's
-// cached forever.
-const variant = (source, v, sha) => cache.get(`contents/${source.slice(0, 2)}/${source}/${v}-${sha}.json`);
-
-// variantText reassembles a variant, as Variant.Text does in Go.
-function variantText(v) {
-  let s = "";
-  const framed = v.header || v.footer;
-  if (framed) s += (v.header || "") + "\n";
-  for (const sec of v.sections) {
-    if (sec.heading) s += (v.syntax === "girlpages-markup" ? "# " : "") + sec.heading + "\n";
-    s += sec.body;
-  }
-  if (framed) s += (v.footer || "") + "\n";
-  return s;
-}
-
-// sourceLabels says where a version came from, as Version.SourceLabels does.
-function sourceLabels(v) {
-  const out = new Set();
-  for (const p of v.packages || []) {
-    const s = p.distro || (p.url ? "upstream" : "");
-    if (!s) continue;
-    out.add(s === "upstream" ? `upstream ${p.name || ""} ${p.version || ""}`.trim() : `${s} ${p.release || ""}`.trim());
-  }
-  return [...out].sort();
-}
-
-function sourceKeys(v) {
-  const out = new Set();
-  for (const p of v.packages || []) {
-    const s = p.distro || (p.url ? "upstream" : "");
-    if (s) out.add(s === "upstream" || !p.release ? s : `${s}/${p.release}`);
-  }
-  return [...out].sort();
-}
-
-function sourceChips(m, on, section) {
-  const sources = (m.sources || []).filter(s => !section || (s.sections || {})[section]);
-  const href = (key) => (key ? browse({ src: key, section }) : section ? `${base}section/${encodeURIComponent(section)}/` : base);
-  return `<nav class="chips sources" aria-label="Browse by source">${sourceNav(sources, { on, href })}</nav>`;
-}
-
-// everything is the whole repository as a source: the latest version of
-// every page.
-function everything(m) {
-  const sections = {};
-  for (const e of m.sections || []) sections[chapter(e.section)] = (sections[chapter(e.section)] || 0) + e.pages;
-  return { pages: m.pages, sections };
-}
-
-async function sourceHome(nav, src) {
-  const m = await manifest();
-  const s = src ? (m.sources || []).find(x => (x.release ? `${x.distro}/${x.release}` : x.distro) === src) : everything(m);
-  if (!s) return oops(nav, "there's no source called that here 🤔");
-  const keys = Object.keys(s.sections || {}).sort((a, b) => (/\d/.test(a[0]) !== /\d/.test(b[0]) ? (/\d/.test(a[0]) ? -1 : 1) : a < b ? -1 : 1));
-  let cards = "";
-  for (const k of keys) {
-    const [name, emoji] = sectionName(k);
-    cards += `<a class="section-card" href="${esc(src ? browse({ src, section: k }) : listingURL(k, "", 1))}"><span class="emoji">${emoji}</span>` +
-      `<div class="num">${esc(k)}</div><div class="name">${esc(name)}</div><div class="count">${plural(s.sections[k])}</div></a>`;
-  }
-  nav.setTitle(src ? `${sourceLabel(src)} · girlpages 💅` : "the manual, but make it girly · girlpages 💅");
-  const search = src ? "" : `<form class="hero-search" action="${esc(base)}search/" role="search"><input type="search" name="q" placeholder="what are we reading today? 🔎" aria-label="Search manual pages"></form>`;
-  nav.render(`<section class="hero"><h1>✨ girlpages ✨</h1><p>the ${src ? `<strong>${esc(sourceLabel(src))}</strong> ` : ""}manual, but make it girly 💅</p>` +
-    search + `<div class="stats">${plural(s.pages)}${src ? " in " + esc(sourceLabel(src)) : ""}</div></section>` +
-    sourceChips(m, src, "") + `<div class="sections">${cards}</div>`);
-}
-
-const plural = (n) => (n === 1 ? "1 page" : `${n} pages`);
-
-// sourceSection shows a section's listing (or a subsection's), from one
-// source or all; start is the chunk to start at, and pageURL(n), if given,
-// the static listing page the address follows as it scrolls.
-async function sourceSection(nav, src, key, sub, { start = 1, pageURL = null } = {}) {
-  const m = await manifest();
-  const [name, emoji] = sectionName(key);
-  const plan = await chapterPlan(m, key, sub, src);
-  const label = sub || key;
-  nav.setTitle(`${sourceLabel(src)} · ${sectionLabel(label)} · girlpages 💅`);
-  let chips = "";
-  if (plan.subs.size > 1) {
-    const n = (c) => (c == null ? "" : ` (${c})`);
-    chips = `<a class="pill${sub ? "" : " on"}" href="${esc(browse({ src, section: key }))}">all</a>` +
-      [...plan.subs].sort().map(([s, c]) => `<a class="pill${s === sub ? " on" : ""}" href="${esc(browse({ src, section: key, sub: s }))}">${esc(s)}${n(c)}</a>`).join("");
-    chips = `<div class="chips">${chips}</div>`;
-  }
-  // The count, where it's known without fetching everything.
-  let total = plan.total;
-  if (total == null && !sub) {
-    const se = (m.sources || []).find(x => (x.release ? `${x.distro}/${x.release}` : x.distro) === src);
-    total = se && se.sections ? se.sections[chapter(key)] : null;
-  }
-  const chunkHTML = chunkMaker(plan);
-  const chunks = Math.max(1, plan.count);
-  const first = Math.min(Math.max(1, await plan.chunkForPage(start)), chunks);
-  let body = `<nav class="letters" aria-label="Jump to letter">${[...plan.letters].map(([l, c]) => `<a href="#letter-${esc(l)}" data-chunk="${c}">${esc(l)}</a>`).join("")}</nav>` +
-    `<div class="listing"><div class="chunk" data-chunk="${first}">${await chunkHTML(first)}</div></div>`;
-  if (!plan.count || total === 0) body = '<div class="empty">nothing here, bestie 😭</div>';
-  const crumbs = `<a href="${esc(base)}">home</a> › ` + (src ? `<a href="${esc(browse({ src }))}">${esc(sourceLabel(src))}</a> › ` : "");
-  const save = "caches" in globalThis ? '<p class="save"><button type="button" class="pill" id="save"></button></p>' : "";
-  const count = total == null ? "" : plural(total);
-  const heading = isSeries(label) ? `${name} ${emoji}` : `${sectionLabel(label)} · ${name} ${emoji}`;
-  nav.render(`<div class="card"><nav class="crumbs">${crumbs}${esc(sectionLabel(label))}</nav>` +
-    `<div class="pagehead"><h1>${esc(heading)}</h1><p class="sub">${count}${src ? (count ? " in " : "in ") + esc(sourceLabel(src)) : ""}</p>${save}</div>` +
-    sourceChips(m, src, chapter(key)) + chips + body + "</div>");
-  if (!nav.current()) return;
-  const button = app.querySelector("#save");
-  if (button) saveButton(button, cache, sub || key, src);
-  const listing = app.querySelector(".listing");
-  if (listing) {
-    nav.own(await listInto(listing, plan, first, {
-      pageURL, page: start, letters: app.querySelector(".letters"), follow: (u) => nav.replace(u),
-    }));
-  }
-}
-
-// chunkMaker renders a plan's chunks: its items, under letters (or
-// thousands) as they start, a letter carried over from the chunk before
-// being marked as such.
-function chunkMaker(plan) {
-  return async (n) => {
-    const items = await plan.load(n);
-    let out = "", prev = plan.prevLetter(n), open = false;
-    for (const it of items) {
-      const l = letterOf(it.name);
-      if (!open || l !== prev) {
-        if (open) out += "</ul>";
-        out += l === prev ? `<h2 class="letter cont">${esc(l)} <span class="sub">(continued)</span></h2>` : `<h2 class="letter" id="letter-${esc(l)}">${esc(l)}</h2>`;
-        out += '<ul class="pages">';
-        open = true;
-        prev = l;
-      }
-      const name = isSeries(it.sec) ? `${it.sec.toUpperCase()} ${it.name}` : it.name;
-      out += `<li data-name="${esc(it.name)}"><a href="${esc(it.url)}"><span class="name">${esc(name)}</span>${isSeries(it.sec) ? "" : `<span class="sec">(${esc(it.sec)})</span>`}</a>` +
-        `<span class="desc">${esc(it.desc)}</span>${it.girl ? '<span class="done" title="girlified">✨</span>' : ""}</li>`;
+  // route shows the view for nav's address.
+  async function route(nav) {
+    const v = viewOf(new URL(nav.url), base);
+    switch (v && v.kind) {
+      case "home": return sourceHome(nav, "");
+      case "page": return pageView(nav, v.name, v.sec, [], "");
+      case "search": return searchView(nav, v.params);
+      case "section": return sourceSection(nav, "", v.key, v.sub, { start: v.page, pageURL: (n) => listingURL(v.key, v.sub, n) });
     }
-    return open ? out + "</ul>" : out;
-  };
-}
-
-// listInto makes a listing element, holding chunk first, scroll through
-// the rest of a plan: loading chunks as they're neared, and all of them
-// meanwhile (in plan.order: letters' first), following along with the
-// address if pageURL is given (pageURL(n) is a static listing page's, of
-// PAGE pages each; page is the one it's at) by follow(url), which changes
-// the address if it's still the listing's to change, and jumping by its
-// letters.
-async function listInto(listing, plan, first, { pageURL = null, page = 1, letters = null, follow = () => false } = {}) {
-  const chunks = Math.max(1, plan.count);
-  const chunkHTML = chunkMaker(plan);
-  if (chunks < 2 || !("IntersectionObserver" in globalThis)) {
-    for (let n = first + 1; n <= chunks; n++) listing.insertAdjacentHTML("beforeend", `<div class="chunk" data-chunk="${n}">${await chunkHTML(n)}</div>`);
-    return null;
-  }
-  // The static page the entry at the top of the screen is on, if it's
-  // known where in the listing its chunk starts.
-  const topPage = (c) => {
-    const start = plan.startOf(+c.dataset.chunk);
-    const lis = c.querySelectorAll("li[data-name]");
-    if (start == null || !lis.length) return 0;
-    let lo = 0, hi = lis.length - 1;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (lis[mid].getBoundingClientRect().bottom > 80) hi = mid;
-      else lo = mid + 1;
+    const r = await parse(new URL(nav.url).hash, async () => (await manifest()).sources);
+    switch (r.kind) {
+      case "source": return sourceHome(nav, r.src);
+      case "section": return sourceSection(nav, r.src, r.key, r.sub);
+      case "page": return pageView(nav, r.name, r.sec, r.rest, r.src);
     }
-    return Math.floor((start + lo) / PAGE) + 1;
-  };
-  // Where the list starts is where the address already is, even if a
-  // page before it shows above (a static page taken over keeps its first
-  // entry where it was): the address follows once that changes.
-  let from = 0;
-  const list = new VirtualList(listing, {
-    count: chunks, load: chunkHTML,
-    onTop: pageURL ? (c) => {
-      const p = topPage(c);
-      if (p && !from) from = p;
-      if (!p || p === from || p === page) return;
-      if (!follow(pageURL(p))) return;
-      from = -1;
-      page = p;
-    } : undefined,
-  });
-  letters?.addEventListener("click", (e) => {
-    const a = e.target.closest("a[href]");
-    if (!a) return;
-    const l = a.textContent.trim();
-    if (!plan.letters.has(l)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    list.jump(plan.letters.get(l), "letter-" + l);
-  });
-  list.fill();
-  // The rest, a couple at a time, until the list goes or the network does.
-  const todo = plan.order(first);
-  let stop = false;
-  const worker = async () => {
-    while (todo.length && !stop && !list.dead) {
+    return oops(nav, r.kind === "bad" ? "there's nothing here 🤔" : "that link's broken 🤔");
+  }
+
+  // The router shows views (see router.js). Files that change are shown
+  // from the cache while they're refreshed, so if one turns out to be
+  // stale enough to point at something since removed, it's refreshed and
+  // the view shown again.
+  router = new Router({
+    app: el,
+    resolve: async (nav) => {
       try {
-        await plan.load(todo.shift());
+        await route(nav);
       } catch (e) {
-        if (e instanceof TypeError) stop = true;
+        if (e.status === 404 && nav.current() && await cache.revalidate()) return route(nav);
+        throw e;
       }
-    }
-  };
-  (globalThis.requestIdleCallback || ((f) => setTimeout(f, 200)))(() => Promise.all([worker(), worker()]));
-  return list;
-}
-
-// attachListing takes over a static listing page (on its first load) with
-// one made from the repository's section indexes, which then scrolls
-// through the whole section: starting where the static page does, with
-// its first entry kept where it is on the screen.
-export async function attachListing(listing, { key, sub = "", pageURL, letters = null }) {
-  const m = await manifest();
-  const plan = await chapterPlan(m, key, sub, "");
-  const firstLi = listing.querySelector("li[data-name]");
-  if (!firstLi || !plan.count) return null;
-  const name = firstLi.dataset.name;
-  const n = plan.chunkOf(name);
-  const html = await chunkMaker(plan)(n);
-  const y = firstLi.getBoundingClientRect().top;
-  listing.innerHTML = `<div class="chunk" data-chunk="${n}">${html}</div>`;
-  // The static view's address, while history's at it and the app isn't
-  // showing anything over it.
-  let at = location.href;
-  const follow = (u) => {
-    if (!router.followStatic(at, u)) return false;
-    at = location.href;
-    return true;
-  };
-  const list = await listInto(listing, plan, n, { pageURL, page: +listing.dataset.page || 1, letters, follow });
-  // Keep the entry that was first on the page where it was: again once
-  // the entries around it are laid out, as the sizes of those that aren't
-  // yet are guesses (see style.css), until it stays put.
-  for (let i = 0; i < 5; i++) {
-    const again = [...listing.querySelectorAll("li[data-name]")].find(li => li.dataset.name === name);
-    const d = again ? again.getBoundingClientRect().top - y : 0;
-    if (Math.abs(d) < 1) break;
-    scrollBy(0, d);
-    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-  }
-  return list;
-}
-
-// letterOf is the group a name is listed under, as in site.letterOf: its
-// first letter, or a number's thousand.
-function letterOf(n) {
-  if (/^[0-9]+$/.test(n)) return +n < 1000 ? "1–999" : `${Math.floor(+n / 1000) * 1000}s`;
-  return /^[a-z]/i.test(n) ? n[0].toUpperCase() : "#";
-}
-// nameCmp orders names as manpage.NameLess does: numbers by value.
-function nameCmp(a, b) {
-  const num = (x) => /^[0-9]+$/.test(x);
-  if (num(a) && num(b) && a.replace(/^0+/, "").length !== b.replace(/^0+/, "").length) {
-    return a.replace(/^0+/, "").length - b.replace(/^0+/, "").length;
-  }
-  return a < b ? -1 : a > b ? 1 : 0;
-}
-
-// chapterPlan works out a listing of a chapter (key), or of one of its
-// sections (sub), from one source (src) or all, from the chapter's index:
-// its chunks are the index's, {count, load(n) resolving to a chunk's
-// items, letters (letter → the chunk it starts in), total (if it's known),
-// subs (section → count, if known), prevLetter(n), startOf(n) (where in
-// the listing chunk n starts, if it's known), chunkOf(name),
-// chunkForPage(p) (the chunk static listing page p starts in), order(n)
-// (the order to load chunks in, from n)}. Listing just some of the
-// chapter (a section, or a source's pages), chunks hold the ones wanted,
-// which may be none, and where they start is known once all before them
-// are loaded.
-async function chapterPlan(m, key, sub, src) {
-  const e = (m.chapters || []).find(c => c.chapter === chapter(key));
-  const secs = (m.sections || []).filter(x => chapter(x.section) === chapter(key));
-  const subs = new Map(secs.map(x => [x.section, src ? null : x.pages]));
-  if (!e) {
-    return { count: 0, total: 0, subs, letters: new Map(), load: async () => [], prevLetter: () => "", startOf: () => 0,
-      chunkOf: () => 1, chunkForPage: async () => 1, order: () => [] };
-  }
-  const ci = await cache.chapterIndex(e);
-  const shards = chapterShardsOf(ci);
-  const count = 1 + shards.length;
-  const sizes = [ci.count - shards.reduce((n, r) => n + r.count, 0), ...shards.map(r => r.count)];
-  const filtered = !!(sub || src);
-  const keep = (p) => (!sub || p.section === sub) && (!src || p.sources.includes(src));
-  const toItem = (p) => ({
-    name: p.name, sec: p.section, desc: p.description || "", girl: src ? p.girl.includes(src) : p.variants.includes("girl"),
-    url: src ? browse({ page: p.name, sec: p.section, src }) : staticPage(p.name, p.section),
+    },
+    handles: (url) => !!viewOf(new URL(url), base),
+    onError: (nav, e) => oops(nav, e instanceof TypeError ? "you're offline, and this isn't saved yet 📵" : `something broke 💔 ${e.message}`),
+    waiting: '<div class="card waiting"><div class="spinner">💅</div><p>getting it ready, bestie…</p></div>',
   });
-  // For a filtered listing: how many of each chunk's pages are wanted, and
-  // the last one's letter, once it's loaded.
-  const wanted = new Map(), lastLetter = new Map();
-  const load = async (n) => {
-    const items = (await cache.chapterChunk(ci, n)).filter(keep).map(toItem);
-    wanted.set(n, items.length);
-    lastLetter.set(n, items.length ? letterOf(items[items.length - 1].name) : "");
-    return items;
-  };
-  const startOf = (n) => {
-    let at = 0;
-    for (let k = 1; k < n; k++) {
-      if (!filtered) at += sizes[k - 1];
-      else if (wanted.has(k)) at += wanted.get(k);
-      else return null;
-    }
-    return at;
-  };
-  const prevLetter = (n) => {
-    if (!filtered) return n > 1 ? shards[n - 2].prev || "" : "";
-    for (let k = n - 1; k >= 1; k--) {
-      if (!lastLetter.has(k)) return "";
-      if (lastLetter.get(k)) return lastLetter.get(k);
-    }
-    return "";
-  };
-  const letters = new Map(rows(ci.letters).map(l => [l.letter, l.chunk]));
-  let total = filtered ? null : ci.count;
-  if (sub && !src) total = (secs.find(x => x.section === sub) || {}).pages || 0;
+
+  // Links within a view (contents, letters) scroll rather than route.
+  el.addEventListener("click", (e) => {
+    const a = e.target.closest("a[href^='#']");
+    if (!a || a.getAttribute("href").startsWith("#/")) return;
+    e.preventDefault();
+    // (The page's own view, hidden, may have the same ids.)
+    el.querySelector(`[id="${CSS.escape(decodeURIComponent(a.getAttribute("href").slice(1)))}"]`)?.scrollIntoView();
+  });
+
   return {
-    count, total, subs, letters, load, prevLetter, startOf,
-    chunkOf: (name) => {
-      const low = name.toLowerCase();
-      let n = 1;
-      shards.forEach((r, i) => { if (nameCmp(r.first.toLowerCase(), low) <= 0) n = i + 2; });
-      return n;
+    base, router, listings,
+    // prefetch fetches what a view will need, so following a link to it
+    // is quick.
+    async prefetch(href) {
+      const v = viewOf(new URL(href, location.href), base);
+      if (!v) return;
+      if (v.kind === "page") return loadPage(v.name, v.sec, [], "");
+      if (v.kind !== "route") return;
+      const r = await parse(v.hash, async () => (await manifest()).sources);
+      if (r.kind === "page") await loadPage(r.name, r.sec, r.rest, r.src);
     },
-    chunkForPage: async (p) => {
-      const at = (p - 1) * PAGE;
-      for (let n = 1, from = 0; n <= count; n++) {
-        const size = filtered ? (wanted.has(n) ? wanted.get(n) : (await load(n)).length) : sizes[n - 1];
-        if (at < from + size) return n;
-        from += size;
-      }
-      return 1;
-    },
-    order: (from) => [...new Set([from, ...letters.values(), ...Array.from({ length: count }, (_, i) => i + 1)])],
+    handles: (href) => !!viewOf(new URL(href, location.href), base),
   };
 }
 
-// PAGE is how many pages each of the static listing's pages shows.
-const PAGE = 200;
-
-// LAYOUT is how series of documents are laid out, where it isn't man's: as
-// rfc.Indent and rfc.Width.
-const LAYOUT = { rfc: { indent: 3, width: 72, titleBlock: true } };
-
-// loadPage fetches what a page view needs; rest is what follows its name
-// in the route: [version] [variant] [mono] [versions]. It resolves to the
-// view's data, or {error} to show instead.
-async function loadPage(name, sec, rest, src) {
-  let l;
-  try {
-    l = await listing(name, sec);
-  } catch (e) {
-    if (e instanceof TypeError) return { error: `you're offline, and ${name}(${sec}) isn't saved 📵` };
-    if (e.status !== 404) throw e;
-    return { error: `there's no ${name}(${sec}) here 😭` };
-  }
-  rest = [...rest];
-  const at = rest[rest.length - 1] === "versions" ? rest.pop() : "";
-  const mono = rest[rest.length - 1] === "mono" ? !!rest.pop() : false;
-  // Versions by preference: the latest, then this source's, then newest added.
-  const fallback = src && l.sources && l.sources[src] || l.current;
-  const versions = [...l.versions].sort((a, b) => (a.source === l.current) !== (b.source === l.current) ? (a.source === l.current ? -1 : 1)
-    : (a.source === fallback) !== (b.source === fallback) ? (a.source === fallback ? -1 : 1) : (b.added || "").localeCompare(a.added || ""));
-  const findVersion = (tok) => versions.find(x => x.version === tok || (tok.length >= 8 && /^[0-9a-f]+$/.test(tok) && x.source.startsWith(tok)));
-  // slug is how a version is named in a route: not at all if it's the one
-  // shown by default, else by its upstream version if that's unique.
-  const slug = (x) => x.source === fallback ? "" :
-    x.version && l.versions.filter(y => y.version === x.version).length === 1 ? x.version : x.source.slice(0, 12);
-  let ver = null, which = "";
-  if (rest.length >= 2) [ver, which] = [findVersion(rest[0]), rest[1]];
-  else if (rest.length === 1) {
-    ver = findVersion(rest[0]);
-    if (!ver) which = rest[0];
-  }
-  // One word that's neither a version nor a variant is a version that isn't here.
-  const isVariant = (k) => l.versions.some(x => x.variants && x.variants[k]);
-  if (!ver && (rest.length >= 2 || (rest.length === 1 && !isVariant(rest[0])))) {
-    return { error: `there's no version ${rest[0]} of ${name}(${sec}) here 🤔` };
-  }
-  ver = ver || versions.find(x => x.source === fallback) || versions[0];
-  if (!ver) return { error: "that page has no versions 🤔" };
-  const has = (k) => ver.variants && ver.variants[k];
-  const variants = Object.keys(ver.variants || {}).filter(k => /^[a-z][a-z0-9-]{0,31}$/.test(k)).sort(variantOrder);
-  if (!which || !has(which)) which = variants[0] || "man";
-  const doc = await variant(ver.source, which, ver.variants[which].sha256);
-  return { l, ver, which, variants, versions, slug, doc, at, mono };
+// The app is made the first time it's wanted, in the page it's in.
+let theApp = null;
+function app() {
+  if (!theApp) theApp = createApp(document.getElementById("app"));
+  return theApp;
 }
 
-// pageView shows a page.
-async function pageView(nav, name, sec, rest, src) {
-  const d = await loadPage(name, sec, rest, src);
-  if (d.error) return oops(nav, d.error);
-  const { l, ver, which, variants, versions, slug, doc, at, mono } = d;
-  const title = ver.title || `${name.toUpperCase()}(${sec})`;
-  const latest = ver.source === l.current;
-  const suffix = which === "girl" ? "" : which === "man" ? " · original" : " · " + which;
-  nav.setTitle(`${name}(${sec})${ver.description ? " — " + ver.description : ""}${suffix} · girlpages 💅`);
-  const here = (extra) => browse({ page: name, sec, version: slug(ver), src, ...extra });
-
-  let body = "", toc = [];
-  const link = src ? (n, s) => browse({ page: n, sec: s, src }) : (n, s) => staticPage(n, s);
-  if (doc.syntax === "girlpages-markup") {
-    ({ html: body, toc } = renderHTML(variantText(doc), { link }));
-    body = `<div class="content">${body}</div>`;
-  } else if (!mono) {
-    ({ html: body, toc } = renderOriginalHTML(doc, { link, ...(LAYOUT[sec] || {}) }));
-    body = `<div class="content reflowed">${body}</div>`;
-  } else {
-    body = '<div class="original">' + (doc.header ? `<pre class="manhead">${esc(doc.header)}</pre>` : "") +
-      doc.sections.map(s => (s.heading ? `<h2>${esc(s.heading)}</h2>` : "") + `<pre>${esc(s.body)}</pre>`).join("\n") +
-      (doc.footer ? `<pre class="manhead">${esc(doc.footer)}</pre>` : "") + "</div>";
-  }
-  let meta = "", made = "";
-  if (doc.generator) {
-    const g = doc.generator, when = g.generated && !g.generated.startsWith("0001") ? g.generated.slice(0, 10) : "";
-    made = `<li>💖 ${which === "girl" ? "girlified" : "rewritten"} by ${esc(g.model || g.backend || "a model")}${when ? " on " + esc(when) : ""}</li>`;
-  }
-  if (variants.length > 1) {
-    meta += variants.map(k => k === which ? `<span class="pill on">${esc(variantLabel(k))}</span>`
-      : `<a class="pill" href="${esc(here({ variant: k === variants[0] ? "" : k }))}">${esc(variantLabel(k))}</a>`).join("");
-  }
-  if (doc.syntax !== "girlpages-markup") {
-    const href = here({ variant: which === variants[0] ? "" : which, mono: !mono });
-    meta += `<a class="pill${mono ? " on" : ""}" href="${esc(href)}" title="as man prints it">⌨️ monospace</a>`;
-  }
-  const keys = sourceKeys(ver);
-  const when = isSeries(sec) && ver.packages && ver.packages[0] ? publishedLabel(ver.packages[0].version) : "";
-  // Switching between versions, as on the static page: this one first,
-  // then the latest, then the newest added.
-  let switcher = ver.version ? `version ${esc(ver.version)}, ` : "";
-  if (versions.length > 1) {
-    const items = [ver, ...versions.filter(x => x !== ver)].map(x => {
-      const label = (x.version ? x.version + " · " : "") + (sourceLabels(x).join(", ") || "added " + (x.added || "").slice(0, 10)) +
-        (x.source === l.current ? " (latest)" : "");
-      return x === ver ? `<li><strong>${esc(label)}</strong></li>`
-        : `<li><a href="${esc(x.source === l.current && !src ? staticPage(name, sec) : browse({ page: name, sec, version: slug(x), src }))}">${esc(label)}</a></li>`;
-    }).join("");
-    switcher = `<details class="versions" id="versions"><summary>${ver.version ? "version " + esc(ver.version) : "this version"} <span class="n">· ${versions.length} versions</span></summary><ul>${items}</ul></details>, `;
-  }
-  const inLine = keys.length ? `<div class="meta in">${isSeries(sec) ? `📅 ${when ? "published " + esc(when) + ", " : ""}from ` : `📦 ${switcher}in `}` +
-    keys.map(k => `<a href="${esc(browse({ page: name, sec, src: k }))}">${esc(sourceLabel(k))}</a>`).join(", ") + "</div>" : "";
-  let notice = "";
-  if (!latest) notice += `<div class="notice">🕰️ this isn't the latest version of ${esc(name)}(${esc(sec)}). <a href="${esc(staticPage(name, sec))}">here's the latest</a>.</div>`;
-  if (which === "man" && variants.length === 1) notice += `<div class="notice">💤 she hasn't gotten to this version yet, so here's the original.</div>`;
-  const crumbs = `<nav class="crumbs"><a href="${esc(base)}">home</a> › ` + (src
-    ? `<a href="${esc(browse({ src }))}">${esc(sourceLabel(src))}</a> › <a href="${esc(browse({ src, section: chapter(sec), sub: chapter(sec) !== sec ? sec : "" }))}">${esc(sectionLabel(sec))}</a>`
-    : `<a href="${esc(listingURL(chapter(sec), chapter(sec) !== sec ? sec : "", 1))}">${esc(sectionLabel(sec))}</a>`) + ` › ${esc(title)}</nav>`;
-  const tocHTML = toc.length ? `<nav class="toc card" aria-label="Contents"><h2>✨ contents</h2><ul>` +
-    toc.map(t => `<li${t.level === 2 ? ' class="sub"' : ""}><a href="#${esc(t.id)}">${esc(t.text)}</a></li>`).join("") + "</ul></nav>" : "";
-  const lede = isSeries(sec) && ver.description ? `<p class="lede">${esc(ver.description)}</p>` : "";
-  // Where it's from, as on the static page: its packages, and what made it.
-  const from = (ver.packages || []).map(p => `<li>${esc(packageLabel(p))}</li>`).join("") + made;
-  const provenance = from ? `<div class="provenance"><details><summary>📦 where this page comes from</summary><ul>${from}</ul></details></div>` : "";
-  nav.render(`<div class="layout"><article class="card manpage">${crumbs}<h1>${esc(title)}${esc(suffix)}</h1>${lede}` +
-    `${inLine}${meta ? `<div class="meta">${meta}</div>` : ""}${notice}${body}${provenance}</article>${tocHTML}</div>`);
-  if (at) {
-    nav.scrollTo(() => {
-      const d = app.querySelector(`[id="${at}"]`);
-      if (d) {
-        d.open = true;
-        d.scrollIntoView({ block: "center" });
-      }
-    });
-  }
+// moved reports whether this is /browse/ (from earlier versions), and if
+// so, goes where it went.
+function moved() {
+  const base = document.getElementById("app").dataset.base;
+  if (location.pathname !== base + "browse/") return false;
+  location.replace(location.search ? legacyRoute(new URLSearchParams(location.search), base) : base + location.hash);
+  return true;
 }
-
-// searchView is the search page, in the app.
-async function searchView(nav, params) {
-  nav.setTitle("search · girlpages 💅");
-  const save = "caches" in globalThis ? '<p class="save"><button type="button" class="pill" data-save-search="words"></button>' +
-    '<button type="button" class="pill" data-save-search="typos"></button><a class="pill" id="search-saved" hidden></a></p>' : "";
-  nav.render(`<div class="card" id="search" data-repo="${esc(app.dataset.repo)}" data-base="${esc(base)}"><div class="crumbs"><a href="${esc(base)}">home</a> › search</div>` +
-    `<div class="pagehead"><h1>🔎 search</h1><p class="sub" id="search-status">type something up there, bestie</p>${save}</div>` +
-    '<nav class="chips sources" id="search-sources" aria-label="Search within a source"></nav><ul class="pages" id="search-results"></ul></div>');
-  if (!nav.current()) return;
-  for (const b of app.querySelectorAll("button[data-save-search]")) saveButton(b, cache, "search:" + b.dataset.saveSearch);
-  nav.reveal();
-  await searchPage(app.querySelector("#search"), params, {
-    current: () => nav.current(),
-    // Straight to a page a query names, in place of the search.
-    go: (u) => nav.redirect(u),
-  });
-}
-
-function oops(nav, msg) {
-  nav.render(`<div class="card waiting"><div class="spinner">😭</div><h1>${esc(msg)}</h1><p><a href="${esc(base)}">home</a> · <a href="${esc(base)}search/">search</a></p></div>`);
-}
-
-const isRoute = (h) => /^#\/./.test(h);
-
-// legacyRoute turns a /browse/?… query from earlier versions into a route.
-function legacyRoute(q) {
-  const src = q.get("src") || "";
-  if (q.get("page") && q.get("sec")) {
-    return browse({ page: q.get("page"), sec: q.get("sec"), src, version: (q.get("v") || "").slice(0, 12),
-      variant: q.get("variant") || (q.get("mono") ? "man" : ""), mono: q.get("mono") === "1" });
-  }
-  if (q.get("section")) return browse({ src, section: q.get("section"), sub: q.get("sub") || "" });
-  return browse({ src });
-}
-
-// parse reads a route, resolving to what it shows.
-async function parse(h) {
-  let segs;
-  try {
-    segs = h.slice(2).split("/").filter(x => x !== "").map(decodeURIComponent);
-  } catch {
-    return { kind: "bad" };
-  }
-  let src = "";
-  // Only a word that isn't a section or "section" can start a source.
-  if (segs.length && segs[0] !== "section" && !/^[0-9]/.test(segs[0])) {
-    const sources = (await manifest()).sources || [];
-    if (sources.some(s => s.distro === segs[0])) {
-      src = segs.shift();
-      if (segs.length && sources.some(s => s.distro === src && s.release === segs[0])) src += "/" + segs.shift();
-    }
-  }
-  if (!segs.length) return { kind: "source", src };
-  if (segs[0] === "section") return segs[1] ? { kind: "section", src, key: segs[1], sub: segs[2] || "" } : { kind: "source", src };
-  if (segs.length < 2) return { kind: "bad" };
-  return { kind: "page", src, sec: segs[0], name: segs[1], rest: segs.slice(2) };
-}
-
-// viewOf is the view an address shows in the app: a route, or one of the
-// static site's pages (which, once the app is running, it shows itself).
-function viewOf(u) {
-  if (u.origin !== location.origin || !u.pathname.startsWith(base)) return null;
-  if (u.pathname === base && isRoute(u.hash)) return { kind: "route", hash: u.hash };
-  if (u.pathname === base) return { kind: "home" };
-  let parts;
-  try {
-    parts = u.pathname.slice(base.length).split("/").filter(Boolean).map(decodeURIComponent).map(unsegment);
-  } catch {
-    return null;
-  }
-  if (parts[0] === "man" && parts.length === 3) return { kind: "page", sec: parts[1], name: parts[2] };
-  if (isSeries(parts[0]) && !RESERVED.has(parts[0])) {
-    // A series: rfc/9110/, or its listing, rfc/ or rfc/page/2/.
-    if (parts.length === 2 && parts[1] !== "page") return { kind: "page", sec: parts[0], name: parts[1] };
-    if (parts.length === 1) return { kind: "section", key: parts[0], sub: "", page: 1 };
-    if (parts.length === 3 && parts[1] === "page") return { kind: "section", key: parts[0], sub: "", page: +parts[2] || 1 };
-  }
-  if (parts[0] === "search" && parts.length === 1) return { kind: "search", params: u.searchParams };
-  if (parts[0] === "section") {
-    let page = 1;
-    if (parts.length >= 4 && parts[parts.length - 2] === "page") page = +parts.splice(-2)[1] || 1;
-    if (parts.length === 2 || parts.length === 3) return { kind: "section", key: parts[1], sub: parts[2] || "", page };
-  }
-  return null;
-}
-
-// unsegment undoes site.SegmentName (names starting with a dot are escaped).
-const unsegment = (s) => (s.startsWith("%") ? decodeURIComponent(s) : s);
-
-// packageLabel describes a package, as repo.Package.String does.
-function packageLabel(p) {
-  const parts = [];
-  if (p.distro) parts.push(p.release ? `${p.distro} ${p.release}` : p.distro);
-  if (p.name) parts.push(p.version ? `${p.name} ${p.version}` : p.name);
-  return parts.join(": ") + (p.url ? ` from ${p.url}` : "");
-}
-
-// publishedLabel is a "2022-06" date as "June 2022", as site.published.
-function publishedLabel(d) {
-  const m = /^(\d{4})-(\d{2})$/.exec(d || "");
-  if (!m) return d || "";
-  const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-  return `${months[+m[2] - 1] || m[2]} ${m[1]}`;
-}
-
-// listingURL is a static listing's page n.
-const listingURL = (key, sub, n) => listingAt(base, key, sub, n);
-
-// sectionLabel names a section in breadcrumbs: "section 3ssl", or a
-// series' name ("RFCs").
-const sectionLabel = (sec) => (isSeries(sec) ? sectionName(sec)[0] : `section ${sec}`);
-
-// Top-level directories of the site that aren't series.
-const RESERVED = new Set(["man", "section", "search", "browse", "offline", "static", "repo", "src"]);
-
-// route shows the view for nav's address.
-async function route(nav) {
-  const v = viewOf(new URL(nav.url));
-  switch (v && v.kind) {
-    case "home": return sourceHome(nav, "");
-    case "page": return pageView(nav, v.name, v.sec, [], "");
-    case "search": return searchView(nav, v.params);
-    case "section": return sourceSection(nav, "", v.key, v.sub, { start: v.page, pageURL: (n) => listingURL(v.key, v.sub, n) });
-  }
-  const r = await parse(new URL(nav.url).hash);
-  switch (r.kind) {
-    case "source": return sourceHome(nav, r.src);
-    case "section": return sourceSection(nav, r.src, r.key, r.sub);
-    case "page": return pageView(nav, r.name, r.sec, r.rest, r.src);
-  }
-  return oops(nav, r.kind === "bad" ? "there's nothing here 🤔" : "that link's broken 🤔");
-}
-
-// The router shows views (see router.js). Files that change are shown
-// from the cache while they're refreshed, so if one turns out to be stale
-// enough to point at something since removed, it's refreshed and the view
-// shown again.
-const router = new Router({
-  app,
-  resolve: async (nav) => {
-    try {
-      await route(nav);
-    } catch (e) {
-      if (e.status === 404 && nav.current() && await cache.revalidate()) return route(nav);
-      throw e;
-    }
-  },
-  handles: (url) => !!viewOf(new URL(url)),
-  onError: (nav, e) => oops(nav, e instanceof TypeError ? "you're offline, and this isn't saved yet 📵" : `something broke 💔 ${e.message}`),
-  waiting: '<div class="card waiting"><div class="spinner">💅</div><p>getting it ready, bestie…</p></div>',
-});
-
-let started = false;
 
 // start shows the address, and from then on follows it.
 export function start() {
-  return setUp() && router.start();
+  return moved() || app().router.start();
 }
 
 // navigate goes to an address (a link followed), in a new history entry.
 export function navigate(href) {
-  return setUp() && router.navigate(href);
+  return moved() || app().router.navigate(href);
 }
 
-// setUp readies the app, once, reporting false if it's leaving instead
-// (for where /browse/ has moved to).
-function setUp() {
-  if (location.pathname === base + "browse/") {
-    location.replace(location.search ? legacyRoute(new URLSearchParams(location.search)) : base + location.hash);
-    return false;
-  }
-  if (!started) {
-    started = true;
-    // Links within a view (contents, letters) scroll rather than route.
-    app.addEventListener("click", (e) => {
-      const a = e.target.closest("a[href^='#']");
-      if (!a || a.getAttribute("href").startsWith("#/")) return;
-      e.preventDefault();
-      // (The page's own view, hidden, may have the same ids.)
-      app.querySelector(`[id="${CSS.escape(decodeURIComponent(a.getAttribute("href").slice(1)))}"]`)?.scrollIntoView();
-    });
-  }
-  return true;
-}
-
-// prefetch fetches what a view will need, so following a link to it is
-// quick.
-export async function prefetch(href) {
-  const v = viewOf(new URL(href, location.href));
-  if (!v) return;
-  if (v.kind === "page") return loadPage(v.name, v.sec, [], "");
-  if (v.kind !== "route") return;
-  const r = await parse(v.hash);
-  if (r.kind === "page") await loadPage(r.name, r.sec, r.rest, r.src);
-}
+// prefetch fetches what showing an address will need.
+export const prefetch = (href) => app().prefetch(href);
 
 // handles reports whether the app shows an address itself.
-export const handles = (href) => !!viewOf(new URL(href, location.href));
+export const handles = (href) => app().handles(href);
+
+// attachListing takes over a static listing page (see listing.js).
+export const attachListing = (listing, opts) => app().listings.attachListing(listing, opts);

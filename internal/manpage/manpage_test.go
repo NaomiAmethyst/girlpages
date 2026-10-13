@@ -105,3 +105,26 @@ func TestEnumerate(t *testing.T) {
 		t.Errorf("section 3 gave %d pages", len(pages))
 	}
 }
+
+// NameLess is an order: numbers by value, but never round in circles.
+func TestNameLessOrder(t *testing.T) {
+	names := []string{"10", "1z", "9", "0009", "09", "0desktop", "100", "a", "A", "zz", "", "0", "00", "1999", "2to3", "[", "émile"}
+	for _, a := range names {
+		if NameLess(a, a) {
+			t.Errorf("%q < itself", a)
+		}
+		for _, b := range names {
+			if a != b && NameLess(a, b) == NameLess(b, a) {
+				t.Errorf("%q and %q aren't ordered", a, b)
+			}
+			for _, c := range names {
+				if NameLess(a, b) && NameLess(b, c) && !NameLess(a, c) {
+					t.Errorf("%q < %q < %q, but not %q < %q", a, b, c, a, c)
+				}
+			}
+		}
+	}
+	if !NameLess("9", "10") || !NameLess("9", "0009") || !NameLess("10", "1z") {
+		t.Error("numbers should go by value, before the rest")
+	}
+}

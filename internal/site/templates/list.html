@@ -22,5 +22,5 @@
 </div>
 {{if .Pager}}<nav class="pager" aria-label="Pages">{{if .Prev}}<a class="pill" rel="prev" href="{{.Prev}}">‹ prev</a>{{end}}{{range .Pager}}{{if .On}}<span class="pill on" aria-current="page">{{.Label}}</span>{{else if .URL}}<a class="pill" href="{{.URL}}">{{.Label}}</a>{{else}}<span class="gap">{{.Label}}</span>{{end}}{{end}}{{if .Next}}<a class="pill" rel="next" href="{{.Next}}">next ›</a>{{end}}</nav>{{end}}
 </div>
-{{if .Pager}}<script type="module" src="{{.Base}}static/listing.js"></script>{{end}}
+{{if .Pager}}<script type="module" src="{{.Base}}static/takeover.js"></script>{{end}}
 {{end}}

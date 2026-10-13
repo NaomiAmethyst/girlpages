@@ -287,11 +287,24 @@ func Letter(name string) string {
 	return "#"
 }
 
-// NameLess orders page names: numbers (as series of documents have) by
-// value, anything else as text.
+// NameLess orders page names: numbers (as series of documents have) first,
+// by value (fewer leading zeros first), then anything else as text.
 func NameLess(a, b string) bool {
-	if isNumber(a) && isNumber(b) && len(a) != len(b) {
-		return len(strings.TrimLeft(a, "0")) < len(strings.TrimLeft(b, "0"))
+	na, nb := isNumber(a), isNumber(b)
+	switch {
+	case na != nb:
+		// Numbers first, so it's an order (by value or as text alone, 10
+		// < 1z < 9 < 10 goes round).
+		return na
+	case na:
+		ta, tb := strings.TrimLeft(a, "0"), strings.TrimLeft(b, "0")
+		if len(ta) != len(tb) {
+			return len(ta) < len(tb)
+		}
+		if ta != tb {
+			return ta < tb
+		}
+		return len(a) < len(b)
 	}
 	return a < b
 }

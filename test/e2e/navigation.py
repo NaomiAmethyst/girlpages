@@ -117,9 +117,16 @@ async def main():
         async with async_playwright() as p:
             browser = await p.chromium.launch()
 
+            errors = []
+
+            def watch(page):
+                page.on("pageerror", lambda e: errors.append(f"{page.url}: {e}"))
+                page.on("console", lambda m: m.type == "error" and errors.append(f"{page.url}: console: {m.text}"))
+
             async def fresh(url, width=390):
                 ctx = await browser.new_context(viewport={"width": width, "height": 800}, is_mobile=width < 600, has_touch=width < 600)
                 page = await ctx.new_page()
+                watch(page)
                 await page.goto(base + url, wait_until="networkidle")
                 await page.wait_for_timeout(1500)  # the app loads in idle time
                 return ctx, page
@@ -217,6 +224,7 @@ async def main():
             print("a static listing page taken over keeps its first entry where it was")
             ctx = await browser.new_context(viewport={"width": 1280, "height": 900})
             page = await ctx.new_page()
+            watch(page)
             hold = asyncio.Event()
 
             async def held(route):
@@ -258,6 +266,11 @@ async def main():
             check(path(page) == "/man/8/admin003/" and s[0] == "static", f"back past the search: {path(page)} {s}")
             await ctx.close()
 
+            print("no script errors")
+            for e in errors:
+                check(False, e)
+            if not errors:
+                check(True, "none in any page")
             await browser.close()
     finally:
         if server:

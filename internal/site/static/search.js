@@ -5,9 +5,11 @@
 // browser, fetching only the shards a query needs. This is the same
 // algorithm as Searcher in internal/repo/search.go; keep them in step.
 
-import { repoCache, escapeName, segmentName, browseURL, pageURL, shardsOf, rows, chapter, sourceNav } from "./girlpages.js";
-
-export { escapeName, segmentName };
+import { repoCache } from "./cache.js";
+import { shardsOf, rows, namePath } from "./format.js";
+import { browseURL, pageURL } from "./urls.js";
+import { chapter } from "./manual.js";
+import { sourceNav } from "./widgets.js";
 
 const PREFIX_WEIGHT = 0.5;
 const PREFIX_CAP = 100; // as in search.go
@@ -339,7 +341,7 @@ export async function directPage(query, searcher) {
   if (chapter(sec) === sec) tries.push(...secs.filter(x => x !== sec && chapter(x) === sec));
   for (const x of tries) {
     try {
-      await searcher.cache.get(`page/name-${encodeURIComponent(escapeName(x))}/${encodeURIComponent(escapeName(name))}.json`);
+      await searcher.cache.get(namePath(name, x));
       return { name, sec: x };
     } catch (e) {
       if (e.status !== 404) return null;
