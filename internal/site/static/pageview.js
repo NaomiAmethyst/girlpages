@@ -6,6 +6,7 @@
 import { html, raw, HTML } from "./html.js";
 import { renderHTML, renderOriginalHTML } from "./render.js";
 import { errorKind } from "./cache.js";
+import { Drawer } from "./draw.js";
 import { chapter, isSeries, sectionLabel, sourceLabel } from "./manual.js";
 
 // createPageView makes the page view for an app: ctx has its element (el),
@@ -202,8 +203,10 @@ export function createPageView({ el: app, base, listing, variant, browse, static
     ].filter(Boolean);
     const provenance = from.length > 0 && html`<div class="provenance"><details><summary>📦 where this page comes from</summary><ul>${from}</ul></details></div>`;
 
-    nav.render(html`<div class="layout"><article class="card manpage">${crumbs}<h1>${title}${suffix}</h1>${lede}${inLine}${
-      pills.length > 0 && html`<div class="meta">${pills}</div>`}${notices}${body}${provenance}</article>${contents}</div>`);
+    if (!nav.render(html`<div class="layout"><article class="card manpage">${crumbs}<h1>${title}${suffix}</h1>${lede}${inLine}${
+      pills.length > 0 && html`<div class="meta">${pills}</div>`}${notices}${body}${provenance}</article>${contents}</div>`)) return;
+    // Drawn ahead of scrolling (see draw.js).
+    nav.own(new Drawer()).watch(app.querySelectorAll(".content > *, .original > *"));
     if (at) {
       nav.scrollTo(() => {
         const d = app.querySelector(`[id="${at}"]`);

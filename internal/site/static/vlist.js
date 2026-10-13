@@ -3,15 +3,18 @@
 //
 // A long list shown a chunk at a time: chunks load as they come near the
 // screen, above or below, and chunks far from it are emptied (keeping their
-// height, so nothing moves) and filled again when they come back. The
+// height, so nothing moves) and filled again when they come back. Their
+// blocks of entries (.block) are drawn well before they're scrolled to (see
+// draw.js). The
 // static listings use it to scroll through all their pages, and the browse
 // app for its own listings.
 
 import { errorKind } from "./cache.js";
+import { Drawer } from "./draw.js";
 
 // How near the screen a chunk loads, and how far before it's emptied.
-const NEAR = 1500;
-const FAR = 4000;
+const NEAR = 3000;
+const FAR = 6000;
 
 export class VirtualList {
   // container holds div.chunk[data-chunk] elements, numbered from 1, of
@@ -45,9 +48,13 @@ export class VirtualList {
     this.near.observe(this.top);
     this.near.observe(this.bottom);
     this.far = new IntersectionObserver((entries) => {
-      for (const e of entries) e.isIntersecting ? this.restore(e.target) : this.empty(e.target);
+      for (const e of entries) e.isIntersecting ? this.restore(/** @type {HTMLElement} */ (e.target)) : this.empty(/** @type {HTMLElement} */ (e.target));
     }, { rootMargin: `${FAR}px 0px` });
-    for (const c of this.chunks()) this.far.observe(c);
+    this.drawer = new Drawer();
+    for (const c of this.chunks()) {
+      this.far.observe(c);
+      this.watch(c);
+    }
     // Chunks above load once the list is scrolled up (or asked for, as
     // there's no scrolling up from the top), so arriving at a page shows it
     // as it is.
@@ -81,6 +88,7 @@ export class VirtualList {
     this.dead = true;
     this.near.disconnect();
     this.far.disconnect();
+    this.drawer.destroy();
     removeEventListener("scroll", this.onScroll);
   }
 
@@ -109,7 +117,13 @@ export class VirtualList {
     c.dataset.chunk = n;
     c.innerHTML = html;
     this.far.observe(c);
+    this.watch(c);
     return c;
+  }
+
+  // watch has a chunk's blocks drawn when they're near the screen.
+  watch(c) {
+    this.drawer.watch(c.querySelectorAll(".block"));
   }
 
   // fill loads chunks while an end of the list is near the screen.
@@ -153,6 +167,7 @@ export class VirtualList {
   empty(c) {
     if (c.dataset.empty) return;
     c.style.height = `${c.offsetHeight}px`;
+    this.drawer.unwatch(c.querySelectorAll(".block"));
     c.replaceChildren();
     c.dataset.empty = "1";
   }
@@ -162,6 +177,7 @@ export class VirtualList {
     c.innerHTML = this.html.get(Number(c.dataset.chunk)) || "";
     c.style.height = "";
     delete c.dataset.empty;
+    this.watch(c);
   }
 
   // track tells onChunk and onTop which chunk is at the top of the screen.

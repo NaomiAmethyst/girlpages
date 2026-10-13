@@ -10,6 +10,7 @@
 import { repoCache, idle } from "./cache.js";
 import { saveButton, menus } from "./widgets.js";
 import { isRoute } from "./routes.js";
+import { Drawer } from "./draw.js";
 
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Naomi Persephone Amethyst <naomi@amethyst.name>
@@ -110,6 +111,8 @@ function boot() {
   }
   forgetLocalStorage();
   menus();
+  // A long page is drawn ahead of scrolling (see draw.js).
+  new Drawer().watch(document.querySelectorAll(".content > *, .original > *"));
   if (!repo) return;
   startApp(base);
   const cache = repoCache(repo);

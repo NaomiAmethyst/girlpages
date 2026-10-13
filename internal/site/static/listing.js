@@ -13,6 +13,9 @@ import { chapter, isSeries, letterOf, nameCmp } from "./manual.js";
 // PAGE is how many pages each of the static listing's pages shows.
 export const PAGE = 200;
 
+// BLOCK is how many entries are drawn together, as they near the screen.
+const BLOCK = 40;
+
 // createListings makes the listing functions for an app: ctx has the
 // repository cache, manifest(), browse(params) and staticPage(name, sec)
 // for links, and the router.
@@ -147,10 +150,20 @@ export function chunkMaker(plan) {
       if (!runs.length || runs[runs.length - 1].letter !== l) runs.push({ letter: l, items: [] });
       runs[runs.length - 1].items.push(it);
     }
+    // Each run's entries in blocks, drawn as they near the screen (see
+    // draw.js), sized by how many entries they have till then.
+    const blocks = (items) => {
+      const out = [];
+      for (let i = 0; i < items.length; i += BLOCK) {
+        const part = items.slice(i, i + BLOCK);
+        out.push(html`<ul class="pages block" style="--rows: ${part.length}">${part.map(entry)}</ul>`);
+      }
+      return out;
+    };
     const prev = plan.prevLetter(n);
     return html`${runs.map(({ letter, items }, i) => html`${i === 0 && letter === prev
       ? html`<h2 class="letter cont">${letter} <span class="sub">(continued)</span></h2>`
-      : html`<h2 class="letter" id="letter-${letter}">${letter}</h2>`}<ul class="pages">${items.map(entry)}</ul>`)}`;
+      : html`<h2 class="letter" id="letter-${letter}">${letter}</h2>`}${blocks(items)}`)}`;
   };
 }
 
@@ -200,8 +213,8 @@ export class Listing {
   // start sets it going.
   async start() {
     const chunks = Math.max(1, this.plan.count);
-    if (chunks < 2 || !("IntersectionObserver" in globalThis)) {
-      // All of it at once: short, or there's no watching the screen.
+    if (!("IntersectionObserver" in globalThis)) {
+      // All of it at once: there's no watching the screen.
       for (let n = this.first + 1; n <= chunks && !this.dead; n++) {
         this.el.insertAdjacentHTML("beforeend", String(html`<div class="chunk" data-chunk="${n}">${await this.chunkHTML(n)}</div>`));
       }

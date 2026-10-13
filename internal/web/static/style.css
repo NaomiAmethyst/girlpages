@@ -217,9 +217,11 @@ h1, h2, h3, h4 { font-family: ui-rounded, "Nunito", "Quicksand", system-ui, sans
 ul.pages { list-style: none; margin: 0; padding: 0; }
 ul.pages li { padding: 0.35rem 0.6rem; border-radius: 0.6rem; display: flex; gap: 0.6rem; align-items: baseline; }
 ul.pages li:hover { background: var(--accent-soft); }
-/* Long listings: entries off the screen aren't laid out until they're
-   near it (sizes estimated until then), so a big chunk shows quickly. */
-.chunk ul.pages li { content-visibility: auto; contain-intrinsic-size: auto 2.3rem; }
+/* Long listings: blocks of entries off the screen aren't laid out or
+   painted, sized by how many entries they have until they've been drawn
+   once; those within a few screens are (.near: see static/draw.js), so
+   scrolling fast doesn't outrun the drawing. */
+.chunk ul.block { content-visibility: auto; contain-intrinsic-size: auto calc(var(--rows) * 2.3rem); }
 ul.pages .name { font-weight: 700; white-space: nowrap; }
 ul.pages .sec { color: var(--muted); font-weight: 400; }
 ul.pages .desc { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
@@ -320,7 +322,7 @@ ul.pages .done { flex: none; }
   .content code { font-size: 0.85em; }
   .content ul, .content ol { padding-left: 1.2rem; }
   ul.pages li { flex-wrap: wrap; gap: 0 0.5rem; }
-  .chunk ul.pages li { contain-intrinsic-size: auto 3.7rem; }
+  .chunk ul.block { contain-intrinsic-size: auto calc(var(--rows) * 3.7rem); }
   ul.pages .desc { flex-basis: 100%; white-space: normal; font-size: 0.9rem; }
 }
 
@@ -400,8 +402,10 @@ button.pill:disabled { cursor: progress; opacity: 0.8; }
 .pager[hidden], .pill[hidden] { display: none; }
 .listing .earlier { margin: 0.5rem auto; }
 
-/* Long pages: only what's near the screen is laid out and painted. */
+/* Long pages: only what's near the screen is laid out and painted, and
+   what's within a few screens is (.near), as listings' blocks are. */
 .content > *, .original > * { content-visibility: auto; contain-intrinsic-size: auto 3em; }
+.chunk ul.block.near, .content > .near, .original > .near { content-visibility: visible; }
 
 /* a document's title, under its number */
 .manpage .lede { font-size: 1.15rem; font-weight: 600; margin: -0.4rem 0 0.6rem; }
