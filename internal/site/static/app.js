@@ -596,6 +596,9 @@ function legacyRoute(q) {
 }
 
 function showStatic() {
+  // No view of the app's is shown now, so coming back to one (forward
+  // through history) shows it again.
+  renderedFor = revealedFor = "";
   root.classList.remove("routed");
   app.hidden = true;
   document.title = docTitle;
@@ -726,6 +729,7 @@ async function main() {
   }
   if (!viewOf(new URL(url))) return location.reload();
   routingFor = url;
+  renderedFor = revealedFor = "";
   afterShow = null;
   const slow = setTimeout(() => {
     if (routingFor !== url || renderedFor === url) return;
