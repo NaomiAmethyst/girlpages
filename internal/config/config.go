@@ -92,6 +92,14 @@ type OpenAIConfig struct {
 	// beyond the usual: OpenRouter's provider routing, or turning
 	// reasoning off, say.
 	Extra map[string]any `toml:"extra"`
+	// API is which of the server's APIs to use: "chat" (completions, the
+	// default) or "responses".
+	API string `toml:"api"`
+	// CompletionWindow is how long requests may wait, for a lower price,
+	// on servers that offer that (Sail): asap, balanced or flex. Balanced
+	// and flex requests to the Responses API go in the background and are
+	// polled (flex needs that); chat completions can be asap or balanced.
+	CompletionWindow string `toml:"completion_window"`
 	// BatchURL is an OpenRouter batch endpoint, such as
 	// https://openrouter.ai/api/v1/batches. When set, bulk runs send their
 	// pages as batches: slower, about half the price.
@@ -124,7 +132,37 @@ const (
 	BatchNone       = "none"
 	BatchOpenRouter = "openrouter"
 	BatchAnthropic  = "anthropic"
+	BatchSail       = "sail"
 )
+
+// OpenAI APIs.
+const (
+	APIChat      = "chat"
+	APIResponses = "responses"
+)
+
+// ResolveAPI says which of the OpenAI-compatible APIs to use, and checks
+// the completion window goes with it.
+func (c *Config) ResolveAPI() (string, error) {
+	api := strings.ToLower(strings.TrimSpace(c.OpenAI.API))
+	switch api {
+	case "", APIChat, "chat_completions", "completions":
+		api = APIChat
+	case APIResponses:
+	default:
+		return "", fmt.Errorf("openai.api = %q: want chat or responses", c.OpenAI.API)
+	}
+	switch w := c.OpenAI.CompletionWindow; w {
+	case "", "asap", "balanced":
+	case "flex":
+		if api != APIResponses {
+			return "", errors.New(`openai.completion_window = "flex" needs openai.api = "responses"`)
+		}
+	default:
+		return "", fmt.Errorf("openai.completion_window = %q: want asap, balanced or flex", w)
+	}
+	return api, nil
+}
 
 const (
 	DefaultOpenRouterBatchURL = "https://openrouter.ai/api/v1/batches"
@@ -145,8 +183,10 @@ func (c *Config) ResolveBatch() (string, error) {
 		return BatchOpenRouter, nil
 	case BatchAnthropic, "claude":
 		return BatchAnthropic, nil
+	case BatchSail:
+		return BatchSail, nil
 	}
-	return "", fmt.Errorf("batch = %q: want openrouter, anthropic or none", c.Batch)
+	return "", fmt.Errorf("batch = %q: want openrouter, anthropic, sail or none", c.Batch)
 }
 
 // AnthropicKey returns the Anthropic API key from the config or the file

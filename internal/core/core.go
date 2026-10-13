@@ -265,16 +265,35 @@ func NewBackend(cfg *config.Config) (llm.Backend, error) {
 		if err != nil {
 			return nil, err
 		}
+		api, err := cfg.ResolveAPI()
+		if err != nil {
+			return nil, err
+		}
+		if api == config.APIResponses {
+			return &llm.Responses{
+				BaseURL:          cfg.OpenAI.BaseURL,
+				APIKey:           key,
+				ModelName:        cfg.OpenAI.Model,
+				Temperature:      cfg.OpenAI.Temperature,
+				MaxTokens:        cfg.OpenAI.MaxTokens,
+				Headers:          cfg.OpenAI.Headers,
+				Extra:            cfg.OpenAI.Extra,
+				CompletionWindow: cfg.OpenAI.CompletionWindow,
+				Client:           &http.Client{Timeout: cfg.OpenAI.Timeout.Duration},
+				Retries:          3,
+			}, nil
+		}
 		return &llm.OpenAI{
-			BaseURL:     cfg.OpenAI.BaseURL,
-			APIKey:      key,
-			ModelName:   cfg.OpenAI.Model,
-			Temperature: cfg.OpenAI.Temperature,
-			MaxTokens:   cfg.OpenAI.MaxTokens,
-			Headers:     cfg.OpenAI.Headers,
-			Extra:       cfg.OpenAI.Extra,
-			Client:      &http.Client{Timeout: cfg.OpenAI.Timeout.Duration},
-			Retries:     3,
+			CompletionWindow: cfg.OpenAI.CompletionWindow,
+			BaseURL:          cfg.OpenAI.BaseURL,
+			APIKey:           key,
+			ModelName:        cfg.OpenAI.Model,
+			Temperature:      cfg.OpenAI.Temperature,
+			MaxTokens:        cfg.OpenAI.MaxTokens,
+			Headers:          cfg.OpenAI.Headers,
+			Extra:            cfg.OpenAI.Extra,
+			Client:           &http.Client{Timeout: cfg.OpenAI.Timeout.Duration},
+			Retries:          3,
 		}, nil
 	}
 }
@@ -301,6 +320,20 @@ func NewBatcher(cfg *config.Config, dir string, live llm.Backend) (*llm.Batcher,
 			u = config.DefaultOpenRouterBatchURL
 		}
 		api = &llm.OpenRouterBatch{
+			URL: u, APIKey: key, Headers: cfg.OpenAI.Headers, Model: cfg.OpenAI.Model,
+			Temperature: cfg.OpenAI.Temperature, MaxTokens: cfg.OpenAI.MaxTokens, Extra: cfg.OpenAI.Extra,
+			Client: &http.Client{Timeout: cfg.OpenAI.Timeout.Duration}, Retries: 3,
+		}
+	case config.BatchSail:
+		key, err := cfg.OpenAIKey()
+		if err != nil {
+			return nil, err
+		}
+		u := strings.TrimSpace(cfg.OpenAI.BatchURL)
+		if u == "" {
+			u = strings.TrimRight(cfg.OpenAI.BaseURL, "/") + "/batches"
+		}
+		api = &llm.SailBatch{
 			URL: u, APIKey: key, Headers: cfg.OpenAI.Headers, Model: cfg.OpenAI.Model,
 			Temperature: cfg.OpenAI.Temperature, MaxTokens: cfg.OpenAI.MaxTokens, Extra: cfg.OpenAI.Extra,
 			Client: &http.Client{Timeout: cfg.OpenAI.Timeout.Duration}, Retries: 3,

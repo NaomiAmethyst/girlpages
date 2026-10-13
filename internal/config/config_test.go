@@ -82,6 +82,25 @@ func TestDefaultClaudeModel(t *testing.T) {
 	}
 }
 
+func TestResolveAPI(t *testing.T) {
+	for _, c := range []struct{ api, window, want string }{
+		{"", "", APIChat},
+		{"chat", "balanced", APIChat},
+		{"responses", "flex", APIResponses},
+		{"Responses", "", APIResponses},
+		{"chat", "flex", ""},
+		{"responses", "eventually", ""},
+		{"soap", "", ""},
+	} {
+		cfg := Defaults()
+		cfg.OpenAI.API, cfg.OpenAI.CompletionWindow = c.api, c.window
+		got, err := cfg.ResolveAPI()
+		if got != c.want || (err != nil) != (c.want == "") {
+			t.Errorf("api %q, window %q: %q, %v", c.api, c.window, got, err)
+		}
+	}
+}
+
 func TestResolveBatch(t *testing.T) {
 	cases := []struct {
 		batch, url, want string
@@ -91,6 +110,7 @@ func TestResolveBatch(t *testing.T) {
 		{"anthropic", "https://openrouter.ai/api/v1/batches", BatchAnthropic},
 		{"none", "https://openrouter.ai/api/v1/batches", BatchNone},
 		{"OpenRouter", "", BatchOpenRouter},
+		{"sail", "", BatchSail},
 		{"bogus", "", ""},
 	}
 	for _, c := range cases {

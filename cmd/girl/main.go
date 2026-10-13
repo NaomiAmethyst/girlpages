@@ -172,7 +172,7 @@ bulk options:
       --force             reconvert pages even if they're up to date
       --reprompt          reconvert pages made with an older prompt
       --prune             drop cache entries for pages that no longer exist
-      --batch=API         send pages in batches: openrouter, anthropic or none
+      --batch=API         send pages in batches: openrouter, anthropic, sail or none
                           (default from the config)
       --no-batch          the same as --batch=none
       --no-wait           send batches off and return; the next run collects

@@ -26,8 +26,11 @@ type OpenAI struct {
 	MaxTokens   int
 	Headers     map[string]string
 	// Extra is added to each request's body (OpenRouter's "provider", say).
-	Extra  map[string]any
-	Client *http.Client
+	Extra map[string]any
+	// CompletionWindow is Sail's (see Responses): "", asap or balanced, as
+	// chat completions can't wait in the background for flex.
+	CompletionWindow string
+	Client           *http.Client
 	// Retries is how many times a rate-limited or failed request is retried.
 	Retries int
 }
@@ -63,6 +66,16 @@ func (o *OpenAI) Complete(ctx context.Context, system, user string) (string, err
 	if o.ModelName == "" {
 		return "", errors.New("openai backend needs a model: set openai.model in the config or GIRLPAGES_MODEL")
 	}
+	extra := o.Extra
+	switch o.CompletionWindow {
+	case "":
+	case WindowFlex:
+		return "", errors.New(`the flex completion window needs the Responses API: set openai.api = "responses"`)
+	case WindowASAP, WindowBalanced:
+		extra = withMetadata(extra, map[string]any{"completion_window": o.CompletionWindow})
+	default:
+		return "", fmt.Errorf("completion window %q: want asap, balanced or flex", o.CompletionWindow)
+	}
 	body, err := withExtra(chatRequest{
 		Model: o.ModelName,
 		Messages: []chatMessage{
@@ -71,7 +84,7 @@ func (o *OpenAI) Complete(ctx context.Context, system, user string) (string, err
 		},
 		Temperature: o.Temperature,
 		MaxTokens:   o.MaxTokens,
-	}, o.Extra)
+	}, extra)
 	if err != nil {
 		return "", err
 	}
@@ -103,6 +116,25 @@ func (o *OpenAI) Complete(ctx context.Context, system, user string) (string, err
 		}
 	}
 	return "", lastErr
+}
+
+// withMetadata is extra with meta's fields in its "metadata" object.
+func withMetadata(extra, meta map[string]any) map[string]any {
+	out := map[string]any{}
+	for k, v := range extra {
+		out[k] = v
+	}
+	m := map[string]any{}
+	if old, ok := out["metadata"].(map[string]any); ok {
+		for k, v := range old {
+			m[k] = v
+		}
+	}
+	for k, v := range meta {
+		m[k] = v
+	}
+	out["metadata"] = m
+	return out
 }
 
 // withExtra encodes v, a JSON object, with extra's fields added (or

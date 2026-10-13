@@ -25,11 +25,14 @@
 # Batches: girl --bulk and girlrepo girlify can send pages as batches
 # instead of one request at a time: about half the price, back within a
 # day. "openrouter" uses [openai] below (its key, model and batch_url);
-# "anthropic" uses Anthropic's Message Batches API and [anthropic]. Runs save
+# "anthropic" uses Anthropic's Message Batches API and [anthropic]; "sail"
+# uses Sail's batch API (base_url + /batches, or batch_url), which runs in
+# its cheapest, flex, window, with [openai]'s key and model. Runs save
 # what they sent, and the next run collects it (--no-wait doesn't wait; the
 # hooks and timer use that). Single pages and --serve stay live. Default:
 # openrouter if openai.batch_url is set, otherwise none.
 #batch = "anthropic"
+#batch = "sail"
 
 # Tune the vibe. Appended to the system prompt.
 #extra_instructions = "She's really into horses. Work in horse metaphors."
@@ -56,6 +59,14 @@
 #temperature = 0.9
 #max_tokens = 16000
 #timeout = "10m"
+# Which API: "chat" (chat completions, the default) or "responses".
+#api = "chat"
+# For servers with completion windows (Sail, https://api.sailresearch.com/v1):
+# how long a request may wait, for a lower price. asap is straight away;
+# balanced queues for a while; flex, cheapest, waits for room, and needs
+# api = "responses". Responses requests that wait go in the background and
+# girl checks on them until they're done.
+#completion_window = "balanced"
 # OpenRouter's batch endpoint, for batch = "openrouter" (setting it is
 # enough to turn that on). See batch, above.
 #batch_url = "https://openrouter.ai/api/v1/batches"

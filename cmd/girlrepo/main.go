@@ -484,7 +484,7 @@ func (a *app) girlify(ctx context.Context, args []string) error {
 	price := fs.String("price", "", "with --dry-run, estimate the cost at IN/OUT US dollars per million tokens, e.g. 0.10/0.50")
 	ratio := fs.Float64("output-ratio", ingest.OutputRatio, "with --dry-run, how long output is reckoned to be next to the original")
 	noCache := fs.Bool("no-cache", false, "don't take conversions from girl's cache")
-	batch := fs.String("batch", "", "send pages in batches: openrouter, anthropic or none (default from the config)")
+	batch := fs.String("batch", "", "send pages in batches: openrouter, anthropic, sail or none (default from the config)")
 	noBatch := fs.Bool("no-batch", false, "the same as --batch=none")
 	noWait := fs.Bool("no-wait", false, "send batches off and return; the next girlify collects them")
 	quiet := fs.BoolP("quiet", "q", false, "only report problems")

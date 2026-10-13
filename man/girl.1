@@ -229,6 +229,7 @@ says what would be exported.
 Send pages in batches with
 .BR openrouter ,
 .BR anthropic ,
+.BR sail ,
 or
 .B none
 (see
@@ -330,6 +331,32 @@ if the command is on
 otherwise
 .B openai
 if an API key is configured.
+.SS "completion windows"
+Some servers (Sail's, at
+.BR https://api.sailresearch.com/v1 )
+let requests wait for a lower price.
+.B openai.completion_window
+picks how long:
+.B asap
+(straight away),
+.B balanced
+(queued for a while) or
+.B flex
+(cheapest, whenever there's room).
+With
+.B openai.api
+set to
+.BR responses ,
+girl uses the Responses API, and sends requests that wait in the background,
+checking on each until it's done (a request retried after a failure is sent
+with the same idempotency key, so it isn't run twice);
+.B flex
+works only that way.
+Chat completions (the default) can be
+.B asap
+or
+.BR balanced ,
+waiting for the reply.
 .SS "batches"
 .B \-\-bulk
 can send every page that needs converting in batches rather than one request
@@ -348,6 +375,18 @@ key and model;
 uses Anthropic's Message Batches API with the
 .B [anthropic]
 settings, which need an Anthropic API key (the claude CLI's login isn't used);
+.B sail
+uses Sail's batch API
+.RB ( openai.base_url
+plus
+.BR /batches ,
+or
+.BR openai.batch_url ),
+which always runs in Sail's cheapest completion window,
+.BR flex ,
+with the
+.B [openai]
+key and model;
 .B none
 turns batches off.
 Big runs are split to stay under each API's size limit.
@@ -443,7 +482,7 @@ jobs = 4                 # requests at once
 chunk_size = 12000       # bytes of text per request
 cache_dir = ""           # where to write conversions
 pager = ""
-batch = ""               # openrouter, anthropic or none, for \-\-bulk
+batch = ""               # openrouter, anthropic, sail or none, for \-\-bulk
 extra_instructions = ""  # appended to the prompt
 
 [claude]
@@ -460,6 +499,8 @@ api_key_file = ""
 temperature = 0.9
 max_tokens = 16000
 timeout = "10m"
+api = "chat"             # chat (completions) or responses
+completion_window = ""   # asap, balanced or flex (Sail); flex needs responses
 batch_url = ""           # an OpenRouter batch endpoint, for \-\-bulk
 batch_poll = "1m"
 
