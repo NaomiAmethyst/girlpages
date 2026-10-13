@@ -158,7 +158,7 @@ type view struct {
 	Generated        string
 
 	// Sources lead to browsing by distribution or release.
-	Sources []chip
+	Sources []sourceMenu
 
 	// list
 	Heading, Sub string
@@ -190,6 +190,14 @@ type card struct {
 type chip struct {
 	Label, URL string
 	On         bool
+}
+
+// sourceMenu is a chip among the sources: a link, or for a distribution
+// with releases, a menu of them (Items).
+type sourceMenu struct {
+	Label, URL string
+	On         bool
+	Items      []chip
 }
 
 type group struct {
@@ -558,29 +566,47 @@ func girlified(v *repo.Version) bool {
 }
 
 // sourceChips lead to browsing everything, or a section, by source.
-func (b *builder) sourceChips(section string) []chip {
+// sourceChips are the sources to browse by (those with pages in section,
+// if it's given): everything, then each distribution, with a menu of its
+// releases if it has any. web's sourceNav makes the same.
+func (b *builder) sourceChips(section string) []sourceMenu {
 	if len(b.m.Sources) == 0 {
 		return nil
 	}
-	cs := []chip{{Label: "✨ latest of everything", URL: b.url(), On: true}}
+	all := sourceMenu{Label: "✨ latest of everything", URL: b.url(), On: true}
 	if section != "" {
-		cs[0].URL = b.listURL(section, "")
+		all.URL = b.listURL(section, "")
 	}
+	out := []sourceMenu{all}
+	byDistro := map[string]int{} // index in out
 	for _, src := range b.m.Sources {
 		if section != "" && src.Sections[section] == 0 {
 			continue
-		}
-		label := src.Distro
-		if src.Release != "" {
-			label = "· " + src.Release
 		}
 		u := b.browseURL(src.Key())
 		if section != "" {
 			u = b.browseURL(src.Key(), "section", section)
 		}
-		cs = append(cs, chip{Label: label, URL: u})
+		i, ok := byDistro[src.Distro]
+		if !ok {
+			i = len(out)
+			byDistro[src.Distro] = i
+			out = append(out, sourceMenu{Label: src.Distro})
+		}
+		if src.Release == "" {
+			out[i].URL = u
+			out[i].Items = append([]chip{{Label: "all of " + src.Distro, URL: u}}, out[i].Items...)
+		} else {
+			out[i].Items = append(out[i].Items, chip{Label: src.Release, URL: u})
+		}
 	}
-	return cs
+	// A distribution with no releases is just a link.
+	for i := range out {
+		if len(out[i].Items) == 1 && out[i].URL != "" {
+			out[i].Items = nil
+		}
+	}
+	return out
 }
 
 func (b *builder) home(pages []repo.PageRef) error {

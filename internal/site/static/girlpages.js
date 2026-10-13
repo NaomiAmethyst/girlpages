@@ -131,6 +131,35 @@ export const sectionPagesOf = (si) => rows(si.pages, { hashes: ["page", "source"
 // shardsOf reads a manifest's (or section index's) shards.
 export const shardsOf = (m) => rows(m.shards, { hashes: ["sha256"] });
 
+const escHTML = (s) => String(s).replace(/[&'<>"]/g, c => ({ "&": "&amp;", "'": "&#39;", "<": "&lt;", ">": "&gt;", '"': "&#34;" })[c]);
+
+// sourceNav is a manifest's sources as chips, as site.sourceChips makes
+// them: everything first, then each distribution, with a menu of its
+// releases if it has any. on is the source shown ("" for everything), and
+// href(key) a source's link ("" for everything).
+export function sourceNav(sources, { on = "", href, all = "✨ latest of everything" }) {
+  const pill = (key, text) => `<a class="pill${key === on ? " on" : ""}" href="${escHTML(href(key))}">${escHTML(text)}</a>`;
+  const groups = new Map();
+  for (const s of sources || []) {
+    if (!groups.has(s.distro)) groups.set(s.distro, { whole: false, releases: [] });
+    const g = groups.get(s.distro);
+    if (s.release) g.releases.push(s.release);
+    else g.whole = true;
+  }
+  let out = pill("", all);
+  for (const [distro, g] of groups) {
+    if (!g.releases.length) {
+      out += pill(distro, distro);
+      continue;
+    }
+    const release = on.startsWith(distro + "/") ? on.slice(distro.length + 1) : "";
+    const here = on === distro || g.releases.includes(release);
+    out += `<details class="source"><summary class="pill${here ? " on" : ""}">${escHTML(release ? `${distro} · ${release}` : distro)}</summary><div class="menu">` +
+      (g.whole ? pill(distro, `all of ${distro}`) : "") + g.releases.map(r => pill(`${distro}/${r}`, r)).join("") + "</div></details>";
+  }
+  return out;
+}
+
 // sectionShard is a shard of a long section's index.
 export const sectionShard = (sha) => `section/shard-${sha.slice(0, 2)}/${sha}.json`;
 
@@ -731,9 +760,19 @@ function boot() {
     navigator.serviceWorker.register(base + "sw.js", { scope: base }).catch(() => {});
   }
   forgetLocalStorage();
+  // A source's menu stays on the screen: one under a chip near the edge
+  // is moved in.
+  document.addEventListener("toggle", (e) => {
+    const d = e.target;
+    if (!d.matches?.("details.source") || !d.open) return;
+    const menu = d.querySelector(".menu");
+    menu.style.left = "";
+    const r = menu.getBoundingClientRect(), edge = document.documentElement.clientWidth - 8;
+    if (r.right > edge) menu.style.left = `${Math.max(8 - r.left, edge - r.right)}px`;
+  }, true);
   // An open version switcher closes when anything else is clicked.
   document.addEventListener("click", (e) => {
-    for (const d of document.querySelectorAll("details.versions[open]")) if (!d.contains(e.target)) d.open = false;
+    for (const d of document.querySelectorAll("details.versions[open], details.source[open]")) if (!d.contains(e.target) || e.target.closest("a")) d.open = false;
   });
   if (!repo) return;
   startApp(base);

@@ -1,3 +1,4 @@
+{{define "sources"}}{{if .}}<nav class="chips sources" aria-label="Browse by source">{{range .}}{{if .Items}}<details class="source"><summary class="pill{{if .On}} on{{end}}">{{.Label}}</summary><div class="menu">{{range .Items}}<a class="pill{{if .On}} on{{end}}" href="{{.URL}}">{{.Label}}</a>{{end}}</div></details>{{else}}<a class="pill{{if .On}} on{{end}}" href="{{.URL}}">{{.Label}}</a>{{end}}{{end}}</nav>{{end}}{{end}}
 {{define "layout"}}<!doctype html>
 <html lang="en" data-base="{{.Base}}" data-repo="{{.Base}}repo/">
 <head>

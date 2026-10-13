@@ -7,7 +7,7 @@
 </form>
 <div class="stats">{{pages .Total}} · {{.Girlified}} girlified ✨ · updated {{.Generated}}</div>
 </section>
-{{if .Sources}}<nav class="chips sources" aria-label="Browse by source">{{range .Sources}}<a class="pill{{if .On}} on{{end}}" href="{{.URL}}">{{.Label}}</a>{{end}}</nav>{{end}}
+{{template "sources" .Sources}}
 <div class="sections">
 {{range .Sections}}<a class="section-card" href="{{.URL}}">
 <span class="emoji">{{.Emoji}}</span>

@@ -348,6 +348,20 @@ ul.pages .done { flex: none; }
 .chips.sources { justify-content: center; margin-top: 1.25rem; }
 .card .chips.sources { justify-content: flex-start; margin-top: 0; }
 .chips.sources .pill { font-size: 0.85rem; }
+/* A distribution's releases, in a menu under its chip. */
+details.source { position: relative; }
+details.source summary { list-style: none; user-select: none; }
+details.source summary::-webkit-details-marker { display: none; }
+details.source summary::after { content: " ▾"; font-size: 0.75em; }
+details.source[open] summary::after { content: " ▴"; }
+details.source .menu {
+  position: absolute; z-index: 6; left: 0; top: calc(100% + 0.35rem);
+  display: flex; flex-direction: column; align-items: stretch; gap: 0.3rem;
+  min-width: 100%; padding: 0.45rem; white-space: nowrap;
+  background: var(--card); border: 2px solid var(--card-edge); border-radius: 0.9rem;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.18);
+}
+details.source .menu .pill { text-align: left; }
 .meta .in { color: var(--muted); }
 /* The version line is a sentence, not a row of things to space out. */
 .meta.in { display: block; line-height: 1.6; }

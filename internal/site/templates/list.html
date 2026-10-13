@@ -6,7 +6,7 @@
 <p class="sub">{{.Sub}}</p>
 {{if .SaveSection}}<p class="save"><button type="button" class="pill" data-save-section="{{.SaveSection}}" hidden>⬇️ save for offline</button></p>{{end}}
 </div>
-{{if .Sources}}<nav class="chips sources" aria-label="Browse by source">{{range .Sources}}<a class="pill{{if .On}} on{{end}}" href="{{.URL}}">{{.Label}}</a>{{end}}</nav>{{end}}
+{{template "sources" .Sources}}
 {{if .Chips}}<div class="chips">{{range .Chips}}<a class="pill{{if .On}} on{{end}}" href="{{.URL}}">{{.Label}}</a>{{end}}</div>{{end}}
 {{if .Letters}}<nav class="letters" aria-label="Jump to letter">{{range .Letters}}<a href="{{.URL}}">{{.Letter}}</a>{{end}}</nav>{{end}}
 <div class="listing" data-first="{{.ListFirst}}" data-page="{{.ListPage}}" data-pages="{{.ListPages}}" data-key="{{.ListKey}}" data-sub="{{.ListSub}}">

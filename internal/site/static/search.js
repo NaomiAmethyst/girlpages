@@ -5,7 +5,7 @@
 // browser, fetching only the shards a query needs. This is the same
 // algorithm as Searcher in internal/repo/search.go; keep them in step.
 
-import { repoCache, escapeName, segmentName, browseURL, pageURL, shardsOf, rows, chapter } from "./girlpages.js";
+import { repoCache, escapeName, segmentName, browseURL, pageURL, shardsOf, rows, chapter, sourceNav } from "./girlpages.js";
 
 export { escapeName, segmentName };
 
@@ -382,20 +382,13 @@ export async function searchPage(box, params, { current = () => true, go = (u) =
   try {
     await s.load();
     const chips = $("search-sources");
-    const link = (key, label) => {
-      const a = document.createElement("a");
-      a.className = "pill" + (key === src ? " on" : "");
+    const href = (key) => {
       const u = new URLSearchParams({ q });
       if (key) u.set("src", key);
-      a.href = `${base}search/?${u}`;
-      a.textContent = label;
-      return a;
+      return `${base}search/?${u}`;
     };
     if (chips && s.manifest.sources && s.manifest.sources.length) {
-      chips.replaceChildren(link("", "✨ everywhere"));
-      for (const e of s.manifest.sources) {
-        chips.append(link(e.release ? `${e.distro}/${e.release}` : e.distro, e.release ? "· " + e.release : e.distro));
-      }
+      chips.innerHTML = sourceNav(s.manifest.sources, { on: src, href, all: "✨ everywhere" });
     }
   } catch {
     // the search itself will say what's wrong

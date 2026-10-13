@@ -18,7 +18,7 @@
 // It's also where static pages go when offline. /browse/?page=… (from
 // earlier versions) redirects here.
 
-import { repoCache, saveButton, browseURL, chapter, isSeries, pageURL, listingURL as listingAt } from "./girlpages.js";
+import { repoCache, saveButton, browseURL, chapter, isSeries, pageURL, listingURL as listingAt, sourceNav } from "./girlpages.js";
 import { VirtualList } from "./vlist.js";
 import { renderHTML, renderOriginalHTML, esc } from "./render.js";
 import { escapeName, segmentName, searchPage } from "./search.js";
@@ -104,14 +104,9 @@ function h(html) {
 }
 
 function sourceChips(m, on, section) {
-  let out = `<a class="pill${on ? "" : " on"}" href="${esc(section ? `${base}section/${encodeURIComponent(section)}/` : base)}">✨ latest of everything</a>`;
-  for (const s of m.sources || []) {
-    const key = s.release ? `${s.distro}/${s.release}` : s.distro;
-    if (section && !(s.sections || {})[section]) continue;
-    const label = s.release ? "· " + s.release : s.distro;
-    out += `<a class="pill${key === on ? " on" : ""}" href="${esc(browse({ src: key, section }))}">${esc(label)}</a>`;
-  }
-  return `<nav class="chips sources" aria-label="Browse by source">${out}</nav>`;
+  const sources = (m.sources || []).filter(s => !section || (s.sections || {})[section]);
+  const href = (key) => (key ? browse({ src: key, section }) : section ? `${base}section/${encodeURIComponent(section)}/` : base);
+  return `<nav class="chips sources" aria-label="Browse by source">${sourceNav(sources, { on, href })}</nav>`;
 }
 
 // everything is the whole repository as a source: the latest version of
