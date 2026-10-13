@@ -346,6 +346,13 @@ Send pages in batches with
 or not at all, overriding the
 .B batch
 setting.
+.B \-\-batch\-requests
+.I n
+puts at most
+.I n
+requests in each batch (overriding
+.BR batch_max_requests ),
+so results come back in smaller lots.
 Batches work as for
 .BR "girl \-\-bulk" ;
 see

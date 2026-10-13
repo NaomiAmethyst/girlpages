@@ -94,7 +94,7 @@ func responsesParams(model, system, user string, temperature *float64, maxTokens
 	if len(meta) > 0 {
 		body["metadata"] = meta
 	}
-	return json.Marshal(body)
+	return encode(body)
 }
 
 // responseObject is what a Responses request (or poll) returns.
@@ -322,8 +322,26 @@ type SailBatch struct {
 func (c *SailBatch) Kind() string      { return "sail" }
 func (c *SailBatch) ModelName() string { return c.Model }
 
-// Limits: Sail takes up to 100,000 requests and 256 MiB; stay well under.
-func (c *SailBatch) Limits() (int, int) { return 128 << 20, 20000 }
+// Limits: Sail takes up to 100,000 requests and 256 MB, which the bytes
+// (measured exactly) stay well under.
+func (c *SailBatch) Limits() (int, int) { return 200 << 20, 20000 }
+
+// item is a request as a submission has it.
+func (c *SailBatch) item(r BatchRequest) ([]byte, error) {
+	p, err := responsesParams(c.Model, r.Part.System, r.Part.User, c.Temperature, c.MaxTokens, "", false, c.Extra)
+	if err != nil {
+		return nil, err
+	}
+	return encode(struct {
+		CustomID string          `json:"custom_id"`
+		Params   json.RawMessage `json:"params"`
+	}{r.CustomID, p})
+}
+
+func (c *SailBatch) RequestBytes(r BatchRequest) (int, error) {
+	b, err := c.item(r)
+	return len(b) + 1, err
+}
 
 func (c *SailBatch) client() *http.Client {
 	if c.Client == nil {
@@ -337,22 +355,13 @@ func (c *SailBatch) Submit(ctx context.Context, reqs []BatchRequest) (*Batch, er
 	if c.Model == "" {
 		return nil, errors.New("batches need a model: set openai.model in the config or GIRLPAGES_MODEL")
 	}
-	type item struct {
-		CustomID string          `json:"custom_id"`
-		Params   json.RawMessage `json:"params"`
+	items, err := itemsOf(reqs, c.item)
+	if err != nil {
+		return nil, err
 	}
-	sub := struct {
+	body, err := submission(struct {
 		Endpoint string `json:"endpoint"`
-		Requests []item `json:"requests"`
-	}{Endpoint: "/v1/responses"}
-	for _, r := range reqs {
-		p, err := responsesParams(c.Model, r.Part.System, r.Part.User, c.Temperature, c.MaxTokens, "", false, c.Extra)
-		if err != nil {
-			return nil, err
-		}
-		sub.Requests = append(sub.Requests, item{CustomID: r.CustomID, Params: p})
-	}
-	body, err := json.Marshal(sub)
+	}{"/v1/responses"}, items)
 	if err != nil {
 		return nil, err
 	}

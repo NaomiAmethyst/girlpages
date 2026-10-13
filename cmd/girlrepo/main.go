@@ -486,6 +486,7 @@ func (a *app) girlify(ctx context.Context, args []string) error {
 	noCache := fs.Bool("no-cache", false, "don't take conversions from girl's cache")
 	batch := fs.String("batch", "", "send pages in batches: openrouter, anthropic, sail or none (default from the config)")
 	noBatch := fs.Bool("no-batch", false, "the same as --batch=none")
+	batchRequests := fs.Int("batch-requests", 0, "requests in a batch, at most (default from the config, or as many as the API takes)")
 	noWait := fs.Bool("no-wait", false, "send batches off and return; the next girlify collects them")
 	quiet := fs.BoolP("quiet", "q", false, "only report problems")
 	if err := parse(fs, args); err != nil {
@@ -496,6 +497,9 @@ func (a *app) girlify(ctx context.Context, args []string) error {
 	}
 	if *model != "" {
 		a.cfg.SetModel(*model)
+	}
+	if *batchRequests > 0 {
+		a.cfg.BatchMaxRequests = *batchRequests
 	}
 	s, err := a.store()
 	if err != nil {

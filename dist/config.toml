@@ -33,6 +33,9 @@
 # openrouter if openai.batch_url is set, otherwise none.
 #batch = "anthropic"
 #batch = "sail"
+# Requests in one batch, at most (0: as many as the API takes). Smaller
+# batches come back sooner, and a run sends as many as it needs.
+#batch_max_requests = 3000
 
 # Tune the vibe. Appended to the system prompt.
 #extra_instructions = "She's really into horses. Work in horse metaphors."

@@ -483,6 +483,7 @@ chunk_size = 12000       # bytes of text per request
 cache_dir = ""           # where to write conversions
 pager = ""
 batch = ""               # openrouter, anthropic, sail or none, for \-\-bulk
+batch_max_requests = 0   # requests per batch, at most (0: the API's limit)
 extra_instructions = ""  # appended to the prompt
 
 [claude]

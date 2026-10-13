@@ -90,28 +90,35 @@ type anthropicResultLine struct {
 	} `json:"result"`
 }
 
-func (c *AnthropicBatch) Submit(ctx context.Context, reqs []BatchRequest) (*Batch, error) {
-	if c.Model == "" {
-		return nil, errors.New("anthropic batches need a model: set anthropic.model")
-	}
+// item is a request as a submission has it.
+func (c *AnthropicBatch) item(r BatchRequest) ([]byte, error) {
 	maxTokens := c.MaxTokens
 	if maxTokens <= 0 {
 		maxTokens = 32000
 	}
-	type item struct {
+	return encode(struct {
 		CustomID string          `json:"custom_id"`
 		Params   anthropicParams `json:"params"`
+	}{r.CustomID, anthropicParams{
+		Model: c.Model, MaxTokens: maxTokens, System: r.Part.System, Temperature: c.Temperature,
+		Messages: []anthropicMessage{{Role: "user", Content: r.Part.User}},
+	}})
+}
+
+func (c *AnthropicBatch) RequestBytes(r BatchRequest) (int, error) {
+	b, err := c.item(r)
+	return len(b) + 1, err
+}
+
+func (c *AnthropicBatch) Submit(ctx context.Context, reqs []BatchRequest) (*Batch, error) {
+	if c.Model == "" {
+		return nil, errors.New("anthropic batches need a model: set anthropic.model")
 	}
-	sub := struct {
-		Requests []item `json:"requests"`
-	}{}
-	for _, r := range reqs {
-		sub.Requests = append(sub.Requests, item{CustomID: r.CustomID, Params: anthropicParams{
-			Model: c.Model, MaxTokens: maxTokens, System: r.Part.System, Temperature: c.Temperature,
-			Messages: []anthropicMessage{{Role: "user", Content: r.Part.User}},
-		}})
+	items, err := itemsOf(reqs, c.item)
+	if err != nil {
+		return nil, err
 	}
-	body, err := json.Marshal(sub)
+	body, err := submission(struct{}{}, items)
 	if err != nil {
 		return nil, err
 	}

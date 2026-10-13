@@ -354,12 +354,13 @@ func NewBatcher(cfg *config.Config, dir string, live llm.Backend) (*llm.Batcher,
 		}
 	}
 	return &llm.Batcher{
-		Client:  api,
-		Dir:     dir,
-		Options: llm.Options{ChunkSize: cfg.ChunkSize, ExtraInstructions: cfg.ExtraInstructions},
-		Live:    live,
-		Jobs:    cfg.Jobs,
-		Poll:    cfg.OpenAI.BatchPoll.Duration,
+		Client:      api,
+		Dir:         dir,
+		Options:     llm.Options{ChunkSize: cfg.ChunkSize, ExtraInstructions: cfg.ExtraInstructions},
+		Live:        live,
+		Jobs:        cfg.Jobs,
+		Poll:        cfg.OpenAI.BatchPoll.Duration,
+		MaxRequests: cfg.BatchMaxRequests,
 	}, nil
 }
 

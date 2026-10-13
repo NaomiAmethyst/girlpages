@@ -62,10 +62,13 @@ type Config struct {
 	ExtraInstructions string `toml:"extra_instructions"`
 	// Pager overrides $GIRLPAGER/$PAGER.
 	Pager string `toml:"pager"`
-	// Batch picks the batch API bulk runs use: "openrouter", "anthropic"
-	// or "none". Empty means openrouter if openai.batch_url is set, else
-	// none.
+	// Batch picks the batch API bulk runs use: "openrouter", "anthropic",
+	// "sail" or "none". Empty means openrouter if openai.batch_url is set,
+	// else none.
 	Batch string `toml:"batch"`
+	// BatchMaxRequests caps how many requests go in one batch (0: as many
+	// as the API takes); a run sends as many batches as it needs.
+	BatchMaxRequests int `toml:"batch_max_requests"`
 
 	OpenAI OpenAIConfig `toml:"openai"`
 	Claude ClaudeConfig `toml:"claude"`

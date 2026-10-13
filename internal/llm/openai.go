@@ -140,7 +140,7 @@ func withMetadata(extra, meta map[string]any) map[string]any {
 // withExtra encodes v, a JSON object, with extra's fields added (or
 // replacing its own).
 func withExtra(v any, extra map[string]any) ([]byte, error) {
-	b, err := json.Marshal(v)
+	b, err := encode(v)
 	if err != nil || len(extra) == 0 {
 		return b, err
 	}
@@ -149,11 +149,11 @@ func withExtra(v any, extra map[string]any) ([]byte, error) {
 		return nil, err
 	}
 	for k, x := range extra {
-		if m[k], err = json.Marshal(x); err != nil {
+		if m[k], err = encode(x); err != nil {
 			return nil, fmt.Errorf("extra %s: %w", k, err)
 		}
 	}
-	return json.Marshal(m)
+	return encode(m)
 }
 
 type httpError struct {

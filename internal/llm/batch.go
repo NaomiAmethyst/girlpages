@@ -32,6 +32,9 @@ type BatchAPI interface {
 	Get(ctx context.Context, id string) (*Batch, error)
 	// Limits are how big a single batch may be.
 	Limits() (maxBytes, maxRequests int)
+	// RequestBytes is how many bytes a request adds to a submission,
+	// exactly, as Submit would send it.
+	RequestBytes(r BatchRequest) (int, error)
 }
 
 // OpenRouterBatch talks to OpenRouter's batch API
@@ -102,14 +105,6 @@ type batchItem struct {
 	Body     json.RawMessage `json:"body"`
 }
 
-// The batch API wants endpoint and model before requests, so field order
-// here matters.
-type batchSubmit struct {
-	Endpoint string      `json:"endpoint"`
-	Model    string      `json:"model"`
-	Requests []batchItem `json:"requests"`
-}
-
 type batchObject struct {
 	ID            string `json:"id"`
 	Status        string `json:"status"`
@@ -136,27 +131,38 @@ type batchObject struct {
 	} `json:"error"`
 }
 
-// RequestSize estimates how many bytes a request adds to a submission.
-func RequestSize(p Part) int { return len(p.System) + len(p.User) + 200 }
+// item is a request as a submission has it.
+func (c *OpenRouterBatch) item(r BatchRequest) ([]byte, error) {
+	b, err := withExtra(batchBody{
+		Messages:    []chatMessage{{Role: "system", Content: r.Part.System}, {Role: "user", Content: r.Part.User}},
+		Temperature: c.Temperature,
+		MaxTokens:   c.MaxTokens,
+	}, c.Extra)
+	if err != nil {
+		return nil, err
+	}
+	return encode(batchItem{CustomID: r.CustomID, Body: b})
+}
+
+func (c *OpenRouterBatch) RequestBytes(r BatchRequest) (int, error) {
+	b, err := c.item(r)
+	return len(b) + 1, err
+}
 
 // Submit sends requests as one batch.
 func (c *OpenRouterBatch) Submit(ctx context.Context, reqs []BatchRequest) (*Batch, error) {
 	if c.Model == "" {
 		return nil, errors.New("batches need a model: set openai.model in the config or GIRLPAGES_MODEL")
 	}
-	sub := batchSubmit{Endpoint: "/v1/chat/completions", Model: c.Model}
-	for _, r := range reqs {
-		b, err := withExtra(batchBody{
-			Messages:    []chatMessage{{Role: "system", Content: r.Part.System}, {Role: "user", Content: r.Part.User}},
-			Temperature: c.Temperature,
-			MaxTokens:   c.MaxTokens,
-		}, c.Extra)
-		if err != nil {
-			return nil, err
-		}
-		sub.Requests = append(sub.Requests, batchItem{CustomID: r.CustomID, Body: b})
+	items, err := itemsOf(reqs, c.item)
+	if err != nil {
+		return nil, err
 	}
-	body, err := json.Marshal(sub)
+	// The batch API wants endpoint and model before requests.
+	body, err := submission(struct {
+		Endpoint string `json:"endpoint"`
+		Model    string `json:"model"`
+	}{"/v1/chat/completions", c.Model}, items)
 	if err != nil {
 		return nil, err
 	}
@@ -456,8 +462,14 @@ func (b *Batcher) Submit(ctx context.Context, jobs []BatchJob) (int, error) {
 		jo.Kind = j.Kind
 		parts := Plan(j.Title, j.Text, jo)
 		n := 0
-		for _, p := range parts {
-			n += RequestSize(p)
+		for pi, p := range parts {
+			// Measured with this job's ids as they'd be now; a little
+			// either way, if it starts a batch, is allowed for below.
+			sz, err := b.Client.RequestBytes(BatchRequest{CustomID: fmt.Sprintf("%d-%d", len(st.Jobs), pi), Part: p})
+			if err != nil {
+				return sent, err
+			}
+			n += sz
 		}
 		if len(reqs) > 0 && (size+n > maxBytes || len(reqs)+len(parts) > maxReqs) {
 			if err := flush(); err != nil {
