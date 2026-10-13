@@ -80,16 +80,17 @@ function megabytes(n) {
 // or a link in it is.
 export function menus() {
   document.addEventListener("toggle", (e) => {
-    const d = e.target;
+    const d = /** @type {HTMLDetailsElement} */ (e.target);
     if (!d.matches?.("details.source") || !d.open) return;
-    const menu = d.querySelector(".menu");
+    const menu = /** @type {HTMLElement} */ (d.querySelector(".menu"));
     menu.style.left = "";
     const r = menu.getBoundingClientRect(), edge = document.documentElement.clientWidth - 8;
     if (r.right > edge) menu.style.left = `${Math.max(8 - r.left, edge - r.right)}px`;
   }, true);
   document.addEventListener("click", (e) => {
-    for (const d of document.querySelectorAll("details.versions[open], details.source[open]")) {
-      if (!d.contains(e.target) || e.target.closest("a")) d.open = false;
+    const target = /** @type {Element} */ (e.target);
+    for (const d of /** @type {NodeListOf<HTMLDetailsElement>} */ (document.querySelectorAll("details.versions[open], details.source[open]"))) {
+      if (!d.contains(target) || target.closest("a")) d.open = false;
     }
   });
 }

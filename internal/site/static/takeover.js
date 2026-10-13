@@ -7,8 +7,8 @@
 // following the page on screen. Without JavaScript, the pager links the
 // static pages.
 
-const listing = document.querySelector(".listing[data-key]");
-if (listing && "IntersectionObserver" in globalThis && +listing.dataset.pages > 1) {
+const listing = /** @type {HTMLElement | null} */ (document.querySelector(".listing[data-key]"));
+if (listing && "IntersectionObserver" in globalThis && Number(listing.dataset.pages) > 1) {
   const base = document.documentElement.dataset.base;
   const first = listing.dataset.first;
   const url = (n) => (n <= 1 ? first : `${first}page/${n}/`);

@@ -56,6 +56,7 @@ export function createViews({ el: app, base, cache, manifest, browse, listingURL
   // sourceSection shows a section's listing (or a subsection's), from one
   // source or all; start is the chunk to start at, and pageURL(n), if given,
   // the static listing page the address follows as it scrolls.
+  /** @param {any} nav @param {string} src @param {string} key @param {string} sub @param {{start?: number, pageURL?: ((n: number) => string) | null}} [opts] */
   async function sourceSection(nav, src, key, sub, { start = 1, pageURL = null } = {}) {
     const m = await manifest();
     const [name, emoji] = sectionName(key);

@@ -166,8 +166,20 @@ const frames = () => new Promise(r => requestAnimationFrame(() => requestAnimati
 // follow(url), which changes it if it's still the listing's to change. Its
 // letters (a nav of links) jump to theirs.
 export class Listing {
+  /**
+   * @param {HTMLElement} el
+   * @param {any} plan
+   * @param {number} first
+   * @param {{pageURL?: ((n: number) => string) | null, page?: number, letters?: HTMLElement | null, follow?: (url: string) => boolean}} [opts]
+   */
   constructor(el, plan, first, { pageURL = null, page = 1, letters = null, follow = () => false } = {}) {
-    Object.assign(this, { el, plan, first, pageURL, page, letters, follow });
+    this.el = el;
+    this.plan = plan;
+    this.first = first;
+    this.pageURL = pageURL;
+    this.page = page;
+    this.letters = letters;
+    this.follow = follow;
     this.chunkHTML = chunkMaker(plan);
     this.list = null;
     this.dead = false;
@@ -191,7 +203,7 @@ export class Listing {
     if (chunks < 2 || !("IntersectionObserver" in globalThis)) {
       // All of it at once: short, or there's no watching the screen.
       for (let n = this.first + 1; n <= chunks && !this.dead; n++) {
-        this.el.insertAdjacentHTML("beforeend", html`<div class="chunk" data-chunk="${n}">${await this.chunkHTML(n)}</div>`);
+        this.el.insertAdjacentHTML("beforeend", String(html`<div class="chunk" data-chunk="${n}">${await this.chunkHTML(n)}</div>`));
       }
       return this;
     }
@@ -223,6 +235,7 @@ export class Listing {
 
   // track has the address follow the page at the top of the screen.
   track(c) {
+    if (!this.pageURL) return;
     const p = this.topPage(c);
     if (p && !this.from) this.from = p;
     if (!p || p === this.from || p === this.page) return;
@@ -252,7 +265,7 @@ export class Listing {
   // are guesses (see style.css), until it stays put.
   async keep(name, y) {
     for (let i = 0; i < 5 && !this.dead; i++) {
-      const li = [...this.el.querySelectorAll("li[data-name]")].find(x => x.dataset.name === name);
+      const li = [.../** @type {NodeListOf<HTMLElement>} */ (this.el.querySelectorAll("li[data-name]"))].find(x => x.dataset.name === name);
       const d = li ? li.getBoundingClientRect().top - y : 0;
       if (Math.abs(d) < 1) break;
       scrollBy(0, d);

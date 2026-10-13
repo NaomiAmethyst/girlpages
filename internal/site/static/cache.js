@@ -37,9 +37,7 @@ const NETWORK_TIMEOUT = 4000;
 async function fetchText(url, init) {
   const r = await fetch(url, init);
   if (!r.ok) {
-    const e = new Error(`${url}: ${r.status}`);
-    e.status = r.status;
-    throw e;
+    throw Object.assign(new Error(`${url}: ${r.status}`), { status: r.status });
   }
   return r.text();
 }
@@ -49,7 +47,12 @@ async function fetchText(url, init) {
 // repository hasn't it: HTTP 404), or "broken" (anything else: another
 // HTTP error, or a file that isn't JSON).
 export class RepoError extends Error {
-  constructor(kind, message, { status = 0, cause } = {}) {
+  /**
+   * @param {"offline" | "missing" | "broken"} kind
+   * @param {string} message
+   * @param {{status?: number, cause?: unknown}} [opts]
+   */
+  constructor(kind, message, { status = 0, cause = undefined } = {}) {
     super(message, { cause });
     this.kind = kind;
     this.status = status;
@@ -330,6 +333,7 @@ export class RepoCache {
   // for 3, 3p, 3ssl…) or an exact one; src keeps to the versions a source
   // has. progress(done, total) is called as pages finish. It resolves to
   // {pages, failed}.
+  /** @param {string} key @param {{src?: string, progress?: (done: number, total: number) => void}} [opts] */
   async save(key, { src = "", progress = () => {} } = {}) {
     const m = JSON.parse(await this.mutable("manifest.json", { fresh: true }));
     const exact = chapter(key) !== key;
@@ -419,6 +423,7 @@ export class RepoCache {
 
   // saveSearch fetches a part of the search index ("words" or "typos"), so
   // searches work offline. progress(done, total) is called as files arrive.
+  /** @param {"words" | "typos"} part @param {{progress?: (done: number, total: number) => void}} [opts] */
   async saveSearch(part, { progress = () => {} } = {}) {
     const m = JSON.parse(await this.mutable("manifest.json", { fresh: true }));
     // Search needs every part's manifest (they're small) to start.

@@ -13,12 +13,15 @@ import { errorKind } from "./cache.js";
 const NEAR = 1500;
 const FAR = 4000;
 
-
 export class VirtualList {
   // container holds div.chunk[data-chunk] elements, numbered from 1, of
   // which there are count; load(n) resolves to a chunk's inner HTML.
   // onChunk(n) is told which chunk is at the top of the screen when that
   // changes, and onTop(c) is given its element whenever the screen moves.
+  /**
+   * @param {HTMLElement} container
+   * @param {{count: number, load: (n: number) => Promise<unknown>, onChunk?: (n: number) => void, onTop?: (c: HTMLElement) => void}} opts
+   */
   constructor(container, { count, load, onChunk = () => {}, onTop = () => {} }) {
     this.el = container;
     this.count = count;
@@ -27,10 +30,13 @@ export class VirtualList {
     this.onTop = onTop;
     this.dead = false;
     this.html = new Map();
+    // Chunks being loaded, by number.
+    /** @type {Map<number, Promise<unknown>>} */
+    this.pending = new Map();
     this.busy = false;
     this.current = 0;
     container.classList.add("virtual");
-    for (const c of this.chunks()) this.html.set(+c.dataset.chunk, c.innerHTML);
+    for (const c of this.chunks()) this.html.set(Number(c.dataset.chunk), c.innerHTML);
     this.top = edge("top");
     this.bottom = edge("bottom");
     container.prepend(this.top);
@@ -78,15 +84,16 @@ export class VirtualList {
     removeEventListener("scroll", this.onScroll);
   }
 
-  chunks() { return [...this.el.querySelectorAll(":scope > .chunk")]; }
-  first() { const cs = this.chunks(); return cs.length ? +cs[0].dataset.chunk : 0; }
-  last() { const cs = this.chunks(); return cs.length ? +cs[cs.length - 1].dataset.chunk : 0; }
+  /** @returns {HTMLElement[]} */
+  chunks() { return [.../** @type {NodeListOf<HTMLElement>} */ (this.el.querySelectorAll(":scope > .chunk"))]; }
+  first() { const cs = this.chunks(); return cs.length ? Number(cs[0].dataset.chunk) : 0; }
+  last() { const cs = this.chunks(); return cs.length ? Number(cs[cs.length - 1].dataset.chunk) : 0; }
+  /** @returns {HTMLElement | null} */
   chunk(n) { return this.el.querySelector(`:scope > .chunk[data-chunk="${n}"]`); }
 
   // get is a chunk's HTML, loaded once however many ask at a time.
   async get(n) {
     if (this.html.has(n)) return this.html.get(n);
-    if (!this.pending) this.pending = new Map();
     if (!this.pending.has(n)) {
       this.pending.set(n, this.loadHTML(n).then(html => {
         this.html.set(n, html);
@@ -152,7 +159,7 @@ export class VirtualList {
 
   restore(c) {
     if (!c.dataset.empty) return;
-    c.innerHTML = this.html.get(+c.dataset.chunk) || "";
+    c.innerHTML = this.html.get(Number(c.dataset.chunk)) || "";
     c.style.height = "";
     delete c.dataset.empty;
   }
@@ -162,7 +169,7 @@ export class VirtualList {
     for (const c of this.chunks()) {
       const r = c.getBoundingClientRect();
       if (r.bottom > 80) {
-        const n = +c.dataset.chunk;
+        const n = Number(c.dataset.chunk);
         if (n !== this.current) {
           this.current = n;
           this.onChunk(n);

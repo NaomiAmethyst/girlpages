@@ -45,7 +45,10 @@ function forgetLocalStorage() {
 // see. History leads back. A link's files are fetched as soon as it's
 // pointed at or touched.
 function startApp(base) {
-  let loading = null, app = null;
+  /** @type {Promise<any> | null} */
+  let loading = null;
+  /** @type {any} */
+  let app = null;
   const load = () => (loading ||= import(new URL(base + "static/app.js", location.href).href).then(m => {
     app = m;
     // Its links are followed in place now; prerendering them is waste.
@@ -76,10 +79,10 @@ function startApp(base) {
     go(u.href);
   });
   document.addEventListener("submit", (e) => {
-    const f = e.target;
+    const f = /** @type {HTMLFormElement} */ (e.target);
     if (!app || e.defaultPrevented || f.method.toLowerCase() !== "get") return;
     const u = new URL(f.action, location.href);
-    u.search = new URLSearchParams(new FormData(f)).toString();
+    u.search = new URLSearchParams(/** @type {any} */ (new FormData(f))).toString();
     if (!app.handles(u.href)) return;
     e.preventDefault();
     f.querySelector("input")?.blur();
@@ -113,10 +116,10 @@ function boot() {
   cache.watch();
   // A static page read (or listing seen) is kept, so the browse app can
   // show it offline.
-  const page = document.querySelector("[data-keep-page]");
+  const page = /** @type {HTMLElement | null} */ (document.querySelector("[data-keep-page]"));
   if (page) idle(() => cache.keepPage(page.dataset.keepPage, page.dataset.keepSection).catch(() => {}));
   if (typeof globalThis.caches !== "undefined") {
-    for (const b of document.querySelectorAll("button[data-save-section], button[data-save-search]")) {
+    for (const b of /** @type {NodeListOf<HTMLButtonElement>} */ (document.querySelectorAll("button[data-save-section], button[data-save-search]"))) {
       b.hidden = false;
       saveButton(b, cache, b.dataset.saveSection || "search:" + b.dataset.saveSearch);
     }

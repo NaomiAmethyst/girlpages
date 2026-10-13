@@ -268,7 +268,8 @@ function makeIDs() {
   };
 }
 
-export function renderHTML(markup, { link } = {}) {
+/** @param {string} markup @param {{link?: (name: string, sec: string) => string}} [opts] */
+export function renderHTML(markup, { link = undefined } = {}) {
   let b = "";
   const lists = [], toc = [];
   const linkify = makeLinkify(link);
@@ -545,7 +546,8 @@ function parseOriginal(tagInds, lines, ind, top, indented, width) {
 // renderOriginalHTML renders a text variant (header, footer and sections)
 // as HTML that reflows, returning {html, toc}, as renderHTML does; indent
 // and width are as HTMLOptions' Indent and Width.
-export function renderOriginalHTML(doc, { link, indent = 0, width = 0, titleBlock = false } = {}) {
+/** @param {any} doc @param {{link?: (name: string, sec: string) => string, indent?: number, width?: number, titleBlock?: boolean}} [opts] */
+export function renderOriginalHTML(doc, { link = undefined, indent = 0, width = 0, titleBlock = false } = {}) {
   let b = "";
   const toc = [], linkify = makeLinkify(link), id = makeIDs();
   const head = headFields(doc.header);

@@ -84,11 +84,26 @@ function findRange(ranges, key) {
 
 export class Searcher {
   // cache is anything with get(path) returning parsed JSON; by default the
-  // page's localStorage cache for repo.
+  // repository's cache (see cache.js).
   constructor(repo, cache = repoCache(repo)) {
     this.cache = cache;
     this.shards = new Map();
+    /** @type {Promise<void> | null} */
     this.loaded = null;
+    // What load reads: the manifest, and the index's manifests' shards.
+    /** @type {any} */
+    this.manifest = null;
+    /** @type {any[]} */
+    this.words = [];
+    /** @type {any[]} */
+    this.grams = [];
+    /** @type {any[]} */
+    this.names = [];
+    /** @type {any[]} */
+    this.docs = [];
+    // The page table's shards, as they're read.
+    /** @type {Map<string, Promise<{first: number, rows: any[]}>>} */
+    this.tables = new Map();
   }
 
   get(path) { return this.cache.get(path); }
@@ -140,13 +155,12 @@ export class Searcher {
     const r = (kind === "names" ? this.names : this.docs).find(x => x.first <= id && id <= x.last);
     if (!r) throw new Error(`search index has no page ${id}`);
     const key = kind + ":" + r.sha256;
-    if (!this.tables) this.tables = new Map();
-    if (!this.tables.has(key)) {
-      const p = this.shard(kind, r.sha256).then(sh => ({ first: sh.first, rows: rows(sh[kind]) }));
-      p.catch(() => this.tables.delete(key));
-      this.tables.set(key, p);
-    }
-    return this.tables.get(key);
+    const had = this.tables.get(key);
+    if (had) return had;
+    const p = this.shard(kind, r.sha256).then(sh => ({ first: sh.first, rows: rows(sh[kind]) }));
+    p.catch(() => this.tables.delete(key));
+    this.tables.set(key, p);
+    return p;
   }
 
   // name returns [name, section] for a doc id.
@@ -251,6 +265,10 @@ export class Searcher {
   // filtered walks down the ranking from start, a batch at a time, for up
   // to limit hits from source that accept (if given) takes, resolving to
   // {hits, next}: where to go on from (-1 at the end).
+  /**
+   * @param {any[]} ranked @param {number} start @param {number} limit @param {string} [source]
+   * @param {((h: any) => boolean | Promise<boolean>) | null} [accept]
+   */
   async filtered(ranked, start, limit, source = "", accept = null) {
     const hits = [];
     let i = start;
@@ -362,15 +380,20 @@ export function searcher(repo) {
 // ?q=words, and &src=debian/trixie to keep to a source. current() says
 // whether it's still wanted, and signal, if given, stops it when it isn't;
 // go(url) is how it goes straight to a page a query names exactly.
+/**
+ * @param {HTMLElement} box @param {URLSearchParams} params
+ * @param {{current?: () => boolean, signal?: AbortSignal | null, go?: (url: string) => void}} [opts]
+ */
 export async function searchPage(box, params, { current = () => true, signal = null, go = (u) => location.replace(u) } = {}) {
-  const $ = (id) => box.querySelector("#" + id);
+  // The page's parts, which the search page (static or the app's) has.
+  const $ = (id) => /** @type {HTMLElement} */ (box.querySelector("#" + id));
   const status = $("search-status");
   const list = $("search-results");
   const base = box.dataset.base;
   const q = params.get("q") || "", src = params.get("src") || "";
   // Only pages saved for offline: asked for, or by default when offline.
   const savedOnly = params.has("saved") ? params.get("saved") === "1" : navigator.onLine === false;
-  const toggle = $("search-saved");
+  const toggle = /** @type {HTMLAnchorElement | null} */ (box.querySelector("#search-saved"));
   if (toggle && "caches" in globalThis) {
     const u = new URLSearchParams(params);
     u.set("saved", savedOnly ? "0" : "1");
@@ -379,7 +402,7 @@ export async function searchPage(box, params, { current = () => true, signal = n
     toggle.classList.toggle("on", savedOnly);
     toggle.hidden = false;
   }
-  for (const input of document.querySelectorAll('input[name="q"]')) input.value = q;
+  for (const input of /** @type {NodeListOf<HTMLInputElement>} */ (document.querySelectorAll('input[name="q"]'))) input.value = q;
   const s = searcher(box.dataset.repo);
   try {
     await s.load();
@@ -390,7 +413,7 @@ export async function searchPage(box, params, { current = () => true, signal = n
       return `${base}search/?${u}`;
     };
     if (chips && s.manifest.sources && s.manifest.sources.length) {
-      chips.innerHTML = sourceNav(s.manifest.sources, { on: src, href, all: "✨ everywhere" });
+      chips.innerHTML = String(sourceNav(s.manifest.sources, { on: src, href, all: "✨ everywhere" }));
     }
   } catch {
     // the search itself will say what's wrong
@@ -458,7 +481,7 @@ export async function searchPage(box, params, { current = () => true, signal = n
               const [name, section] = await s.name(id);
               named(li, name, section);
               const [description] = await s.docOf(id);
-              li.querySelector(".desc").textContent = description;
+              /** @type {HTMLElement} */ (li.querySelector(".desc")).textContent = description;
             } catch {
               li.remove();
             }
@@ -500,6 +523,6 @@ const PAGE = 20;
 
 // The static search page runs itself.
 if (typeof document !== "undefined") {
-  const box = document.querySelector(".static-view #search");
+  const box = /** @type {HTMLElement | null} */ (document.querySelector(".static-view #search"));
   if (box) searchPage(box, new URLSearchParams(location.search));
 }

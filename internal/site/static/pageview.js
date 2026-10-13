@@ -3,7 +3,7 @@
 //
 // The app's view of a page: any version, any variant, from any source.
 
-import { html, raw } from "./html.js";
+import { html, raw, HTML } from "./html.js";
 import { renderHTML, renderOriginalHTML } from "./render.js";
 import { errorKind } from "./cache.js";
 import { chapter, isSeries, sectionLabel, sourceLabel } from "./manual.js";
@@ -101,7 +101,9 @@ export function createPageView({ el: app, base, listing, variant, browse, static
     // shown by default, else by its upstream version if that's unique.
     const slug = (x) => x.source === fallback ? "" :
       x.version && l.versions.filter(y => y.version === x.version).length === 1 ? x.version : x.source.slice(0, 12);
-    let ver = null, which = "";
+    /** @type {any} */
+    let ver = null;
+    let which = "";
     if (rest.length >= 2) [ver, which] = [findVersion(rest[0]), rest[1]];
     else if (rest.length === 1) {
       ver = findVersion(rest[0]);
@@ -124,7 +126,7 @@ export function createPageView({ el: app, base, listing, variant, browse, static
   // pageView shows a page.
   async function pageView(nav, name, sec, rest, src) {
     const d = await loadPage(name, sec, rest, src);
-    if (d.error) return oops(nav, d.error);
+    if ("error" in d) return oops(nav, d.error);
     const { l, ver, which, variants, versions, slug, doc, at, mono } = d;
     const title = ver.title || `${name.toUpperCase()}(${sec})`;
     const latest = ver.source === l.current;
@@ -167,6 +169,7 @@ export function createPageView({ el: app, base, listing, variant, browse, static
     // first, then the latest, then the newest added.
     const keys = sourceKeys(ver);
     const when = isSeries(sec) && ver.packages && ver.packages[0] ? publishedLabel(ver.packages[0].version) : "";
+    /** @type {string | HTML} */
     let switcher = ver.version && `version ${ver.version}, `;
     if (versions.length > 1) {
       const items = [ver, ...versions.filter(x => x !== ver)].map(x => {

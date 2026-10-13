@@ -17,6 +17,16 @@ const unsegment = (s) => (s.startsWith("%") ? decodeURIComponent(s) : s);
 // viewOf is the view an address (a URL) shows in the app: a route, or one
 // of the static site's pages (which, once the app is running, it shows
 // itself), or null if it's not one of the site's.
+/**
+ * What an address shows.
+ * @typedef {{kind: "route", hash: string}
+ *   | {kind: "home"}
+ *   | {kind: "page", sec: string, name: string}
+ *   | {kind: "section", key: string, sub: string, page: number}
+ *   | {kind: "search", params: URLSearchParams}} View
+ */
+
+/** @param {URL} u @param {string} base @param {string} [origin] @returns {View | null} */
 export function viewOf(u, base, origin = globalThis.location?.origin) {
   if (u.origin !== origin || !u.pathname.startsWith(base)) return null;
   if (u.pathname === base && isRoute(u.hash)) return { kind: "route", hash: u.hash };
@@ -45,6 +55,15 @@ export function viewOf(u, base, origin = globalThis.location?.origin) {
 
 // parse reads a route (a hash, #/…), resolving to what it shows; sources()
 // resolves to the manifest's sources.
+/**
+ * What a route shows.
+ * @typedef {{kind: "bad"}
+ *   | {kind: "source", src: string}
+ *   | {kind: "section", src: string, key: string, sub: string}
+ *   | {kind: "page", src: string, sec: string, name: string, rest: string[]}} Route
+ */
+
+/** @param {string} h @param {() => Promise<any[]>} sources @returns {Promise<Route>} */
 export async function parse(h, sources) {
   let segs;
   try {
@@ -55,10 +74,10 @@ export async function parse(h, sources) {
   let src = "";
   // Only a word that isn't a section or "section" can start a source.
   if (segs.length && segs[0] !== "section" && !/^[0-9]/.test(segs[0])) {
-    sources = (await sources()) || [];
-    if (sources.some(s => s.distro === segs[0])) {
+    const known = (await sources()) || [];
+    if (known.some(s => s.distro === segs[0])) {
       src = segs.shift();
-      if (segs.length && sources.some(s => s.distro === src && s.release === segs[0])) src += "/" + segs.shift();
+      if (segs.length && known.some(s => s.distro === src && s.release === segs[0])) src += "/" + segs.shift();
     }
   }
   if (!segs.length) return { kind: "source", src };

@@ -51,7 +51,7 @@ ifeq ($(SYSTEMD),auto)
   SYSTEMD := $(if $(wildcard /run/systemd/system),yes,no)
 endif
 
-.PHONY: all build test check e2e install install-user install-girlrepo uninstall uninstall-user clean
+.PHONY: all build test check e2e lint install install-user install-girlrepo uninstall uninstall-user clean
 
 all: build
 
@@ -73,6 +73,14 @@ test:
 check: test
 	$(GO) vet ./...
 	@test -z "$$(gofmt -l .)" || { gofmt -l .; echo 'run gofmt -w .'; exit 1; }
+
+# Type-checks the website's JavaScript (JSDoc types; see
+# internal/site/static/tsconfig.json) with TypeScript, fetched by npx and
+# cached: nothing's built, and the site needs none of it.
+TSC ?= npx --yes -p typescript@7.0.2 tsc
+lint:
+	@command -v npx >/dev/null || { echo "lint needs npx (Node.js)"; exit 1; }
+	$(TSC) -p internal/site/static/tsconfig.json
 
 # The website's navigation, in a real browser (needs Python's playwright and
 # man; skipped without them).

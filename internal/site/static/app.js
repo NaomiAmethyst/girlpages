@@ -33,7 +33,7 @@ import { createPageView } from "./pageview.js";
 // attributes say where the site and repository are.
 function createApp(el) {
   const base = el.dataset.base;
-  const cache = repoCache(el.dataset.repo);
+  const cache = repoCache(el.dataset.repo ?? "");
   const manifest = () => cache.get("manifest.json");
   const listing = async (name, sec) => cache.get(listingPath((await cache.get(namePath(name, sec))).sha256));
   // A variant is named after its own hash (the listing gives it), so it's
@@ -43,7 +43,8 @@ function createApp(el) {
   const browse = (params) => browseURL(base, params);
   const listingURL = (key, sub, n) => listingAt(base, key, sub, n);
 
-  let router = null;
+  /** @type {Router} */
+  let router;
   const listings = createListings({ cache, manifest, browse, staticPage, router: { followStatic: (from, to) => router.followStatic(from, to) } });
   const views = createViews({ el, base, cache, manifest, browse, listingURL, listings });
   const { sourceHome, sourceSection, searchView, oops } = views;
@@ -52,11 +53,13 @@ function createApp(el) {
   // route shows the view for nav's address.
   async function route(nav) {
     const v = viewOf(new URL(nav.url), base);
-    switch (v && v.kind) {
-      case "home": return sourceHome(nav, "");
-      case "page": return pageView(nav, v.name, v.sec, [], "");
-      case "search": return searchView(nav, v.params);
-      case "section": return sourceSection(nav, "", v.key, v.sub, { start: v.page, pageURL: (n) => listingURL(v.key, v.sub, n) });
+    if (v) {
+      switch (v.kind) {
+        case "home": return sourceHome(nav, "");
+        case "page": return pageView(nav, v.name, v.sec, [], "");
+        case "search": return searchView(nav, v.params);
+        case "section": return sourceSection(nav, "", v.key, v.sub, { start: v.page, pageURL: (n) => listingURL(v.key, v.sub, n) });
+      }
     }
     const r = await parse(new URL(nav.url).hash, async () => (await manifest()).sources);
     switch (r.kind) {
@@ -101,9 +104,8 @@ function createApp(el) {
     // is quick.
     async prefetch(href) {
       const v = viewOf(new URL(href, location.href), base);
-      if (!v) return;
-      if (v.kind === "page") return loadPage(v.name, v.sec, [], "");
-      if (v.kind !== "route") return;
+      if (v && v.kind === "page") await loadPage(v.name, v.sec, [], "");
+      if (!v || v.kind !== "route") return;
       const r = await parse(v.hash, async () => (await manifest()).sources);
       if (r.kind === "page") await loadPage(r.name, r.sec, r.rest, r.src);
     },
@@ -111,17 +113,21 @@ function createApp(el) {
   };
 }
 
+// The app's element: #app, which every page has.
+const appElement = () => /** @type {HTMLElement} */ (document.getElementById("app"));
+
 // The app is made the first time it's wanted, in the page it's in.
+/** @type {ReturnType<typeof createApp> | null} */
 let theApp = null;
 function app() {
-  if (!theApp) theApp = createApp(document.getElementById("app"));
+  if (!theApp) theApp = createApp(appElement());
   return theApp;
 }
 
 // moved reports whether this is /browse/ (from earlier versions), and if
 // so, goes where it went.
 function moved() {
-  const base = document.getElementById("app").dataset.base;
+  const base = appElement().dataset.base;
   if (location.pathname !== base + "browse/") return false;
   location.replace(location.search ? legacyRoute(new URLSearchParams(location.search), base) : base + location.hash);
   return true;

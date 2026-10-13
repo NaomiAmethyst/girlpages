@@ -66,6 +66,7 @@ export const unhash = (str) => (str ? decode91(str).map(b => b.toString(16).padS
 
 // rows reads a table as records, decoding the fields named in hashes (and
 // in hashMaps, objects whose values are hashes).
+/** @param {any} table @param {{hashes?: string[], hashMaps?: string[]}} [opts] @returns {any[]} */
 export function rows(table, { hashes = [], hashMaps = [] } = {}) {
   const keys = (table && table.keys) || [], data = (table && table.data) || [], out = [];
   for (let i = 0; keys.length && i + keys.length <= data.length; i += keys.length) {
@@ -89,6 +90,7 @@ export function rows(table, { hashes = [], hashMaps = [] } = {}) {
 export function indexPagesOf(t) {
   if (!t || !t.keys) return [];
   const bits = (m, vals) => {
+    /** @type {string[]} */
     const out = [];
     for (let i = 0; m > 0; i++, m = Math.floor(m / 2)) if (m % 2) out.push(vals[i]);
     return out;
