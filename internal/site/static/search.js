@@ -360,9 +360,9 @@ export function searcher(repo) {
 
 // searchPage runs the search page in box (the static one, or the app's):
 // ?q=words, and &src=debian/trixie to keep to a source. current() says
-// whether it's still wanted; go(url) is how it goes straight to a page a
-// query names exactly.
-export async function searchPage(box, params, { current = () => true, go = (u) => location.replace(u) } = {}) {
+// whether it's still wanted, and signal, if given, stops it when it isn't;
+// go(url) is how it goes straight to a page a query names exactly.
+export async function searchPage(box, params, { current = () => true, signal = null, go = (u) => location.replace(u) } = {}) {
   const $ = (id) => box.querySelector("#" + id);
   const status = $("search-status");
   const list = $("search-results");
@@ -485,6 +485,7 @@ export async function searchPage(box, params, { current = () => true, go = (u) =
     if ("IntersectionObserver" in globalThis) {
       const io = new IntersectionObserver((es) => { if (es.some(e => e.isIntersecting)) page(); }, { rootMargin: "800px 0px" });
       io.observe(sentinel);
+      signal?.addEventListener("abort", () => io.disconnect());
     }
     await page();
   } catch (e) {

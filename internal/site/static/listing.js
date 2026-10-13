@@ -5,6 +5,7 @@
 // chapter's index, a chunk at a time, scrolling through all of them.
 
 import { VirtualList } from "./vlist.js";
+import { idle } from "./cache.js";
 import { html } from "./html.js";
 import { rows, chapterShardsOf } from "./format.js";
 import { chapter, isSeries, letterOf, nameCmp } from "./manual.js";
@@ -98,133 +99,171 @@ export function createListings({ cache, manifest, browse, staticPage, router }) 
   // chunkMaker renders a plan's chunks: its items, under letters (or
   // thousands) as they start, a letter carried over from the chunk before
   // being marked as such.
-  function chunkMaker(plan) {
-    const entry = (it) => {
-      const series = isSeries(it.sec);
-      return html`<li data-name="${it.name}"><a href="${it.url}"><span class="name">${series ? `${it.sec.toUpperCase()} ${it.name}` : it.name}</span>${
-        !series && html`<span class="sec">(${it.sec})</span>`}</a><span class="desc">${it.desc}</span>${
-        it.girl && html`<span class="done" title="girlified">✨</span>`}</li>`;
-    };
-    return async (n) => {
-      // Runs of a letter, each under its heading: marked as carried on if
-      // the chunk before ended with it.
-      const runs = [];
-      for (const it of await plan.load(n)) {
-        const l = letterOf(it.name);
-        if (!runs.length || runs[runs.length - 1].letter !== l) runs.push({ letter: l, items: [] });
-        runs[runs.length - 1].items.push(it);
-      }
-      const prev = plan.prevLetter(n);
-      return html`${runs.map(({ letter, items }, i) => html`${i === 0 && letter === prev
-        ? html`<h2 class="letter cont">${letter} <span class="sub">(continued)</span></h2>`
-        : html`<h2 class="letter" id="letter-${letter}">${letter}</h2>`}<ul class="pages">${items.map(entry)}</ul>`)}`;
-    };
-  }
-
-  // listInto makes a listing element, holding chunk first, scroll through
-  // the rest of a plan: loading chunks as they're neared, and all of them
-  // meanwhile (in plan.order: letters' first), following along with the
-  // address if pageURL is given (pageURL(n) is a static listing page's, of
-  // PAGE pages each; page is the one it's at) by follow(url), which changes
-  // the address if it's still the listing's to change, and jumping by its
-  // letters.
-  async function listInto(listing, plan, first, { pageURL = null, page = 1, letters = null, follow = () => false } = {}) {
-    const chunks = Math.max(1, plan.count);
-    const chunkHTML = chunkMaker(plan);
-    if (chunks < 2 || !("IntersectionObserver" in globalThis)) {
-      for (let n = first + 1; n <= chunks; n++) listing.insertAdjacentHTML("beforeend", html`<div class="chunk" data-chunk="${n}">${await chunkHTML(n)}</div>`);
-      return null;
-    }
-    // The static page the entry at the top of the screen is on, if it's
-    // known where in the listing its chunk starts.
-    const topPage = (c) => {
-      const start = plan.startOf(+c.dataset.chunk);
-      const lis = c.querySelectorAll("li[data-name]");
-      if (start == null || !lis.length) return 0;
-      let lo = 0, hi = lis.length - 1;
-      while (lo < hi) {
-        const mid = (lo + hi) >> 1;
-        if (lis[mid].getBoundingClientRect().bottom > 80) hi = mid;
-        else lo = mid + 1;
-      }
-      return Math.floor((start + lo) / PAGE) + 1;
-    };
-    // Where the list starts is where the address already is, even if a
-    // page before it shows above (a static page taken over keeps its first
-    // entry where it was): the address follows once that changes.
-    let from = 0;
-    const list = new VirtualList(listing, {
-      count: chunks, load: chunkHTML,
-      onTop: pageURL ? (c) => {
-        const p = topPage(c);
-        if (p && !from) from = p;
-        if (!p || p === from || p === page) return;
-        if (!follow(pageURL(p))) return;
-        from = -1;
-        page = p;
-      } : undefined,
-    });
-    letters?.addEventListener("click", (e) => {
-      const a = e.target.closest("a[href]");
-      if (!a) return;
-      const l = a.textContent.trim();
-      if (!plan.letters.has(l)) return;
-      e.preventDefault();
-      e.stopPropagation();
-      list.jump(plan.letters.get(l), "letter-" + l);
-    });
-    list.fill();
-    // The rest, a couple at a time, until the list goes or the network does.
-    const todo = plan.order(first);
-    let stop = false;
-    const worker = async () => {
-      while (todo.length && !stop && !list.dead) {
-        try {
-          await plan.load(todo.shift());
-        } catch (e) {
-          if (e instanceof TypeError) stop = true;
-        }
-      }
-    };
-    (globalThis.requestIdleCallback || ((f) => setTimeout(f, 200)))(() => Promise.all([worker(), worker()]));
-    return list;
-  }
-
   // attachListing takes over a static listing page (on its first load) with
-  // one made from the repository's section indexes, which then scrolls
-  // through the whole section: starting where the static page does, with
-  // its first entry kept where it is on the screen.
-  async function attachListing(listing, { key, sub = "", pageURL, letters = null }) {
+  // a Listing of its whole chapter (or section), starting where the static
+  // page does, with its first entry kept where it is on the screen. The
+  // address follows it while the static view is what's shown.
+  async function attachListing(el, { key, sub = "", pageURL, letters = null }) {
     const m = await manifest();
     const plan = await chapterPlan(m, key, sub, "");
-    const firstLi = listing.querySelector("li[data-name]");
+    const firstLi = el.querySelector("li[data-name]");
     if (!firstLi || !plan.count) return null;
     const name = firstLi.dataset.name;
     const n = plan.chunkOf(name);
     const markup = await chunkMaker(plan)(n);
     const y = firstLi.getBoundingClientRect().top;
-    listing.innerHTML = html`<div class="chunk" data-chunk="${n}">${markup}</div>`;
-    // The static view's address, while history's at it and the app isn't
-    // showing anything over it.
+    el.innerHTML = html`<div class="chunk" data-chunk="${n}">${markup}</div>`;
     let at = location.href;
     const follow = (u) => {
       if (!router.followStatic(at, u)) return false;
       at = location.href;
       return true;
     };
-    const list = await listInto(listing, plan, n, { pageURL, page: +listing.dataset.page || 1, letters, follow });
-    // Keep the entry that was first on the page where it was: again once
-    // the entries around it are laid out, as the sizes of those that aren't
-    // yet are guesses (see style.css), until it stays put.
-    for (let i = 0; i < 5; i++) {
-      const again = [...listing.querySelectorAll("li[data-name]")].find(li => li.dataset.name === name);
-      const d = again ? again.getBoundingClientRect().top - y : 0;
-      if (Math.abs(d) < 1) break;
-      scrollBy(0, d);
-      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-    }
-    return list;
+    const listing = new Listing(el, plan, n, { pageURL, page: +el.dataset.page || 1, letters, follow });
+    await listing.start();
+    await listing.keep(name, y);
+    return listing;
   }
 
-  return { chapterPlan, chunkMaker, listInto, attachListing };
+  return { chapterPlan, attachListing };
+}
+
+// chunkMaker renders a plan's chunks: its items, under letters (or
+// thousands) as they start, a letter carried over from the chunk before
+// being marked as such.
+export function chunkMaker(plan) {
+  const entry = (it) => {
+    const series = isSeries(it.sec);
+    return html`<li data-name="${it.name}"><a href="${it.url}"><span class="name">${series ? `${it.sec.toUpperCase()} ${it.name}` : it.name}</span>${
+      !series && html`<span class="sec">(${it.sec})</span>`}</a><span class="desc">${it.desc}</span>${
+      it.girl && html`<span class="done" title="girlified">✨</span>`}</li>`;
+  };
+  return async (n) => {
+    // Runs of a letter, each under its heading: marked as carried on if
+    // the chunk before ended with it.
+    const runs = [];
+    for (const it of await plan.load(n)) {
+      const l = letterOf(it.name);
+      if (!runs.length || runs[runs.length - 1].letter !== l) runs.push({ letter: l, items: [] });
+      runs[runs.length - 1].items.push(it);
+    }
+    const prev = plan.prevLetter(n);
+    return html`${runs.map(({ letter, items }, i) => html`${i === 0 && letter === prev
+      ? html`<h2 class="letter cont">${letter} <span class="sub">(continued)</span></h2>`
+      : html`<h2 class="letter" id="letter-${letter}">${letter}</h2>`}<ul class="pages">${items.map(entry)}</ul>`)}`;
+  };
+}
+
+// frames waits for the browser to lay out and paint.
+const frames = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+// A Listing scrolls through a plan in a listing element (.listing) that
+// holds chunk first: loading chunks as they're neared (VirtualList), and
+// all of them meanwhile, in plan.order (letters' first chunks, then the
+// rest), until it's destroyed or the network goes. If pageURL is given
+// (pageURL(n) being a static listing page's, of PAGE pages each; page the
+// one it's at), the address follows the page at the top of the screen, by
+// follow(url), which changes it if it's still the listing's to change. Its
+// letters (a nav of links) jump to theirs.
+export class Listing {
+  constructor(el, plan, first, { pageURL = null, page = 1, letters = null, follow = () => false } = {}) {
+    Object.assign(this, { el, plan, first, pageURL, page, letters, follow });
+    this.chunkHTML = chunkMaker(plan);
+    this.list = null;
+    this.dead = false;
+    // Where the list starts is where the address already is, even if a
+    // page before it shows above (a static page taken over keeps its
+    // first entry where it was): the address follows once that changes.
+    this.from = 0;
+    this.onLetter = (e) => {
+      const a = e.target.closest("a[href]");
+      const l = a && a.textContent.trim();
+      if (!l || !this.plan.letters.has(l) || !this.list) return;
+      e.preventDefault();
+      e.stopPropagation();
+      this.list.jump(this.plan.letters.get(l), "letter-" + l);
+    };
+  }
+
+  // start sets it going.
+  async start() {
+    const chunks = Math.max(1, this.plan.count);
+    if (chunks < 2 || !("IntersectionObserver" in globalThis)) {
+      // All of it at once: short, or there's no watching the screen.
+      for (let n = this.first + 1; n <= chunks && !this.dead; n++) {
+        this.el.insertAdjacentHTML("beforeend", html`<div class="chunk" data-chunk="${n}">${await this.chunkHTML(n)}</div>`);
+      }
+      return this;
+    }
+    if (this.dead) return this;
+    this.list = new VirtualList(this.el, {
+      count: chunks, load: this.chunkHTML,
+      onTop: this.pageURL ? (c) => this.track(c) : undefined,
+    });
+    this.letters?.addEventListener("click", this.onLetter);
+    this.list.fill();
+    idle(() => this.loadAll());
+    return this;
+  }
+
+  // topPage is the static page the entry at the top of the screen is on,
+  // in chunk element c, if it's known where in the listing c starts (or 0).
+  topPage(c) {
+    const start = this.plan.startOf(+c.dataset.chunk);
+    const lis = c.querySelectorAll("li[data-name]");
+    if (start == null || !lis.length) return 0;
+    let lo = 0, hi = lis.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (lis[mid].getBoundingClientRect().bottom > 80) hi = mid;
+      else lo = mid + 1;
+    }
+    return Math.floor((start + lo) / PAGE) + 1;
+  }
+
+  // track has the address follow the page at the top of the screen.
+  track(c) {
+    const p = this.topPage(c);
+    if (p && !this.from) this.from = p;
+    if (!p || p === this.from || p === this.page) return;
+    if (!this.follow(this.pageURL(p))) return;
+    this.from = -1;
+    this.page = p;
+  }
+
+  // loadAll fetches every chunk, a couple at a time.
+  async loadAll() {
+    const todo = this.plan.order(this.first);
+    let offline = false;
+    const worker = async () => {
+      while (todo.length && !offline && !this.dead) {
+        try {
+          await this.plan.load(todo.shift());
+        } catch (e) {
+          if (e instanceof TypeError) offline = true;
+        }
+      }
+    };
+    await Promise.all([worker(), worker()]);
+  }
+
+  // keep puts the entry called name at y on the screen: again once the
+  // entries around it are laid out, as the sizes of those that aren't yet
+  // are guesses (see style.css), until it stays put.
+  async keep(name, y) {
+    for (let i = 0; i < 5 && !this.dead; i++) {
+      const li = [...this.el.querySelectorAll("li[data-name]")].find(x => x.dataset.name === name);
+      const d = li ? li.getBoundingClientRect().top - y : 0;
+      if (Math.abs(d) < 1) break;
+      scrollBy(0, d);
+      await frames();
+    }
+  }
+
+  // destroy stops everything it set going.
+  destroy() {
+    this.dead = true;
+    this.list?.destroy();
+    this.letters?.removeEventListener("click", this.onLetter);
+  }
 }

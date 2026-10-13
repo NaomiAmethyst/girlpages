@@ -8,12 +8,13 @@ import { html } from "./html.js";
 import { chapter, isSeries, sectionName, sectionLabel, sourceLabel, plural } from "./manual.js";
 import { saveButton, sourceNav } from "./widgets.js";
 import { searchPage } from "./search.js";
+import { Listing, chunkMaker } from "./listing.js";
 
 // createViews makes the views for an app: ctx has its element (el), the
 // site's base, the repository cache and manifest(), link makers (browse,
 // listingURL), and its listings.
 export function createViews({ el: app, base, cache, manifest, browse, listingURL, listings }) {
-  const { chapterPlan, chunkMaker, listInto } = listings;
+  const { chapterPlan } = listings;
 
   function sourceChips(m, on, section) {
     const sources = (m.sources || []).filter(s => !section || (s.sections || {})[section]);
@@ -86,9 +87,9 @@ export function createViews({ el: app, base, cache, manifest, browse, listingURL
     if (button) saveButton(button, cache, sub || key, src);
     const listing = app.querySelector(".listing");
     if (listing) {
-      nav.own(await listInto(listing, plan, first, {
+      await nav.own(new Listing(listing, plan, first, {
         pageURL, page: start, letters: app.querySelector(".letters"), follow: (u) => nav.replace(u),
-      }));
+      })).start();
     }
   }
 
@@ -105,6 +106,7 @@ export function createViews({ el: app, base, cache, manifest, browse, listingURL
     nav.reveal();
     await searchPage(app.querySelector("#search"), params, {
       current: () => nav.current(),
+      signal: nav.signal,
       // Straight to a page a query names, in place of the search.
       go: (u) => nav.redirect(u),
     });
