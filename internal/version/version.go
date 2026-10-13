@@ -247,6 +247,11 @@ func Upstream(v string) string {
 	if i := strings.Index(v, " ("); i >= 0 {
 		v, git = v[:i], true // "tag (commit)"
 	}
+	if isHash(v) {
+		// A commit with no tag: before the leading letters go, or one like
+		// bcffefbdcaa7 would be version 7.
+		return ""
+	}
 	v = epochRE.ReplaceAllString(v, "")
 	if i := strings.LastIndexByte(v, '-'); !git && i > 0 && containsDigit(v[i+1:]) {
 		v = v[:i] // the Debian revision, or rpm or pacman release

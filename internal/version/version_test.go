@@ -39,6 +39,7 @@ func TestUpstream(t *testing.T) {
 		"1:2.51.0-1ubuntu1": "2.51.0", "v3.5a (549c35b06165)": "3.5a", "3.5a (549c35b06165)": "3.5a",
 		"549c35b06165": "", "": "", "4:15.2.0-4ubuntu1": "15.2.0", "2.0+really1.9-1": "1.9",
 		"0.0.0~ubuntu24": "0.0.0", "release-1.2 (abc1234)": "1.2", "1.0~rc1-1": "1.0~rc1", "2.21-30.el9_6": "2.21",
+		"bcffefbdcaa7": "", "deadbeef1": "", "abcdef0123456789": "",
 	} {
 		if got := Upstream(in); got != want {
 			t.Errorf("Upstream(%q) = %q, want %q", in, got, want)
