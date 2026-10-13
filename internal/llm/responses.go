@@ -322,9 +322,11 @@ type SailBatch struct {
 func (c *SailBatch) Kind() string      { return "sail" }
 func (c *SailBatch) ModelName() string { return c.Model }
 
-// Limits: Sail takes up to 100,000 requests and 256 MB, which the bytes
-// (measured exactly) stay well under.
-func (c *SailBatch) Limits() (int, int) { return 200 << 20, 20000 }
+// Limits: Sail takes up to 100,000 requests and 256 MB, but by its
+// reckoning, which a batch of 200 MiB as sent (no more) was over; stay
+// well under. (A batch it refuses as too big is sent again in smaller
+// ones: see Batcher.Submit.)
+func (c *SailBatch) Limits() (int, int) { return 100 << 20, 20000 }
 
 // item is a request as a submission has it.
 func (c *SailBatch) item(r BatchRequest) ([]byte, error) {

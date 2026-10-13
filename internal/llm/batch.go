@@ -431,15 +431,58 @@ func (b *Batcher) Submit(ctx context.Context, jobs []BatchJob) (int, error) {
 	if b.MaxRequests > 0 {
 		maxReqs = b.MaxRequests
 	}
+	// A batch the API says is too big (by its reckoning: Sail's isn't the
+	// bytes sent) is sent again in batches half as big, from where it
+	// started; those before it were sent, and are saved.
+	sent := 0
+	for {
+		n, err := b.submit(ctx, jobs, maxBytes, maxReqs)
+		sent += n
+		var big *tooBig
+		if !errors.As(err, &big) {
+			return sent, err
+		}
+		if big.jobs <= 1 {
+			return sent, big.err // as small as it goes
+		}
+		maxBytes /= 2
+		b.logf("📦 the API said that batch was too big, so on in batches of %s\n", sizeOf(maxBytes))
+		jobs = jobs[big.from:]
+	}
+}
+
+// tooBig is a batch the API refused as too big, of jobs pages starting
+// with jobs[from].
+type tooBig struct {
+	from, jobs int
+	err        error
+}
+
+func (e *tooBig) Error() string { return e.err.Error() }
+
+func sizeOf(n int) string {
+	if n >= 1<<20 {
+		return fmt.Sprintf("%d MiB", n>>20)
+	}
+	return fmt.Sprintf("%d KiB", n>>10)
+}
+
+// submit sends jobs in batches of at most maxBytes and maxReqs, saving each.
+func (b *Batcher) submit(ctx context.Context, jobs []BatchJob, maxBytes, maxReqs int) (int, error) {
 	sent := 0
 	var reqs []BatchRequest
 	st := b.newState()
 	size := 0
-	flush := func() error {
+	from := 0 // the job the batch being made starts with
+	flush := func(next int) error {
 		if len(reqs) == 0 {
 			return nil
 		}
 		batch, err := b.Client.Submit(ctx, reqs)
+		var he *httpError
+		if errors.As(err, &he) && he.status == http.StatusRequestEntityTooLarge {
+			return &tooBig{from: from, jobs: len(st.Jobs), err: err}
+		}
 		if err != nil {
 			return err
 		}
@@ -454,10 +497,10 @@ func (b *Batcher) Submit(ctx context.Context, jobs []BatchJob) (int, error) {
 		}
 		b.logf("📦 sent batch %s: %d pages in %d requests\n", batch.ID, len(st.Jobs), len(reqs))
 		sent += len(reqs)
-		reqs, st, size = nil, b.newState(), 0
+		reqs, st, size, from = nil, b.newState(), 0, next
 		return nil
 	}
-	for _, j := range jobs {
+	for i, j := range jobs {
 		jo := b.Options
 		jo.Kind = j.Kind
 		parts := Plan(j.Title, j.Text, jo)
@@ -472,7 +515,7 @@ func (b *Batcher) Submit(ctx context.Context, jobs []BatchJob) (int, error) {
 			n += sz
 		}
 		if len(reqs) > 0 && (size+n > maxBytes || len(reqs)+len(parts) > maxReqs) {
-			if err := flush(); err != nil {
+			if err := flush(i); err != nil {
 				return sent, err
 			}
 		}
@@ -487,7 +530,7 @@ func (b *Batcher) Submit(ctx context.Context, jobs []BatchJob) (int, error) {
 		}
 		size += n
 	}
-	return sent, flush()
+	return sent, flush(len(jobs))
 }
 
 func (b *Batcher) newState() *batchState {

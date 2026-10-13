@@ -97,3 +97,47 @@ func TestBatcherSplitsByBytes(t *testing.T) {
 		}
 	}
 }
+
+// A batch the API refuses as too big (by a limit of its own) is sent again
+// in smaller batches, from where it started; the ones before it stay sent.
+func TestBatcherTooBig(t *testing.T) {
+	const hidden = 30000
+	var mu sync.Mutex
+	var accepted []int
+	refused := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		defer mu.Unlock()
+		if len(b) > hidden {
+			refused++
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			fmt.Fprint(w, `{"error":{"message":"request body too large (max 256 MB)","type":"invalid_request_error"}}`)
+			return
+		}
+		accepted = append(accepted, strings.Count(string(b), `"custom_id"`))
+		fmt.Fprintf(w, `{"id":"batch_%d","request_counts":1,"created_at":1}`, len(accepted))
+	}))
+	defer srv.Close()
+	b := &Batcher{Client: &SailBatch{URL: srv.URL + "/v1/batches", Model: "m"}, Dir: t.TempDir(),
+		Options: Options{ChunkSize: 2000}, MaxBytes: 4 * hidden}
+	var jobs []BatchJob
+	for i := 0; i < 60; i++ {
+		jobs = append(jobs, BatchJob{Key: fmt.Sprint(i), Title: fmt.Sprintf("P%d(1)", i), Text: page(fmt.Sprintf("p%d", i), "-a <x> & -b <y>")})
+	}
+	sent, err := b.Submit(context.Background(), jobs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	total := 0
+	for _, n := range accepted {
+		total += n
+	}
+	if refused == 0 || total != sent || sent < len(jobs) {
+		t.Errorf("refused %d, accepted %v (%d requests), sent %d for %d pages", refused, accepted, total, sent, len(jobs))
+	}
+	saved, _ := b.Pending()
+	if len(saved) != len(jobs) {
+		t.Errorf("%d of %d pages saved as pending", len(saved), len(jobs))
+	}
+}
