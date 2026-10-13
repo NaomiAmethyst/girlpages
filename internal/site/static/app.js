@@ -223,13 +223,18 @@ async function listInto(listing, plan, first, { pageURL = null, letters = null, 
     return null;
   }
   let page = plan.pageOf(first);
+  // The address it follows along with is the one it was shown at, or last
+  // set: once something else is being shown (or loaded, out of sight, while
+  // this one's still on the screen), it leaves the address alone.
+  let owned = location.href;
   const list = new VirtualList(listing, {
     count: chunks, load: chunkHTML,
     onChunk: pageURL ? (n) => {
       const p = plan.pageOf(n);
-      if (p === page || (inApp && location.href !== routingFor)) return;
+      if (p === page || location.href !== owned || (inApp && location.href !== routingFor)) return;
       page = p;
       history.replaceState(history.state, "", pageURL(p));
+      owned = location.href;
       if (inApp) shown = routingFor = renderedFor = revealedFor = location.href;
     } : undefined,
   });
@@ -498,6 +503,8 @@ let routingFor = "";     // the address being shown; views for others are droppe
 let afterShow = null;    // where a view wants scrolling to, once it's shown
 let renderedFor = "";    // the address whose view is in place
 let revealedFor = "";    // the address whose view is shown
+let pending = "";        // the address being routed, until it's done
+let showingStatic = false; // whether the page's own view is shown
 
 // reveal shows the view in place, if it's still wanted: views that go on
 // working once they're showing something (search) call it early.
@@ -638,9 +645,17 @@ async function route() {
 // point at something since removed, it's refreshed and shown again.
 async function main() {
   const url = location.href;
-  if (url === shown) return;
+  // The same address again (popstate and hashchange both fire for one
+  // change) is left alone while it's being shown, or once it is; but if
+  // its view was dropped (the address moved meanwhile), following its
+  // link again shows it.
+  if (url === shown && (pending === url || revealedFor === url || showingStatic)) return;
   shown = url;
-  if (history.state?.own || (location.pathname + location.search === docURL && !isRoute(location.hash))) return showStatic();
+  showingStatic = false;
+  if (history.state?.own || (location.pathname + location.search === docURL && !isRoute(location.hash))) {
+    showingStatic = true;
+    return showStatic();
+  }
   if (!viewOf(new URL(url))) return location.reload();
   routingFor = url;
   afterShow = null;
@@ -649,6 +664,7 @@ async function main() {
     app.innerHTML = '<div class="card waiting"><div class="spinner">💅</div><p>getting it ready, bestie…</p></div>';
     showApp();
   }, 300);
+  pending = url;
   try {
     await route();
   } catch (e) {
@@ -663,6 +679,7 @@ async function main() {
     if (e) oops(e instanceof TypeError ? "you're offline, and this isn't saved yet 📵" : `something broke 💔 ${e.message}`);
   }
   clearTimeout(slow);
+  if (pending === url) pending = "";
   reveal();
 }
 
