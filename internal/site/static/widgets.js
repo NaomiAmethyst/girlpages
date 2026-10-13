@@ -4,6 +4,7 @@
 // Bits of pages: save buttons, and the sources' menus.
 
 import { html } from "./html.js";
+import { errorKind } from "./cache.js";
 
 // sourceNav is a manifest's sources as chips, as site.sourceChips makes
 // them: everything first, then each distribution, with a menu of its
@@ -62,8 +63,8 @@ export function saveButton(button, cache, key, src = "") {
       const { pages, failed } = part ? await cache.saveSearch(part, { progress }) : await cache.save(key, { src, progress });
       button.textContent = failed ? `💔 ${failed} of ${pages} didn't save · try again` : await label();
       button.dispatchEvent(new CustomEvent("saved", { bubbles: true }));
-    } catch {
-      button.textContent = "📵 can't save while offline";
+    } catch (e) {
+      button.textContent = errorKind(e) === "offline" ? "📵 can't save while offline" : `💔 couldn't save: ${e.message}`;
     }
     button.disabled = false;
   });

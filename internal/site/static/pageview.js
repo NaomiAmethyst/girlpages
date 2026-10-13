@@ -5,6 +5,7 @@
 
 import { html, raw } from "./html.js";
 import { renderHTML, renderOriginalHTML } from "./render.js";
+import { errorKind } from "./cache.js";
 import { chapter, isSeries, sectionLabel, sourceLabel } from "./manual.js";
 
 // createPageView makes the page view for an app: ctx has its element (el),
@@ -84,8 +85,8 @@ export function createPageView({ el: app, base, listing, variant, browse, static
     try {
       l = await listing(name, sec);
     } catch (e) {
-      if (e instanceof TypeError) return { error: `you're offline, and ${name}(${sec}) isn't saved 📵` };
-      if (e.status !== 404) throw e;
+      if (errorKind(e) === "offline") return { error: `you're offline, and ${name}(${sec}) isn't saved 📵` };
+      if (errorKind(e) !== "missing") throw e;
       return { error: `there's no ${name}(${sec}) here 😭` };
     }
     rest = [...rest];

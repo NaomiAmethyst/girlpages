@@ -21,7 +21,7 @@
 // views are views.js's and pageview.js's.
 
 import { Router } from "./router.js";
-import { repoCache } from "./cache.js";
+import { repoCache, errorKind } from "./cache.js";
 import { namePath, listingPath, variantPath } from "./format.js";
 import { pageURL, listingURL as listingAt, browseURL } from "./urls.js";
 import { viewOf, parse, legacyRoute } from "./routes.js";
@@ -77,12 +77,12 @@ function createApp(el) {
       try {
         await route(nav);
       } catch (e) {
-        if (e.status === 404 && nav.current() && await cache.revalidate()) return route(nav);
+        if (errorKind(e) === "missing" && nav.current() && await cache.revalidate()) return route(nav);
         throw e;
       }
     },
     handles: (url) => !!viewOf(new URL(url), base),
-    onError: (nav, e) => oops(nav, e instanceof TypeError ? "you're offline, and this isn't saved yet 📵" : `something broke 💔 ${e.message}`),
+    onError: (nav, e) => oops(nav, errorKind(e) === "offline" ? "you're offline, and this isn't saved yet 📵" : `something broke 💔 ${e.message}`),
     waiting: '<div class="card waiting"><div class="spinner">💅</div><p>getting it ready, bestie…</p></div>',
   });
 

@@ -7,9 +7,12 @@
 // static listings use it to scroll through all their pages, and the browse
 // app for its own listings.
 
+import { errorKind } from "./cache.js";
+
 // How near the screen a chunk loads, and how far before it's emptied.
 const NEAR = 1500;
 const FAR = 4000;
+
 
 export class VirtualList {
   // container holds div.chunk[data-chunk] elements, numbered from 1, of
@@ -128,7 +131,7 @@ export class VirtualList {
       this.say(this.bottom, "");
     } catch (e) {
       this.say(this.top, "");
-      this.say(this.bottom, e instanceof TypeError ? "📵 you're offline, so that's all for now" : `💔 ${e.message}`);
+      this.say(this.bottom, errorKind(e) === "offline" ? "📵 you're offline, so that's all for now" : `💔 ${e.message}`);
     } finally {
       this.busy = false;
     }

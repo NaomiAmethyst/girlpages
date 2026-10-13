@@ -5,7 +5,7 @@
 // chapter's index, a chunk at a time, scrolling through all of them.
 
 import { VirtualList } from "./vlist.js";
-import { idle } from "./cache.js";
+import { idle, errorKind } from "./cache.js";
 import { html } from "./html.js";
 import { rows, chapterShardsOf } from "./format.js";
 import { chapter, isSeries, letterOf, nameCmp } from "./manual.js";
@@ -240,7 +240,7 @@ export class Listing {
         try {
           await this.plan.load(todo.shift());
         } catch (e) {
-          if (e instanceof TypeError) offline = true;
+          if (errorKind(e) === "offline") offline = true;
         }
       }
     };

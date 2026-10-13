@@ -44,6 +44,33 @@ async function fetchText(url, init) {
   return r.text();
 }
 
+// A RepoError is a repository file that couldn't be read. Its kind is
+// "offline" (there's no network, and no copy kept), "missing" (the
+// repository hasn't it: HTTP 404), or "broken" (anything else: another
+// HTTP error, or a file that isn't JSON).
+export class RepoError extends Error {
+  constructor(kind, message, { status = 0, cause } = {}) {
+    super(message, { cause });
+    this.kind = kind;
+    this.status = status;
+  }
+}
+
+// errorKind is what kind of failure an error is: a RepoError's kind, or
+// "broken" for anything else (a bug, say: not "offline", which only a
+// fetch can say).
+export const errorKind = (e) => (e instanceof RepoError ? e.kind : "broken");
+
+// repoError is what a failed fetch of path means: offline if there was no
+// answer (a TypeError, from fetch) or none in time, else by its status.
+function repoError(e, path) {
+  if (e instanceof RepoError) return e;
+  const status = (e && e.status) || 0;
+  const kind = status ? (status === 404 ? "missing" : "broken")
+    : e instanceof TypeError || e?.name === "AbortError" || e?.name === "TimeoutError" ? "offline" : "broken";
+  return new RepoError(kind, `${path}: ${e?.message || e}`, { status, cause: e });
+}
+
 // CacheStore keeps files in the Cache API, by path. Its methods never
 // throw: it's only a cache.
 export class CacheStore {
@@ -149,16 +176,30 @@ export class RepoCache {
     this.inflight = new Map(); // refreshes under way, by path
   }
 
-  // get returns the parsed JSON at path (relative to the repository).
+  // get returns the parsed JSON at path (relative to the repository). It
+  // fails with a RepoError.
   async get(path) {
     const text = IMMUTABLE.test(path) ? await this.immutable(path) : await this.mutable(path);
-    return JSON.parse(text);
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      throw new RepoError("broken", `${path}: ${e.message}`, { cause: e });
+    }
+  }
+
+  // fetch fetches a file from the repository, failing with a RepoError.
+  async fetch(path, init) {
+    try {
+      return await this.fetchText(this.repo + path, init);
+    } catch (e) {
+      throw repoError(e, path);
+    }
   }
 
   async immutable(path) {
     const hit = await this.store.get(path);
     if (hit !== null) return hit;
-    const text = await this.fetchText(this.repo + path);
+    const text = await this.fetch(path);
     await this.store.put(path, text);
     return text;
   }
@@ -176,7 +217,7 @@ export class RepoCache {
     try {
       return await this.fetchMutable(path, hit !== null);
     } catch (e) {
-      if (hit !== null && e.status === undefined) return hit; // offline: use what we have
+      if (hit !== null && errorKind(e) === "offline") return hit; // use what we have
       throw e;
     }
   }
@@ -184,7 +225,7 @@ export class RepoCache {
   async fetchMutable(path, quick) {
     const init = { cache: "no-cache" };
     if (quick && typeof AbortSignal !== "undefined" && AbortSignal.timeout) init.signal = AbortSignal.timeout(NETWORK_TIMEOUT);
-    const text = await this.fetchText(this.repo + path, init);
+    const text = await this.fetch(path, init);
     await this.store.put(path, text);
     this.stale.delete(path);
     if (path === "manifest.json") this.sawManifest(text);
@@ -307,7 +348,7 @@ export class RepoCache {
         try {
           await one(p);
         } catch (e) {
-          if (e instanceof TypeError) throw e; // offline: stop
+          if (errorKind(e) === "offline") throw e; // stop
           failed++;
         }
         progress(++done, pages.length);

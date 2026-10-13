@@ -5,7 +5,7 @@
 // browser, fetching only the shards a query needs. This is the same
 // algorithm as Searcher in internal/repo/search.go; keep them in step.
 
-import { repoCache } from "./cache.js";
+import { repoCache, errorKind } from "./cache.js";
 import { shardsOf, rows, namePath } from "./format.js";
 import { browseURL, pageURL } from "./urls.js";
 import { chapter } from "./manual.js";
@@ -202,7 +202,7 @@ export class Searcher {
         sh = await this.shard("grams", r.sha256);
       } catch (e) {
         // Offline without typo matching saved: search without it.
-        if (!(e instanceof TypeError)) throw e;
+        if (errorKind(e) !== "offline") throw e;
         this.missedTypos = true;
         return;
       }
@@ -344,7 +344,7 @@ export async function directPage(query, searcher) {
       await searcher.cache.get(namePath(name, x));
       return { name, sec: x };
     } catch (e) {
-      if (e.status !== 404) return null;
+      if (errorKind(e) !== "missing") return null;
     }
   }
   return null;
@@ -489,8 +489,7 @@ export async function searchPage(box, params, { current = () => true, signal = n
     }
     await page();
   } catch (e) {
-    // fetch fails with a TypeError when there's no network at all.
-    status.textContent = e instanceof TypeError && e.status === undefined
+    status.textContent = errorKind(e) === "offline"
       ? "you're offline 📵 and this search needs bits that aren't saved yet. ones you've done before still work!"
       : `search broke 💔 ${e.message}`;
   }
