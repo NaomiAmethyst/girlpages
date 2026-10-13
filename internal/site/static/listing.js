@@ -170,6 +170,17 @@ export function chunkMaker(plan) {
 // frames waits for the browser to lay out and paint.
 const frames = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
 
+// The listings there are (an app's, and a static page's taken over), for
+// finding the one on the screen.
+/** @type {Set<Listing>} */
+const live = new Set();
+
+// shownListing is the listing on the screen, if there is one.
+export function shownListing() {
+  for (const l of live) if (l.el.checkVisibility()) return l;
+  return null;
+}
+
 // A Listing scrolls through a plan in a listing element (.listing) that
 // holds chunk first: loading chunks as they're neared (VirtualList), and
 // all of them meanwhile, in plan.order (letters' first chunks, then the
@@ -200,6 +211,8 @@ export class Listing {
     // page before it shows above (a static page taken over keeps its
     // first entry where it was): the address follows once that changes.
     this.from = 0;
+    // How many seeks there have been, so a later one wins.
+    this.seeks = 0;
     this.onLetter = (e) => {
       const a = e.target.closest("a[href]");
       const l = a && a.textContent.trim();
@@ -212,6 +225,7 @@ export class Listing {
 
   // start sets it going.
   async start() {
+    if (!this.dead) live.add(this);
     const chunks = Math.max(1, this.plan.count);
     if (!("IntersectionObserver" in globalThis)) {
       // All of it at once: there's no watching the screen.
@@ -286,8 +300,43 @@ export class Listing {
     }
   }
 
+  // seek goes to the first entry whose name starts with prefix (ignoring
+  // case), or the first after where it would be, and highlights it. It
+  // resolves to whether there was one.
+  /** @param {string} prefix @returns {Promise<boolean>} */
+  async seek(prefix) {
+    const mine = ++this.seeks;
+    const p = prefix.toLowerCase();
+    const at = (name) => name.toLowerCase().startsWith(p) || nameCmp(name.toLowerCase(), p) >= 0;
+    /** @param {ParentNode} root */
+    const find = (root) => [.../** @type {NodeListOf<HTMLElement>} */ (root.querySelectorAll("li[data-name]"))].find(li => at(li.dataset.name || "")) || null;
+    /** @type {Element | null} */
+    let li = null;
+    if (!this.list) {
+      li = find(this.el);
+      li?.scrollIntoView({ block: "center" });
+    } else {
+      // The chunk it'd be in, or a later one (filtered listings' chunks
+      // can be empty).
+      for (let n = this.plan.chunkOf(p); n <= this.plan.count && !this.dead; n++) {
+        const items = await this.plan.load(n);
+        if (mine !== this.seeks) return false; // a later seek's going on
+        if (!items.some(it => at(it.name))) continue;
+        const got = await this.list.jump(n, find);
+        li = got.matches("li") ? got : null;
+        break;
+      }
+    }
+    if (!li) return false;
+    const found = li;
+    found.classList.add("found");
+    setTimeout(() => found.classList.remove("found"), 1500);
+    return true;
+  }
+
   // destroy stops everything it set going.
   destroy() {
+    live.delete(this);
     this.dead = true;
     this.list?.destroy();
     this.letters?.removeEventListener("click", this.onLetter);

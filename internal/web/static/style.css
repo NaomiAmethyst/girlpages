@@ -428,3 +428,28 @@ details.versions li { padding: 0.25rem 0; }
 /* search results waiting for what they say about themselves */
 ul.pages li.loading { opacity: 0.5; }
 ul.pages li.loading .name { color: var(--muted); }
+
+/* Keys (static/keys.js): what's been typed to jump to, the entry it found,
+   and the "go to page" box. */
+.typed {
+  position: fixed; z-index: 20; left: 50%; bottom: 1.5rem; transform: translateX(-50%);
+  padding: 0.4rem 1rem; border-radius: 999px; font-weight: 700;
+  background: var(--card); border: 2px solid var(--accent); box-shadow: var(--shadow);
+}
+ul.pages li.found { background: var(--accent-soft); outline: 2px solid var(--accent); }
+dialog.goto {
+  width: min(36rem, 92vw); margin: 12vh auto auto; padding: 1rem 1.25rem; color: var(--text);
+}
+dialog.goto::backdrop { background: rgb(0 0 0 / 0.35); }
+dialog.goto label { display: flex; flex-direction: column; gap: 0.5rem; font-weight: 700; }
+dialog.goto input {
+  font: inherit; padding: 0.55rem 0.9rem; border-radius: 999px;
+  border: 2px solid var(--card-edge); background: var(--bg); color: var(--text); outline: none;
+}
+dialog.goto input:focus { border-color: var(--accent); }
+dialog.goto .suggestions { margin: 0.75rem 0 0.25rem; }
+dialog.goto .suggestions li.picked { background: var(--accent-soft); }
+dialog.goto .sub { color: var(--muted); font-size: 0.8rem; margin: 0.25rem 0 0; }
+footer .keys { margin: 0.5rem 0 0; }
+footer kbd { font: inherit; font-size: 0.8em; padding: 0 0.35em; border: 1px solid var(--card-edge); border-radius: 0.35em; background: var(--card); }
+@media (hover: none) { footer .keys { display: none; } }

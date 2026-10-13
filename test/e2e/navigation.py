@@ -266,6 +266,32 @@ async def main():
             check(path(page) == "/man/8/admin003/" and s[0] == "static", f"back past the search: {path(page)} {s}")
             await ctx.close()
 
+            print("keys: /, Esc, typing to jump, Ctrl+Enter")
+            ctx, page = await fresh("/section/1/", width=1100)
+            await page.keyboard.press("/")
+            check(await page.evaluate("document.activeElement?.name") == "q", "/ goes to the search box")
+            await page.keyboard.press("Escape")
+            check(await page.evaluate("document.activeElement === document.body"), "Esc leaves it")
+            target = sorted(n for n in NAMES["1"] if n.startswith("m"))[0]
+            await page.keyboard.type(target[:5], delay=40)
+            await page.wait_for_timeout(700)
+            found = await page.evaluate("""() => { const f = document.querySelector('li.found');
+                return f && [f.dataset.name, Math.round(f.getBoundingClientRect().top)] }""")
+            check(found is not None and found[0] == target and 0 <= found[1] < 400, f"typing {target[:5]!r} jumps to {target}: {found}")
+            await tap(page, base + "/section/8/")
+            await shown(page)
+            await page.keyboard.press("Escape")
+            s = await shown(page)
+            check(s[0] == "static" and path(page).startswith("/section/1/"), f"Esc goes back: {path(page)} {s}")
+            await page.keyboard.press("Control+Enter")
+            await page.wait_for_timeout(200)
+            check(await page.evaluate("!!document.querySelector('dialog.goto[open]')"), "Ctrl+Enter opens go to page")
+            await page.keyboard.type("admin003(8)")
+            await page.keyboard.press("Enter")
+            s = await shown(page)
+            check(path(page) == "/man/8/admin003/" and "ADMIN003" in s[1], f"and goes there: {path(page)} {s}")
+            await ctx.close()
+
             print("no script errors")
             for e in errors:
                 check(False, e)

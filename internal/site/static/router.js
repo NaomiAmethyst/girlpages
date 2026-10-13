@@ -163,7 +163,9 @@ export class Router {
   navigate(href) {
     const u = new URL(href, location.href).href;
     this.remember();
-    history.pushState({}, "", u);
+    // How many entries of the site's are behind this one, for going back
+    // without leaving it.
+    history.pushState({ depth: (history.state?.depth ?? 0) + 1 }, "", u);
     return this.started ? this.sync() : this.start();
   }
 

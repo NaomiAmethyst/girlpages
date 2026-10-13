@@ -11,6 +11,7 @@ import { repoCache, idle } from "./cache.js";
 import { saveButton, menus } from "./widgets.js";
 import { isRoute } from "./routes.js";
 import { Drawer } from "./draw.js";
+import { keys } from "./keys.js";
 
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Naomi Persephone Amethyst <naomi@amethyst.name>
@@ -44,7 +45,7 @@ function forgetLocalStorage() {
 // within the site, or searching: from then on the static pages are only
 // what the first visit, search engines, and browsers without JavaScript
 // see. History leads back. A link's files are fetched as soon as it's
-// pointed at or touched.
+// pointed at or touched. It returns how it follows a link.
 function startApp(base) {
   /** @type {Promise<any> | null} */
   let loading = null;
@@ -98,6 +99,7 @@ function startApp(base) {
   };
   for (const ev of ["pointerover", "touchstart", "focusin"]) document.addEventListener(ev, warm, { passive: true });
   idle(() => load().catch(() => {}));
+  return go;
 }
 
 // boot runs on every page: it registers the service worker, starts
@@ -113,8 +115,11 @@ function boot() {
   menus();
   // A long page is drawn ahead of scrolling (see draw.js).
   new Drawer().watch(document.querySelectorAll(".content > *, .original > *"));
-  if (!repo) return;
-  startApp(base);
+  if (!repo) {
+    keys({ go: (href) => { location.href = href; }, base, repo: "" });
+    return;
+  }
+  keys({ go: startApp(base), base, repo });
   const cache = repoCache(repo);
   cache.watch();
   // A static page read (or listing seen) is kept, so the browse app can

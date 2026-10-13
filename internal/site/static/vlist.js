@@ -196,14 +196,18 @@ export class VirtualList {
     }
   }
 
-  // jump shows chunk n, scrolled to the element with id there (or its top).
-  // If n isn't in the list, the list starts again from it.
-  async jump(n, id = "") {
+  // jump shows chunk n, scrolled to an element there: find is its id, or
+  // a function finding it in the chunk; or else the chunk's top. If n
+  // isn't in the list, the list starts again from it. It resolves to the
+  // element it went to.
+  /** @param {number} n @param {string | ((c: HTMLElement) => Element | null)} [find] @returns {Promise<Element>} */
+  async jump(n, find = "") {
     let c = this.chunk(n);
     if (!c) {
       const html = await this.get(n);
       for (const old of this.chunks()) {
         this.far.unobserve(old);
+        this.drawer.unwatch(old.querySelectorAll(".block"));
         old.remove();
       }
       c = this.make(n, html);
@@ -212,7 +216,8 @@ export class VirtualList {
       this.earlier.hidden = n <= 1;
     }
     this.restore(c);
-    const target = () => (id && this.el.querySelector(`[id="${CSS.escape(id)}"]`)) || c;
+    const chunk = c;
+    const target = () => (typeof find === "function" ? find(chunk) : find && this.el.querySelector(`[id="${CSS.escape(find)}"]`)) || chunk;
     target().scrollIntoView();
     // Entries not laid out yet have guessed sizes (see style.css), so once
     // those around it are, put it back where it went, until it stays.
@@ -225,6 +230,7 @@ export class VirtualList {
     }
     this.track();
     this.fill();
+    return target();
   }
 }
 
