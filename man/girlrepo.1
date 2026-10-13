@@ -421,7 +421,7 @@ for git repositories, each showing the version of every page that source
 has.
 .B /search/
 searches every page from every source, all of their versions' text, and can
-keep to one source.
+keep to one source; by words, or by parts of words.
 Without
 .B \-\-url
 there are no absolute URLs, so no canonical links, OpenGraph URLs or sitemap.
@@ -488,7 +488,14 @@ Searches the published index the way the website does.
 .B \-\-repo
 searches a repository elsewhere;
 .B \-l
-sets how many results.
+sets how many results, and
+.B \-\-ngrams
+finds the words query words are anywhere inside of
+.RB ( dir
+finds
+.BR mkdir ),
+as the website's "parts of words" does, rather than only the words they
+start.
 .SS serve
 Serves
 .I dir

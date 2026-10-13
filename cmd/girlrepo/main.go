@@ -726,6 +726,7 @@ func (a *app) search(ctx context.Context, args []string) error {
 	fs := flags("search", "[options] QUERY...")
 	limit := fs.IntP("limit", "l", 20, "how many results")
 	from := fs.String("repo", "", "search this published repository URL instead")
+	ngrams := fs.Bool("ngrams", false, "find words the query's words are anywhere inside of (dir finds mkdir), not just words they start")
 	if err := parse(fs, args); err != nil {
 		return err
 	}
@@ -738,6 +739,9 @@ func (a *app) search(ctx context.Context, args []string) error {
 		base = filepath.Join(a.dir, "repo")
 	}
 	sr := &repo.Searcher{Client: repo.NewClient(base, 30*time.Second)}
+	if *ngrams {
+		sr.Mode = repo.ModeNgrams
+	}
 	hits, err := sr.Search(ctx, strings.Join(fs.Args(), " "), *limit)
 	if err != nil {
 		return err

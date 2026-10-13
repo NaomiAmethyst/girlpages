@@ -306,15 +306,20 @@ func TestSearchJS(t *testing.T) {
 	defer srv.Close()
 
 	type query struct {
-		Q   string `json:"q"`
-		Src string `json:"src"`
+		Q    string `json:"q"`
+		Src  string `json:"src"`
+		Mode string `json:"mode"`
 	}
-	queries := []query{{"ls", ""}, {"list", ""}, {"lsit", ""}, {"directory contents", ""}, {"git-commit", ""}, {"commit", ""},
-		{"[", ""}, {"printf", ""}, {"prntf", ""}, {"ssl", ""}, {"fill", ""}, {"filler07", ""}, {"zzzz", ""}, {"hidden", ""},
-		{"lists page", ""}, {"filler", "arch/rolling"}, {"filler", "arch"}, {"filler", "debian/trixie"}, {"ls", "arch"}}
+	queries := []query{{"ls", "", ""}, {"list", "", ""}, {"lsit", "", ""}, {"directory contents", "", ""}, {"git-commit", "", ""}, {"commit", "", ""},
+		{"[", "", ""}, {"printf", "", ""}, {"prntf", "", ""}, {"ssl", "", ""}, {"fill", "", ""}, {"filler07", "", ""}, {"zzzz", "", ""}, {"hidden", "", ""},
+		{"lists page", "", ""}, {"filler", "arch/rolling", ""}, {"filler", "arch", ""}, {"filler", "debian/trixie", ""}, {"ls", "arch", ""},
+		// Parts of words.
+		{"ill", "", "ngrams"}, {"ommit", "", "ngrams"}, {"rintf", "", "ngrams"}, {"list", "", "ngrams"}, {"ls", "", "ngrams"},
+		{"ectory cont", "", "ngrams"}, {"ill", "arch", "ngrams"}, {"ectory", "", ""}}
 	sr := &repo.Searcher{Client: repo.NewClient(srv.URL+"/repo", 5*time.Second)}
 	var want []string
 	for _, q := range queries {
+		sr.Mode = q.Mode
 		hits, err := sr.SearchIn(context.Background(), q.Q, q.Src, 10)
 		if err != nil {
 			t.Fatal(err)
@@ -323,11 +328,16 @@ func TestSearchJS(t *testing.T) {
 		for _, h := range hits {
 			line = append(line, fmt.Sprintf("%s(%s)%s=%g[%s]", h.Name, h.Section, h.Description, h.Score, strings.Join(h.Sources, " ")))
 		}
-		want = append(want, q.Q+"@"+q.Src+": "+strings.Join(line, " "))
+		want = append(want, q.Q+"@"+q.Src+"/"+q.Mode+": "+strings.Join(line, " "))
 	}
-	if !strings.HasPrefix(want[0], "ls@: ls(1)") || !strings.Contains(want[2], "ls(1)") ||
-		!strings.Contains(want[15], "filler00(3)") || strings.Contains(want[15], "filler01(3)") || want[18] != "ls@arch: " {
+	if !strings.HasPrefix(want[0], "ls@/: ls(1)") || !strings.Contains(want[2], "ls(1)") ||
+		!strings.Contains(want[15], "filler00(3)") || strings.Contains(want[15], "filler01(3)") || want[18] != "ls@arch/: " {
 		t.Fatalf("Go search found the wrong things: %q", want)
+	}
+	// Parts of words are found by ngrams, and not otherwise.
+	if !strings.Contains(want[19], "filler") || !strings.Contains(want[20], "git-commit(1)") || !strings.Contains(want[21], "printf") ||
+		want[26] != "ectory@/: " {
+		t.Fatalf("ngrams found the wrong things: %q", want[19:])
 	}
 
 	qs, _ := json.Marshal(queries)
@@ -335,8 +345,8 @@ func TestSearchJS(t *testing.T) {
 const { Searcher } = await import(%q);
 const s = new Searcher(%q);
 for (const q of %s) {
-  const hits = await s.search(q.q, 10, q.src);
-  console.log(q.q + "@" + q.src + ": " + hits.map(h => h.name + "(" + h.section + ")" + h.description + "=" + h.score + "[" + h.sources.join(" ") + "]").join(" "));
+  const hits = await s.search(q.q, 10, q.src, null, q.mode || "words");
+  console.log(q.q + "@" + q.src + "/" + q.mode + ": " + hits.map(h => h.name + "(" + h.section + ")" + h.description + "=" + h.score + "[" + h.sources.join(" ") + "]").join(" "));
 }`, staticFile(t, "search.js"), srv.URL+"/repo/", qs))
 	gotLines := strings.Split(strings.TrimSpace(string(got)), "\n")
 	for i := range want {

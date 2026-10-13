@@ -101,6 +101,7 @@ export function createViews({ el: app, base, cache, manifest, browse, listingURL
       <div class="crumbs"><a href="${base}">home</a> › search</div>
       <div class="pagehead"><h1>🔎 search</h1><p class="sub" id="search-status">type something up there, bestie</p>
       ${"caches" in globalThis && html`<p class="save"><button type="button" class="pill" data-save-search="words"></button><button type="button" class="pill" data-save-search="typos"></button><a class="pill" id="search-saved" hidden></a></p>`}</div>
+      <nav class="chips modes" id="search-mode" aria-label="How words match"></nav>
       <nav class="chips sources" id="search-sources" aria-label="Search within a source"></nav><ul class="pages" id="search-results"></ul></div>`);
     if (!nav.current()) return;
     for (const b of app.querySelectorAll("button[data-save-search]")) saveButton(b, cache, "search:" + b.dataset.saveSearch);

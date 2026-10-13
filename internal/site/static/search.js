@@ -10,12 +10,19 @@ import { shardsOf, rows, namePath } from "./format.js";
 import { browseURL, pageURL } from "./urls.js";
 import { chapter } from "./manual.js";
 import { sourceNav } from "./widgets.js";
+import { html } from "./html.js";
 
 const PREFIX_WEIGHT = 0.5;
 const PREFIX_CAP = 100; // as in search.go
 const FUZZY_WEIGHT = 0.3;
 const MAX_PREFIX_WORDS = 50;
 const MAX_FUZZY_WORDS = 5;
+// In ngrams mode (see search.go), words a query word is inside of.
+const INFIX_WEIGHT = PREFIX_WEIGHT;
+const MAX_INFIX_WORDS = 100;
+
+// Search modes, as search.go's: words, or ngrams (parts of words too).
+export const MODES = ["words", "ngrams"];
 
 // Compare strings by code point, which is how Go orders the index.
 export function cmp(a, b) {
@@ -234,12 +241,59 @@ export class Searcher {
     return cs.slice(0, MAX_FUZZY_WORDS).map(c => c.w);
   }
 
-  async term(t) {
+  // innerGrams is a word's trigrams but those marking its start and end.
+  static innerGrams(t) {
+    const rs = [...t], out = new Set();
+    for (let i = 0; i + 3 <= rs.length; i++) out.add(rs.slice(i, i + 3).join(""));
+    return [...out];
+  }
+
+  // infixWords lists indexed words (of those the trigram index has) that t
+  // is inside of, but isn't, those in the most pages first, as in Go.
+  async infixWords(t) {
+    const gs = Searcher.innerGrams(t);
+    if (!gs.length) return [];
+    /** @type {Map<string, number> | null} */
+    let cands = null;
+    for (const g of gs) {
+      const r = findRange(this.grams, g);
+      if (!r) return [];
+      let sh;
+      try {
+        sh = await this.shard("grams", r.sha256);
+      } catch (e) {
+        // Offline without typo matching saved: whole words only.
+        if (errorKind(e) !== "offline") throw e;
+        this.missedTypos = true;
+        return [];
+      }
+      const ws = Object.hasOwn(sh.grams, g) ? sh.grams[g] : [], ns = sh.pages[g] || [];
+      /** @type {Map<string, number>} */
+      const next = new Map();
+      ws.forEach((w, i) => { if (!cands || cands.has(w)) next.set(w, i < ns.length ? ns[i] : 0); });
+      cands = next;
+      if (!cands.size) return [];
+    }
+    const cs = [...(cands || [])].filter(([w]) => w !== t && w.includes(t));
+    cs.sort((a, b) => b[1] - a[1] || cmp(a[0], b[0]));
+    return cs.slice(0, MAX_INFIX_WORDS).map(c => c[0]);
+  }
+
+  async term(t, mode = "words") {
     const out = new Map();
     const exact = await this.postings(t);
     for (const [id, sc] of exact) addBest(out, id, sc);
     for (const w of await this.prefixWords(t)) {
       for (const [id, sc] of await this.postings(w)) addBest(out, id, Math.min(sc, PREFIX_CAP) * PREFIX_WEIGHT);
+    }
+    if (mode === "ngrams" && [...t].length >= 3) {
+      const lt = [...t].length;
+      for (const w of await this.infixWords(t)) {
+        // The more of the word it is, the better, as in Go.
+        const fit = lt / [...w].length;
+        for (const [id, sc] of await this.postings(w)) addBest(out, id, sc * INFIX_WEIGHT * fit);
+      }
+      return out;
     }
     if (!exact.length) {
       for (const w of await this.fuzzyWords(t)) {
@@ -253,8 +307,8 @@ export class Searcher {
   // {name, section, description, sources, score}. source, if given, keeps
   // to pages from that source ("debian", "debian/trixie"), and accept, if
   // given, to hits it resolves true for.
-  async search(query, limit = 50, source = "", accept = null) {
-    const ranked = await this.rank(query);
+  async search(query, limit = 50, source = "", accept = null, mode = "words") {
+    const ranked = await this.rank(query, mode);
     if (!source && !accept) {
       const top = limit > 0 ? ranked.slice(0, limit) : ranked;
       return Promise.all(top.map(async ([id, score]) => hit(await this.doc(id), score)));
@@ -285,13 +339,15 @@ export class Searcher {
 
   // rank finds the pages for a query, best first, as [doc id, score]
   // pairs: everything but what doc says about each.
-  async rank(query) {
+  // rank scores pages for a query, best first, as [id, score]s; mode is
+  // words or ngrams.
+  async rank(query, mode = "words") {
     this.missedTypos = false;
     await this.load();
     const terms = [...new Set(seriesTerms(tokens(query), this.manifest))];
     const whole = query.trim().toLowerCase();
     if (!terms.length && !whole) return [];
-    const perTerm = await Promise.all(terms.map(t => this.term(t)));
+    const perTerm = await Promise.all(terms.map(t => this.term(t, mode)));
     const bonus = new Map();
     if (whole && !/[ \t]/.test(whole)) {
       for (const [id, sc] of await this.postings(whole)) addBest(bonus, id, sc);
@@ -391,6 +447,32 @@ export async function searchPage(box, params, { current = () => true, signal = n
   const list = $("search-results");
   const base = box.dataset.base;
   const q = params.get("q") || "", src = params.get("src") || "";
+  // Whole words (and those they start), or parts of words too.
+  const mode = params.get("mode") === "ngrams" ? "ngrams" : "words";
+  const modes = $("search-mode");
+  if (modes) {
+    const link = (m) => {
+      const u = new URLSearchParams(params);
+      u.delete("saved");
+      if (m === "words") u.delete("mode");
+      else u.set("mode", m);
+      return `${base}search/?${u}`;
+    };
+    modes.innerHTML = String(html`<a class="pill${mode === "words" ? " on" : ""}" href="${link("words")}" title="whole words, and words they start">📝 words</a>
+      <a class="pill${mode === "ngrams" ? " on" : ""}" href="${link("ngrams")}" title="words they're anywhere inside of: dir finds mkdir">🧩 parts of words</a>`);
+  }
+  // The search box at the top keeps to the mode.
+  for (const f of /** @type {NodeListOf<HTMLFormElement>} */ (document.querySelectorAll("form.search"))) {
+    let m = /** @type {HTMLInputElement | null} */ (f.querySelector('input[name="mode"]'));
+    if (mode === "words") { m?.remove(); continue; }
+    if (!m) {
+      m = document.createElement("input");
+      m.type = "hidden";
+      m.name = "mode";
+      f.append(m);
+    }
+    m.value = mode;
+  }
   // Only pages saved for offline: asked for, or by default when offline.
   const savedOnly = params.has("saved") ? params.get("saved") === "1" : navigator.onLine === false;
   const toggle = /** @type {HTMLAnchorElement | null} */ (box.querySelector("#search-saved"));
@@ -410,6 +492,7 @@ export async function searchPage(box, params, { current = () => true, signal = n
     const href = (key) => {
       const u = new URLSearchParams({ q });
       if (key) u.set("src", key);
+      if (mode !== "words") u.set("mode", mode);
       return `${base}search/?${u}`;
     };
     if (chips && s.manifest.sources && s.manifest.sources.length) {
@@ -430,10 +513,11 @@ export async function searchPage(box, params, { current = () => true, signal = n
     if (direct && current()) {
       return go(src ? browseURL(base, { page: direct.name, sec: direct.sec, src }) : pageURL(base, direct.name, direct.sec));
     }
-    const ranked = await s.rank(q);
+    const ranked = await s.rank(q, mode);
     if (!current()) return;
     list.replaceChildren();
-    const typos = () => (s.missedTypos ? " (typo matching isn't saved, so typos won't be caught)" : "");
+    const typos = () => (!s.missedTypos ? "" : mode === "ngrams"
+      ? " (typo matching isn't saved, so it's whole words only)" : " (typo matching isn't saved, so typos won't be caught)");
     const none = () => { status.textContent = `nothing${saved} for “${q}”${where}, bestie 😭 try another word?${typos()}`; };
     if (!ranked.length) return none();
     const plural = (n) => `${n.toLocaleString()}${saved} page${n === 1 ? "" : "s"}`;

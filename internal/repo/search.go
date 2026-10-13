@@ -26,6 +26,9 @@ type Hit struct {
 // for browsers; keep them in step.
 type Searcher struct {
 	Client *Client
+	// Mode is how query words match the index's: ModeWords ("" too) or
+	// ModeNgrams.
+	Mode string
 
 	mu     sync.Mutex
 	man    *Manifest
@@ -35,6 +38,17 @@ type Searcher struct {
 	docs   *TableManifest
 	shards map[string]any
 }
+
+// Search modes.
+const (
+	// ModeWords finds words, the words they start, and (for words not in
+	// the index) words a typo or two away.
+	ModeWords = "words"
+	// ModeNgrams finds words, and the words they're anywhere inside of
+	// (dir finds mkdir and readdir), by the trigram index: words of three
+	// letters or more, that is; shorter ones are found as words.
+	ModeNgrams = "ngrams"
+)
 
 // Weights for words found other than exactly.
 const (
@@ -46,6 +60,10 @@ const (
 	fuzzyWeight    = 0.3
 	maxPrefixWords = 50
 	maxFuzzyWords  = 5
+	// Words a query word is inside of score as words it starts do, by how
+	// much of them it is, and the most common of them count.
+	infixWeight   = prefixWeight
+	maxInfixWords = 100
 )
 
 // Search finds up to limit pages for a query. Pages matching every word
@@ -237,6 +255,28 @@ func (s *Searcher) term(ctx context.Context, t string) (map[int]float64, error) 
 			addBest(out, p[0], float64(min(p[1], prefixCap))*prefixWeight)
 		}
 	}
+	if s.Mode == ModeNgrams && len([]rune(t)) >= 3 {
+		in, err := s.infixWords(ctx, t)
+		if err != nil {
+			return nil, err
+		}
+		lt := float64(len([]rune(t)))
+		for _, w := range in {
+			ps, err := s.postings(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			// The more of the word it is, the better: kdir finds mkdir
+			// before arcmkdir. (Uncapped, as prefixes aren't: halved and
+			// less than whole, it can't beat the word itself, and a page
+			// called mkdir should beat one with mkdir in its name.)
+			fit := lt / float64(len([]rune(w)))
+			for _, p := range ps {
+				addBest(out, p[0], float64(p[1])*infixWeight*fit)
+			}
+		}
+		return out, nil
+	}
 	if len(exact) == 0 {
 		fz, err := s.fuzzyWords(ctx, t)
 		if err != nil {
@@ -374,6 +414,74 @@ func (s *Searcher) fuzzyWords(ctx context.Context, t string) ([]string, error) {
 	})
 	var out []string
 	for i := 0; i < len(cs) && i < maxFuzzyWords; i++ {
+		out = append(out, cs[i].w)
+	}
+	return out, nil
+}
+
+// innerGrams is a word's trigrams but those marking its start and end:
+// what any word it's inside of has too.
+func innerGrams(t string) []string {
+	rs := []rune(t)
+	var out []string
+	for i := 0; i+3 <= len(rs); i++ {
+		out = append(out, string(rs[i:i+3]))
+	}
+	return dedupe(out)
+}
+
+// infixWords lists indexed words (of those the trigram index has) that t
+// is inside of, but isn't, those in the most pages first: the words having
+// every trigram t has, that really have t.
+func (s *Searcher) infixWords(ctx context.Context, t string) ([]string, error) {
+	gs := innerGrams(t)
+	if len(gs) == 0 {
+		return nil, nil
+	}
+	var cands map[string]int // word → how many pages have it
+	for _, g := range gs {
+		r := findRange(s.grams.Shards, g)
+		if r == nil {
+			return nil, nil
+		}
+		sh, err := s.shard(ctx, "grams", r.SHA256, func() any { return &GramShard{} })
+		if err != nil {
+			return nil, err
+		}
+		gsh := sh.(*GramShard)
+		next := map[string]int{}
+		for i, w := range gsh.Grams[g] {
+			n := 0
+			if i < len(gsh.Pages[g]) {
+				n = gsh.Pages[g][i]
+			}
+			if _, ok := cands[w]; cands == nil || ok {
+				next[w] = n
+			}
+		}
+		cands = next
+		if len(cands) == 0 {
+			return nil, nil
+		}
+	}
+	type cand struct {
+		w string
+		n int
+	}
+	var cs []cand
+	for w, n := range cands {
+		if w != t && strings.Contains(w, t) {
+			cs = append(cs, cand{w, n})
+		}
+	}
+	sort.Slice(cs, func(i, j int) bool {
+		if cs[i].n != cs[j].n {
+			return cs[i].n > cs[j].n
+		}
+		return cs[i].w < cs[j].w
+	})
+	var out []string
+	for i := 0; i < len(cs) && i < maxInfixWords; i++ {
 		out = append(out, cs[i].w)
 	}
 	return out, nil

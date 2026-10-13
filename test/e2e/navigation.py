@@ -292,6 +292,18 @@ async def main():
             check(path(page) == "/man/8/admin003/" and "ADMIN003" in s[1], f"and goes there: {path(page)} {s}")
             await ctx.close()
 
+            print("search by parts of words")
+            ctx, page = await fresh("/man/8/admin003/")
+            part = target = sorted(NAMES["8"])[5]
+            part = target[2:]
+            await tap(page, base + "/search/?" + f"q={part}&mode=ngrams")
+            await page.wait_for_timeout(1500)
+            names = await page.evaluate("[...document.querySelectorAll('#app #search-results li .name')].map(x => x.textContent)")
+            check(target in names, f"{part!r} finds {target} in parts of words: {names[:5]}")
+            on = await page.evaluate("document.querySelector('#app #search-mode a.on')?.textContent")
+            check(on is not None and "parts" in on, f"the mode's shown: {on}")
+            await ctx.close()
+
             print("no script errors")
             for e in errors:
                 check(False, e)
