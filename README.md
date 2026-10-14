@@ -135,6 +135,33 @@ same for a repo you name, and `girl --export DIR` writes your own cache out as
 a repo, with the package each page came from, for other machines to import
 or for `girlrepo` to publish.
 
+A repo has more than what's installed here, too: `girl -r` reads any page in
+it, in any version and variant, and searches it.
+
+```sh
+girl -r open                                  # open(1), installed or not
+girl -r --versions ls                         # the versions it has, and how to pick them
+girl -r --page-version debian/bookworm ls     # one of them (or 9.4, or a hash)
+girl -r --variant man ls                      # the original
+girl -r -k "list directory"                   # search it (--ngrams for words inside words)
+```
+
+### girlc
+
+Just want to read? `girlc` is the same thing on its own: a little `man` that
+only reads from a repo, for machines with no model, no cache, and not even
+man pages (`make girlc && sudo make install-girlc`, documented in
+`girlc(1)`). It takes the same options as `girl -r`, and reads `[repo] url`
+from girl's config, or `--repo`; packagers can build in a default with
+`make girlc GIRLC_REPO=https://…/repo`.
+
+```sh
+girlc ls                # ls(1), girlified
+girlc -a printf         # printf(1), (3) and (3p)
+girlc -k compress       # search
+girlc rfc 9110          # an RFC
+```
+
 ### Running one
 
 `girlrepo` (`make girlrepo`, documented in `girlrepo(1)`) builds them:
@@ -230,6 +257,7 @@ girl --model opus tar   # with a different model
 girl --no-cache tar     # ask the LLM fresh, without saving it
 girl --cached-only ls   # never call the LLM
 girl --repo URL ls      # try a girlpages repository first
+girl -r ls              # read it from the repository instead
 girl --raw ls           # the stored markup
 girl --doctor           # config, backend and cache status
 girl --html ls          # a standalone HTML page

@@ -18,6 +18,12 @@ girl \- an interface to the system reference manuals, but make it girly
 .IR page \ ...
 .br
 .B girl
+.B \-r
+.RI [ options ]
+.RI [ section ]
+.IR page \ ...
+.br
+.B girl
 .B \-\-bulk
 .RI [ options ]
 .RI [ section \ ...]
@@ -223,6 +229,75 @@ adds a website.
 limits it to some sections, and
 .B \-n
 says what would be exported.
+.SS "Remote options"
+These read pages straight from the repository (see
+.BR REPOSITORIES ),
+whether or not they're installed here, in any version and variant it has.
+Nothing is cached, and no model is asked.
+.BR girlc (1)
+does the same on its own, for machines without
+.BR girl .
+.TP
+.BR \-r ", " \-\-remote
+Read pages from the repository instead of this system.
+Pages are named as for
+.BR man :
+.RI [ section ]
+.IR page ,
+or
+.IR page ( section ),
+and a page named alone is the first by
+.BR man 's
+section order (in any case, as
+.B man
+finds them).
+.BR \-a ", " \-s " and " \-P
+work as they do for local pages, and
+.BR \-k " and " \-f
+search the repository rather than the system's
+.B whatis
+database:
+.B \-k
+searches for each argument, by the words in pages' names, descriptions and
+text (a quoted argument of several words finds pages with all of them first).
+If the latest version isn't girlified yet, its original is shown, saying
+which version is, if any.
+.TP
+.BR \-\-page\-version =\fIversion\fR
+Which version of a page to read: its version number
+.RB ( 9.7 ),
+where it's from
+.RB ( debian ", " debian/trixie
+or
+.BR "debian trixie" ,
+for the latest from there), or the start of its source hash.
+The default is the latest.
+.TP
+.BR \-\-variant =\fIname\fR
+Which variant to read:
+.B girl
+(the default),
+.B man
+(the original) or any other the repository has.
+.TP
+.B \-\-versions
+List a page's versions, with how to pick each, where it's from, and its
+variants, instead of reading it.
+.TP
+.B \-\-ngrams
+With
+.BR \-k ,
+also find words inside other words
+.RB ( dir
+finds
+.B mkdir
+and
+.BR readdir ),
+as the website's \(lqparts of words\(rq search does.
+.PP
+.BR \-\-page\-version ", " \-\-variant " and " \-\-versions
+imply
+.BR \-r .
 .SS "Bulk options"
 .TP
 .BR \-\-batch =\fIapi\fR
@@ -468,6 +543,13 @@ is set, since those ask for a page made just for you.
 .B \-\-bulk
 works without a model when a repository is configured, caching what the
 repository has.
+.PP
+.B girl \-r
+reads any page in the repository, installed here or not, in any version
+and variant (see
+.BR "Remote options" );
+so does
+.BR girlc (1).
 .SH CONFIGURATION
 Settings are read from the system configuration file, then the user
 configuration file (or the file given with
@@ -713,6 +795,25 @@ Browse the manual at
 Share conversions between machines: export on one, import on the others
 (the directory can be anywhere they can read, or a web server).
 .TP
+.B girl \-r open
+Read
+.BR open (1)
+from the repository, though it isn't installed.
+.TP
+.B girl \-r \-\-versions ls
+.PD 0
+.TP
+.B girl \-r \-\-page\-version debian/bookworm \-\-variant man ls
+.PD
+See which versions of
+.BR ls (1)
+the repository has, then read the original of Debian bookworm's.
+.TP
+.B girl \-r \-k \-\-ngrams dir
+Search the repository for pages about anything with
+.B dir
+in it.
+.TP
 .B girl \-\-repo https://example.org/repo \-\-bulk
 Fill the cache with every page the repository has girlified, converting the
 rest.
@@ -736,5 +837,6 @@ There is NO WARRANTY, to the extent permitted by law.
 .BR apropos (1),
 .BR whatis (1),
 .BR mandb (8),
+.BR girlc (1),
 .BR girlrepo (1),
 .BR claude (1)

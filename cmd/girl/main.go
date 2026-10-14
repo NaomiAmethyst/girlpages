@@ -15,7 +15,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -31,6 +30,7 @@ import (
 	"github.com/NaomiAmethyst/girlpages/internal/llm"
 	"github.com/NaomiAmethyst/girlpages/internal/manpage"
 	"github.com/NaomiAmethyst/girlpages/internal/pager"
+	"github.com/NaomiAmethyst/girlpages/internal/remote"
 	"github.com/NaomiAmethyst/girlpages/internal/render"
 	"github.com/NaomiAmethyst/girlpages/internal/repo"
 	"github.com/NaomiAmethyst/girlpages/internal/web"
@@ -59,6 +59,8 @@ type flags struct {
 	refresh, noCache, cachedOnly, raw, doctor, html, serve bool
 	color, backend, model, listen, repo, batch             string
 	importSrc, exportDir                                   string
+	remote, versions, ngrams                               bool
+	pageVersion, variant                                   string
 }
 
 func newFlagSet(f *flags) *pflag.FlagSet {
@@ -107,6 +109,11 @@ func newFlagSet(f *flags) *pflag.FlagSet {
 	fs.StringVar(&f.backend, "backend", "", "")
 	fs.StringVar(&f.model, "model", "", "")
 	fs.StringVar(&f.repo, "repo", "", "")
+	fs.BoolVarP(&f.remote, "remote", "r", false, "")
+	fs.StringVar(&f.pageVersion, "page-version", "", "")
+	fs.StringVar(&f.variant, "variant", "", "")
+	fs.BoolVar(&f.versions, "versions", false, "")
+	fs.BoolVar(&f.ngrams, "ngrams", false, "")
 
 	// man spells a few of these more than one way.
 	fs.SetNormalizeFunc(func(_ *pflag.FlagSet, name string) pflag.NormalizedName {
@@ -126,6 +133,7 @@ func newFlagSet(f *flags) *pflag.FlagSet {
 const usage = `usage: girl [options] [section] page ...
        girl -k regexp ...      search page descriptions (like apropos)
        girl -f page ...        one-line descriptions (like whatis)
+       girl -r [section] page  read a page from the repo, installed or not
        girl --bulk [options]   girlify every page on the system
        girl --import SOURCE    fill the cache from a girlpages repository
        girl --export DIR       write the cache out as a girlpages repository
@@ -159,6 +167,17 @@ girl options:
       --repo=URL          fetch pages from this girlpages repository before
                           asking the model ("none" to skip the configured one)
       --doctor            show config, backend and cache status
+
+remote options (pages from the repo, whether or not they're installed):
+  -r, --remote            read pages from the repo instead of this system;
+                          -k and -f search it, and -a, -s and -P work too
+      --page-version=V    which version: its version number (9.7), where
+                          it's from (debian, debian/trixie) or the start of
+                          its hash (default the latest)
+      --variant=NAME      girl (the default), man (the original) or another
+      --versions          list a page's versions and variants
+      --ngrams            -k finds words inside words too (dir finds mkdir)
+                          (--page-version, --variant and --versions mean -r)
 
 web options:
       --serve             browse, search and read pages in a web browser,
@@ -222,7 +241,28 @@ func run(args []string) int {
 		}
 	}
 
-	if f.apropos || f.whatis || f.where {
+	if f.pageVersion != "" || f.variant != "" || f.versions {
+		f.remote = true
+	}
+	if f.ngrams && !f.remote {
+		fmt.Fprintln(os.Stderr, "girl: --ngrams is for searching the repo, bestie: girl -r -k --ngrams")
+		return exitUsage
+	}
+	if f.remote {
+		switch {
+		case f.where || f.local:
+			fmt.Fprintln(os.Stderr, "girl: -r reads from the repo, so there are no files for -w or -l, bestie")
+			return exitUsage
+		case f.bulk || f.update || f.serve || f.importSrc != "" || f.exportDir != "" || f.doctor:
+			fmt.Fprintln(os.Stderr, "girl: -r is just for reading and searching pages, bestie")
+			return exitUsage
+		case f.html:
+			fmt.Fprintln(os.Stderr, "girl: -r doesn't do --html yet, bestie; the repo's website has every page")
+			return exitUsage
+		}
+	}
+
+	if !f.remote && (f.apropos || f.whatis || f.where) {
 		return execMan(f, rest)
 	}
 
@@ -276,12 +316,15 @@ func run(args []string) int {
 		return exitUsage
 	}
 
-	if sec, name, ok := seriesDoc(rest); ok {
+	if f.remote {
+		return runRemote(ctx, f, &cfg, rest)
+	}
+	if seriesDoc(rest) {
 		if f.noCache {
 			fmt.Fprintln(os.Stderr, "girl: documents like that only come from the repo, so --no-cache can't skip it")
 			return exitUsage
 		}
-		return runDocument(ctx, f, &cfg, g, sec, name)
+		return runRemote(ctx, f, &cfg, rest)
 	}
 
 	var pages []manpage.Page
@@ -311,6 +354,9 @@ func run(args []string) int {
 		}
 	}
 	if len(pages) == 0 {
+		if g.Repo != nil && !f.local {
+			fmt.Fprintf(os.Stderr, "girl: (girl -r %s looks for it in the repo, installed or not 💅)\n", strings.Join(rest, " "))
+		}
 		return exitNotFound
 	}
 
@@ -383,19 +429,17 @@ func run(args []string) int {
 	return status
 }
 
-// seriesDoc reads a document in a series from the arguments: "rfc 9110",
-// or "rfc9110".
-func seriesDoc(rest []string) (sec, name string, ok bool) {
+// seriesDoc reports whether the arguments ask for a document in a series
+// ("rfc 9110", or "rfc9110"), which only the repository has.
+func seriesDoc(rest []string) bool {
 	switch {
 	case len(rest) == 2 && manpage.IsSeries(strings.ToLower(rest[0])) && isNumber(rest[1]):
-		return strings.ToLower(rest[0]), strings.TrimLeft(rest[1], "0"), true
+		return true
 	case len(rest) == 1:
-		lower := strings.ToLower(rest[0])
-		if n, ok := strings.CutPrefix(lower, "rfc"); ok && isNumber(n) {
-			return "rfc", strings.TrimLeft(n, "0"), true
-		}
+		n, ok := strings.CutPrefix(strings.ToLower(rest[0]), "rfc")
+		return ok && isNumber(n)
 	}
-	return "", "", false
+	return false
 }
 
 func isNumber(s string) bool {
@@ -407,35 +451,50 @@ func isNumber(s string) bool {
 	return s != "" && strings.TrimLeft(s, "0") != ""
 }
 
-// runDocument shows a document in a series, from the repository.
-func runDocument(ctx context.Context, f flags, cfg *config.Config, g *core.Girl, sec, name string) int {
-	title := strings.ToUpper(sec) + " " + name
-	v, err := g.Document(ctx, sec, name)
+// runRemote reads or searches pages in the repository, whether or not
+// they're installed here.
+func runRemote(ctx context.Context, f flags, cfg *config.Config, rest []string) int {
+	u := strings.TrimSpace(cfg.Repo.URL)
+	if u == "" || u == "none" {
+		fmt.Fprintln(os.Stderr, "girl: there's no repo to read from, bestie: set [repo] url, or use --repo=URL")
+		return exitUsage
+	}
+	c, err := repo.Find(ctx, u, cfg.Repo.Timeout.Duration, "girlpages/"+getVersion())
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "girl: couldn't get %s from the repo 😭 %v\n", title, err)
-		if errors.Is(err, repo.ErrNotFound) {
-			return exitNotFound
-		}
+		fmt.Fprintf(os.Stderr, "girl: %v\n", err)
 		return exitFailed
 	}
+	r := remote.New(c)
+	if f.ngrams {
+		r.Mode = repo.ModeNgrams
+	}
 	ui := newUI(f)
-	var out string
+	rd := &remote.Reader{
+		Repo:    r,
+		Options: remote.Options{Sections: splitList(f.sections), All: f.all, Version: f.pageVersion, Variant: f.variant},
+		Prog:    "girl",
+		Width:   ui.width,
+		Color:   ui.color,
+		Footer:  "girlpages " + getVersion(),
+		Raw:     f.raw,
+		Page:    ui.tty,
+		Pager:   cfg.Pager,
+		Stdout:  os.Stdout,
+		Stderr:  os.Stderr,
+	}
 	switch {
-	case v.Syntax != repo.SyntaxMarkup || f.raw:
-		out = render.StripControls(v.Text())
-	default:
-		out = render.Render(v.Text(), render.Options{Width: ui.width, Color: ui.color, Title: title, Footer: "girlpages " + getVersion()})
+	case f.apropos:
+		return rd.Apropos(ctx, rest, aproposLimit)
+	case f.whatis:
+		return rd.Whatis(ctx, rest)
+	case f.versions:
+		return rd.Versions(ctx, rest)
 	}
-	if ui.tty && !f.raw {
-		if err := pager.Show(pager.Command(cfg.Pager), out, "💅 girl "+title); err != nil {
-			fmt.Fprintf(os.Stderr, "girl: %v\n", err)
-			return exitFailed
-		}
-		return exitOK
-	}
-	os.Stdout.WriteString(out)
-	return exitOK
+	return rd.Read(ctx, rest)
 }
+
+// aproposLimit is how many pages girl -r -k lists for each search.
+const aproposLimit = 100
 
 func runServe(ctx context.Context, f flags, g *core.Girl) int {
 	g.Limit = max(g.Cfg.Jobs, 1)
@@ -742,35 +801,14 @@ type ui struct {
 }
 
 func newUI(f flags) *ui {
-	u := &ui{
-		tty:    term.IsTerminal(int(os.Stdout.Fd())),
+	t := remote.Detect(f.color)
+	return &ui{
+		tty:    t.TTY,
 		errTTY: term.IsTerminal(int(os.Stderr.Fd())),
-		width:  manpage.Width,
+		width:  t.Width,
+		color:  t.Color,
 		quiet:  f.quiet,
 	}
-	if w, err := strconv.Atoi(os.Getenv("MANWIDTH")); err == nil && w > 0 {
-		u.width = w
-	} else if u.tty {
-		if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && w > 0 {
-			// Long lines of chatty prose are hard to read; man pages
-			// traditionally top out around here anyway.
-			u.width = min(w, 100)
-		}
-	}
-	switch f.color {
-	case "always", "yes", "force":
-		u.color = render.DetectColor()
-		if u.color == render.NoColor {
-			u.color = render.Color256
-		}
-	case "never", "no", "none":
-		u.color = render.NoColor
-	default:
-		if u.tty {
-			u.color = render.DetectColor()
-		}
-	}
-	return u
 }
 
 var spinFrames = []string{"💅", "✨", "💖", "🎀", "🦋", "🌸"}

@@ -1,0 +1,260 @@
+.\" SPDX-License-Identifier: GPL-3.0-or-later
+.\" Copyright (C) 2026 Naomi Persephone Amethyst <naomi@amethyst.name>
+.TH GIRLC 1 2026-10-14 girlpages "girlpages Manual"
+.SH NAME
+girlc \- read girly man pages from a girlpages repository
+.SH SYNOPSIS
+.B girlc
+.RI [ options ]
+.RI [ section ]
+.IR page \ ...
+.br
+.B girlc
+.B \-k
+.RI [ options ]
+.IR words \ ...
+.br
+.B girlc
+.B \-f
+.IR page \ ...
+.br
+.B girlc
+.B \-\-versions
+.IR page \ ...
+.SH DESCRIPTION
+.B girlc
+reads man pages, girlified by
+.BR girl (1),
+straight from a girlpages repository (published by
+.BR girlrepo (1)),
+the way
+.BR man (1)
+reads them from the system.
+Nothing needs to be installed but
+.B girlc
+itself: no model, no cache, and no man pages; it reads any page the
+repository has, in any version and variant.
+.PP
+Pages are named as for
+.BR man :
+.RI [ section ]
+.IR page ,
+or
+.IR page ( section ),
+and
+.B rfc
+.I number
+(or
+.BI rfc number\fR)
+for an RFC.
+A page named alone is the first by
+.BR man 's
+section order (1, n, l, 8, 3, 0, 2, 5, 4, 9, 6, 7, and a section's
+extensions after it: 3 before 3p), in any case, as
+.B man
+finds them.
+.PP
+Pages are shown girlified, in a pager if standard output is a terminal.
+If the latest version of a page isn't girlified yet, its original is shown,
+with a note saying which version is, if any.
+.SH OPTIONS
+.TP
+.BR \-a ", " \-\-all
+Show every page by the name, not just the first.
+.TP
+.BR \-s ", " \-S ", " \-\-sections =\fIlist\fR
+Only look in these sections (separated by colons or commas).
+As with
+.BR man ,
+.B 3
+includes
+.BR 3p ,
+.B 3ssl
+and so on.
+.TP
+.BR \-k ", " \-\-apropos
+Search the repository, as
+.BR apropos (1)
+searches the system: for each argument, by the words in pages' names,
+descriptions and text (a quoted argument of several words finds pages with
+all of them first), best first, as
+.B name (section) \- description
+lines.
+.TP
+.BR \-f ", " \-\-whatis
+Show the one-line description of every page by each name, as
+.BR whatis (1)
+does.
+.TP
+.B \-\-ngrams
+With
+.BR \-k ,
+also find words inside other words
+.RB ( dir
+finds
+.B mkdir
+and
+.BR readdir ).
+.TP
+.BR \-\-limit =\fIn\fR
+How many pages
+.B \-k
+lists for each search (default 100; 0 for all).
+.TP
+.BR \-\-page\-version =\fIversion\fR
+Which version of a page to read: its version number
+.RB ( 9.7 ),
+where it's from
+.RB ( debian ", " debian/trixie
+or
+.BR "debian trixie" ,
+for the latest from there), or the start of its source hash.
+The default is the latest.
+.TP
+.BR \-\-variant =\fIname\fR
+Which variant to read:
+.B girl
+(the default),
+.B man
+(the original) or any other the repository has.
+.TP
+.B \-\-versions
+List a page's versions, with how to pick each, where it's from, and its
+variants, instead of reading it.
+.TP
+.B \-\-raw
+Print the page as it's stored (girlpages markup, or plain text for
+originals) instead of rendering it.
+.TP
+.BR \-\-color =\fIwhen\fR
+.BR auto " (the default: if standard output is a terminal), " always " or " never .
+.B NO_COLOR
+turns it off.
+.TP
+.BR \-P ", " \-\-pager =\fIpager\fR
+Page output with
+.I pager
+(default
+.BR $GIRLPAGER ,
+.BR $PAGER ,
+then
+.BR less ).
+.TP
+.BR \-\-repo =\fIurl\fR
+The repository to read: an http(s) URL, a
+.B file://
+URL or a directory, either the repository itself or a site with it in
+.BR repo/ .
+.TP
+.BR \-C ", " \-\-config\-file =\fIfile\fR
+Read this configuration file instead of the user's.
+.TP
+.BR \-h ", " \-\-help
+Show a summary of the options.
+.TP
+.BR \-V ", " \-\-version
+Show the version.
+.SH CONFIGURATION
+.B girlc
+reads
+.BR girl 's
+configuration files (see
+.BR girl (1)),
+for the repository, its timeout and the pager:
+.PP
+.RS
+.nf
+pager = ""
+
+[repo]
+url = "https://example.org/repo"
+timeout = "20s"
+.fi
+.RE
+.PP
+The repository is the one given with
+.BR \-\-repo ,
+else
+.B url
+from the configuration, else the one
+.B girlc
+was built with (set by packagers with
+.BR "make girlc GIRLC_REPO=" \fIurl\fR).
+.SH ENVIRONMENT
+.TP
+.BR GIRLPAGER ", " PAGER
+The pager, if
+.B \-P
+and
+.B pager
+aren't set.
+.TP
+.B MANWIDTH
+The width to render pages at (by default the terminal's, up to 100).
+.TP
+.B NO_COLOR
+Turns colour off.
+.SH FILES
+.TP
+.I /etc/girlpages/config.toml
+System configuration.
+.TP
+.I ~/.config/girlpages/config.toml
+User configuration.
+.SH "EXIT STATUS"
+.TP
+.B 0
+Success.
+.TP
+.B 1
+Usage or configuration error.
+.TP
+.B 2
+The repository couldn't be read.
+.TP
+.B 16
+A page was not found, or a search found nothing.
+.SH EXAMPLES
+.TP
+.B girlc ls
+Show
+.BR ls (1).
+.TP
+.B girlc 3 printf
+Show
+.BR printf (3)
+rather than
+.BR printf (1).
+.TP
+.B girlc \-a printf
+Show every
+.BR printf :
+1, 3 and 3p.
+.TP
+.B girlc \-k \(dqlist directory\(dq
+Find pages about listing directories.
+.TP
+.B girlc \-\-versions ls
+.PD 0
+.TP
+.B girlc \-\-page\-version debian/bookworm \-\-variant man ls
+.PD
+See which versions of
+.BR ls (1)
+the repository has, then read the original of Debian bookworm's.
+.TP
+.B girlc \-\-repo https://example.org rfc 9110
+Read RFC 9110 from another repository.
+.SH AUTHOR
+Naomi Persephone Amethyst <naomi@amethyst.name>
+.SH COPYRIGHT
+Copyright \(co 2026 Naomi Persephone Amethyst.
+License GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>.
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.
+.SH "SEE ALSO"
+.BR girl (1),
+.BR girlrepo (1),
+.BR man (1),
+.BR apropos (1),
+.BR whatis (1)

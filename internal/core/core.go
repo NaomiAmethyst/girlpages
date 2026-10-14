@@ -372,26 +372,3 @@ func CacheSet(cfg *config.Config) cache.Set {
 	}
 	return s
 }
-
-// Document fetches a document in a series (an RFC) from the repository,
-// by name: there's no local copy to go by. It's the latest version's girl
-// variant, or the original if there isn't one yet.
-func (g *Girl) Document(ctx context.Context, section, name string) (*repo.Variant, error) {
-	if g.Repo == nil {
-		return nil, errNoRepo
-	}
-	l, err := g.Repo.Page(ctx, name, section)
-	if err != nil {
-		return nil, err
-	}
-	v := l.CurrentVersion()
-	if v == nil {
-		return nil, repo.ErrNotFound
-	}
-	for _, variant := range []string{repo.VariantGirl, repo.VariantMan} {
-		if info, ok := v.Variants[variant]; ok {
-			return g.Repo.VariantAt(ctx, v.Source, variant, info.SHA256)
-		}
-	}
-	return nil, repo.ErrNotFound
-}

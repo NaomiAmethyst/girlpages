@@ -89,7 +89,7 @@
 # A girlpages repository (made with girlrepo) to fetch ready-made pages from
 # before asking a model: an https:// URL, a file:// URL or a directory. Only
 # pages whose source exactly matches yours are used. Not used when
-# extra_instructions is set.
+# extra_instructions is set. girl -r and girlc read any page in it.
 #url = ""
 #timeout = "20s"
 

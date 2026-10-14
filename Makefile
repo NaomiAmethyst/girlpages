@@ -3,6 +3,7 @@
 #
 #   make && sudo make install     system-wide, with package-manager hooks
 #   make install-user             just for you, under ~/.local
+#   make install-girlc            just girlc, which reads pages from a repo
 #
 # Packagers: set DESTDIR, PREFIX=/usr, SYSTEMDUNITDIR=/usr/lib/systemd/system,
 # PACMANHOOKDIR=/usr/share/libalpm/hooks and HOOKS as appropriate.
@@ -24,6 +25,9 @@ DESTDIR        ?=
 HOOKS   ?= auto
 # Install systemd units: auto (if systemd is running), yes or no.
 SYSTEMD ?= auto
+
+# The repository girlc reads if none is configured.
+GIRLC_REPO ?=
 
 USER_PREFIX     ?= $(HOME)/.local
 USER_CONFIG_DIR ?= $(or $(XDG_CONFIG_HOME),$(HOME)/.config)
@@ -51,11 +55,11 @@ ifeq ($(SYSTEMD),auto)
   SYSTEMD := $(if $(wildcard /run/systemd/system),yes,no)
 endif
 
-.PHONY: all build test check e2e lint install install-user install-girlrepo uninstall uninstall-user clean
+.PHONY: all build test check e2e lint install install-user install-girlrepo install-girlc uninstall uninstall-user clean
 
 all: build
 
-build: girl girlrepo
+build: girl girlrepo girlc
 
 SOURCES := $(shell find cmd internal -name '*.go' -o -name '*.html' -o -name '*.css' -o -name '*.js') go.mod go.sum
 
@@ -66,6 +70,11 @@ girl: $(SOURCES)
 # by default, as only people publishing a repository need it.
 girlrepo: $(SOURCES)
 	$(GO) build -trimpath -ldflags '$(LDFLAGS)' -o $@ ./cmd/girlrepo
+
+# girlc reads pages from a repository, as man does from the system: for
+# machines that don't need girl itself.
+girlc: $(SOURCES)
+	$(GO) build -trimpath -ldflags '$(LDFLAGS) -X main.defaultRepo=$(GIRLC_REPO)' -o $@ ./cmd/girlc
 
 test:
 	$(GO) test ./...
@@ -90,6 +99,10 @@ e2e: girlrepo
 install-girlrepo: girlrepo
 	install -Dm755 girlrepo '$(DESTDIR)$(BINDIR)/girlrepo'
 	install -Dm644 man/girlrepo.1 '$(DESTDIR)$(MANDIR)/man1/girlrepo.1'
+
+install-girlc: girlc
+	install -Dm755 girlc '$(DESTDIR)$(BINDIR)/girlc'
+	install -Dm644 man/girlc.1 '$(DESTDIR)$(MANDIR)/man1/girlc.1'
 
 install: girl
 	install -Dm755 girl '$(DESTDIR)$(BINDIR)/girl'
@@ -150,6 +163,7 @@ uninstall:
 	-[ -z '$(DESTDIR)' ] && command -v systemctl >/dev/null && systemctl disable --now girlpages-update.timer
 	rm -f '$(DESTDIR)$(BINDIR)/girl' '$(DESTDIR)$(MANDIR)/man1/girl.1' \
 		'$(DESTDIR)$(BINDIR)/girlrepo' '$(DESTDIR)$(MANDIR)/man1/girlrepo.1' \
+		'$(DESTDIR)$(BINDIR)/girlc' '$(DESTDIR)$(MANDIR)/man1/girlc.1' \
 		'$(DESTDIR)$(LIBEXECDIR)/girlpages-hook' \
 		'$(DESTDIR)$(SYSTEMDUNITDIR)/girlpages-update.service' \
 		'$(DESTDIR)$(SYSTEMDUNITDIR)/girlpages-update.timer' \
@@ -167,4 +181,4 @@ uninstall-user:
 	@echo 'Left $(USER_CONFIG_DIR)/girlpages and your cache in place.'
 
 clean:
-	rm -f girl girlrepo
+	rm -f girl girlrepo girlc

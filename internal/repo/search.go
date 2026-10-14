@@ -171,6 +171,53 @@ func (s *Searcher) SearchIn(ctx context.Context, query, source string, limit int
 	return hits, nil
 }
 
+// Named finds the pages called name (ignoring case), in man's order: by
+// section, as man looks through them. Every page's whole name is a word
+// in the index, scoring more than the word can for any page not called
+// it, so its postings have them all.
+func (s *Searcher) Named(ctx context.Context, name string) ([]Hit, error) {
+	if err := s.load(ctx); err != nil {
+		return nil, err
+	}
+	want := strings.ToLower(strings.TrimSpace(name))
+	if want == "" {
+		return nil, nil
+	}
+	ps, err := s.postings(ctx, want)
+	if err != nil {
+		return nil, err
+	}
+	var hits []Hit
+	for _, p := range ps {
+		if p[1] < scoreName {
+			continue
+		}
+		d, err := s.doc(ctx, p[0])
+		if err != nil {
+			return nil, err
+		}
+		if strings.ToLower(d[0]) != want {
+			continue
+		}
+		hits = append(hits, Hit{Name: d[0], Section: d[1], Description: d[2], Sources: strings.Fields(d[3]), Score: float64(p[1])})
+	}
+	sort.SliceStable(hits, func(i, j int) bool {
+		a, b := hits[i], hits[j]
+		if ra, rb := manpage.SectionRank(a.Section), manpage.SectionRank(b.Section); ra != rb {
+			return ra < rb
+		}
+		if a.Section != b.Section {
+			// 3 before 3p, then 3p before 3ssl.
+			if len(a.Section) != len(b.Section) && (strings.HasPrefix(b.Section, a.Section) || strings.HasPrefix(a.Section, b.Section)) {
+				return len(a.Section) < len(b.Section)
+			}
+			return a.Section < b.Section
+		}
+		return a.Name < b.Name
+	})
+	return hits, nil
+}
+
 // SeriesTerms joins a series' name and the number after it in a query
 // ("rfc 9110") into one word, as documents in a series are indexed
 // (rfc9110).
