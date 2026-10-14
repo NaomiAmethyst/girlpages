@@ -1,15 +1,21 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Naomi Persephone Amethyst <naomi@amethyst.name>
 //
-// Keys, on every page:
+// Keys, meant to come naturally to someone at home in a terminal (less,
+// man, fzf):
 //
 //   /            search (the box at the top)
 //   Esc          close a menu, leave the search box, or else go back (but
 //                not off the site)
-//   Ctrl+Enter   go to a page: by name, with suggestions as you type
-//   typing       on a listing, jump to the names that start that way,
-//                picking the first; ↑↓ pick the one before or after, Enter
-//                goes to it, Esc lets it go
+//   Ctrl+Enter   go to a page: by name, with suggestions as you type (↑↓ or
+//                Tab to pick one)
+//   ?            these keys
+//
+// On a listing, typing jumps to the names that start that way, picking
+// the first; ↑↓ pick the one before or after (or one on the screen, if
+// none is), Enter goes to it, Esc lets it go. Anywhere else (a page,
+// search results), it's less: j k a line, d u half a screen, Space b a
+// screen, g G the top and bottom, q back.
 
 import { html } from "./html.js";
 import { pageURL } from "./urls.js";
@@ -19,6 +25,25 @@ const editing = (el) => !!el && (/** @type {HTMLElement} */ (el).isContentEditab
 
 // How long a pause ends what's being typed to jump to.
 const TYPED_FOR = 1000;
+
+// A line, for j and k.
+const LINE = 48;
+
+// less's keys: how far each scrolls, as a function of the screen's height.
+/** @type {Record<string, (h: number) => number>} */
+const LESS = {
+  j: () => LINE, k: () => -LINE,
+  d: (h) => h / 2, u: (h) => -h / 2,
+  f: (h) => h - LINE, b: (h) => -(h - LINE),
+  g: () => -Infinity, G: () => Infinity,
+};
+
+// back goes back, if there's an entry of the site's to go back to.
+const back = () => {
+  if ((history.state?.depth ?? 0) <= 0) return false;
+  history.back();
+  return true;
+};
 
 /**
  * keys sets the keys up: go(href) follows a link (through the app, if
@@ -72,9 +97,7 @@ export function keys({ go, base, repo }) {
         toSeek = null;
         seeking++;
         pick(null);
-      } else if ((history.state?.depth ?? 0) > 0) {
-        history.back();
-      } else {
+      } else if (!back()) {
         return;
       }
       e.preventDefault();
@@ -94,13 +117,30 @@ export function keys({ go, base, repo }) {
       follow();
       return;
     }
-    if ((e.key === "ArrowDown" || e.key === "ArrowUp") && !e.shiftKey && pickedNow()) {
+    if (e.key === "?") {
       e.preventDefault();
-      step(e.key === "ArrowDown" ? 1 : -1);
+      help();
+      return;
+    }
+    const listing = [...document.querySelectorAll(".listing")].find(l => l.checkVisibility());
+    if ((e.key === "ArrowDown" || e.key === "ArrowUp") && !e.shiftKey && listing) {
+      e.preventDefault();
+      if (pickedNow()) step(e.key === "ArrowDown" ? 1 : -1);
+      else pick(onScreen(listing));
+      return;
+    }
+    if (!listing && Object.hasOwn(LESS, e.key)) {
+      e.preventDefault();
+      const by = LESS[e.key](innerHeight);
+      if (Math.abs(by) === Infinity) scrollTo({ top: by < 0 ? 0 : document.documentElement.scrollHeight, behavior: "instant" });
+      else scrollBy({ top: by, behavior: "instant" });
+      return;
+    }
+    if (!listing && e.key === "q") {
+      if (back()) e.preventDefault();
       return;
     }
     if (e.key.length !== 1 || !/[\p{L}\p{N}._+:@-]/u.test(e.key)) return;
-    const listing = [...document.querySelectorAll(".listing")].find(l => l.checkVisibility());
     if (!listing) return;
     e.preventDefault();
     typed = performance.now() - typedAt > TYPED_FOR ? e.key : typed + e.key;
@@ -137,6 +177,18 @@ export function keys({ go, base, repo }) {
     if (!next) return;
     pick(next);
     next.scrollIntoView({ block: "nearest" });
+  }
+
+  // onScreen is the first entry of listing's wholly on the screen (below
+  // the bar at the top).
+  /** @param {Element} listing */
+  function onScreen(listing) {
+    const lis = /** @type {NodeListOf<HTMLElement>} */ (listing.querySelectorAll("li[data-name]"));
+    for (const li of lis) {
+      const r = li.getBoundingClientRect();
+      if (r.top >= 80 && r.bottom <= innerHeight) return li;
+    }
+    return null;
   }
 
   // show says what's been typed, for a moment.
@@ -177,6 +229,35 @@ export function keys({ go, base, repo }) {
   }
 }
 
+// help shows the keys.
+function help() {
+  /** @type {HTMLDialogElement | null} */
+  let d = document.querySelector("dialog.keys");
+  if (!d) {
+    d = document.createElement("dialog");
+    d.className = "keys card";
+    const row = (k, what) => html`<tr><th>${k.map((x, i) => html`${i ? " " : ""}<kbd>${x}</kbd>`)}</th><td>${what}</td></tr>`;
+    d.innerHTML = String(html`<form method="dialog"><h2>⌨️ keys</h2><table>
+      ${row(["/"], "search")}
+      ${row(["Ctrl+Enter"], "go to a page by name")}
+      ${row(["Esc"], "close, or go back")}
+      ${row(["?"], "these keys")}
+      <tr><th colspan="2">on a listing</th></tr>
+      ${row(["a–z"], "jump to the names that start that way")}
+      ${row(["↑", "↓"], "pick the one before or after")}
+      ${row(["Enter"], "go to the one picked")}
+      <tr><th colspan="2">on a page (like less)</th></tr>
+      ${row(["j", "k"], "a line down, up")}
+      ${row(["d", "u"], "half a screen down, up")}
+      ${row(["Space", "f", "b"], "a screen down, down, up")}
+      ${row(["g", "G"], "the top, the bottom")}
+      ${row(["q"], "back")}
+      </table><p><button class="pill">💖 got it</button></p></form>`);
+    document.body.append(d);
+  }
+  d.showModal();
+}
+
 // goTo opens the "go to page" box: a name (ls, open(2), 2 open), with
 // suggestions from search as it's typed; Enter goes to the one picked, or
 // the page named (open alone is the one man would show), or else searches
@@ -190,7 +271,7 @@ async function goTo({ go, base, repo }) {
     d.className = "goto card";
     d.innerHTML = String(html`<form method="dialog"><label>📖 go to page
       <input type="search" name="page" placeholder="ls, open(2), 2 open…" autocomplete="off" spellcheck="false"></label>
-      <ul class="pages suggestions"></ul><p class="sub">↑↓ to pick · Enter to go · Esc to close</p></form>`);
+      <ul class="pages suggestions"></ul><p class="sub">↑↓ or Tab to pick · Enter to go · Esc to close</p></form>`);
     document.body.append(d);
     setUp(d, { go, base, repo });
   }
@@ -267,9 +348,11 @@ function setUp(d, { go, base, repo }) {
     timer = setTimeout(suggest, 120);
   });
   input.addEventListener("keydown", (e) => {
-    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    const by = e.key === "ArrowDown" || (e.key === "Tab" && !e.shiftKey) ? 1
+      : e.key === "ArrowUp" || (e.key === "Tab" && e.shiftKey) ? -1 : 0;
+    if (by && !e.ctrlKey && !e.altKey && !e.metaKey) {
       e.preventDefault();
-      if (items.length) picked = (picked + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length;
+      if (items.length) picked = (picked + by + items.length) % items.length;
       draw();
     }
   });
