@@ -19,6 +19,7 @@ import os
 import random
 import shutil
 import socket
+import re
 import subprocess
 import sys
 import tempfile
@@ -369,6 +370,43 @@ async def main():
             check(target in names, f"{part!r} finds {target} in parts of words: {names[:5]}")
             on = await page.evaluate("document.querySelector('#app #search-mode a.on')?.textContent")
             check(on is not None and "parts" in on, f"the mode's shown: {on}")
+            await ctx.close()
+
+            print("a newer version taking over loads the next page whole")
+            ctx, page = await fresh("/section/8/", width=1100)
+            await page.wait_for_function("!!navigator.serviceWorker.controller", timeout=10000)
+            await page.reload(wait_until="networkidle")  # loaded under the service worker
+            await page.wait_for_timeout(1500)
+            await page.evaluate("window.marked = 1")
+            await tap(page, base + "/man/8/admin001/")
+            s = await shown(page)
+            check(await page.evaluate("window.marked") == 1 and s[0] == "app", f"before, links show in place: {s}")
+            # Republishing changes sw.js (its VERSION).
+            sw = os.path.join(site, "sw.js")
+            with open(sw) as f:
+                text = f.read()
+            text, n = re.subn(r'const VERSION = "[^"]*"', 'const VERSION = "e2e-newer"', text)
+            check(n == 1, "found sw.js's VERSION")
+            with open(sw, "w") as f:
+                f.write(text)
+            took = await page.evaluate("""() => new Promise(done => {
+                navigator.serviceWorker.addEventListener("controllerchange", () => done(true));
+                navigator.serviceWorker.getRegistration().then(r => r.update());
+                setTimeout(() => done(false), 10000);
+            })""")
+            check(took, "the newer service worker took over")
+            async with page.expect_navigation():
+                await tap(page, base + "/man/8/admin002/")
+            await page.wait_for_load_state("networkidle")
+            s = await shown(page)
+            check(await page.evaluate("window.marked") is None and path(page) == "/man/8/admin002/" and s[0] == "static",
+                  f"after, the next link loads whole: {path(page)} {s}")
+            await page.evaluate("window.marked = 1")
+            await page.keyboard.press("Escape")
+            await page.wait_for_timeout(1000)
+            await page.wait_for_load_state("networkidle")
+            s = await shown(page)
+            check(path(page) == "/man/8/admin001/" and "ADMIN001" in s[1], f"and back still works: {path(page)} {s}")
             await ctx.close()
 
             print("no script errors")

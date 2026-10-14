@@ -12,16 +12,7 @@ import { saveButton, menus } from "./widgets.js";
 import { isRoute } from "./routes.js";
 import { Drawer } from "./draw.js";
 import { keys } from "./keys.js";
-
-// SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 Naomi Persephone Amethyst <naomi@amethyst.name>
-//
-// girlpages in the browser: a cache of repository files (in the Cache API,
-// so it can hold whole sections saved for offline reading), a background
-// check for newly published repositories that clears out the search index
-// files they no longer use, and the service worker that makes the site an
-// app. Offline, the service worker sends static pages to the browse app,
-// which renders them from this cache.
+import { outdated, watchUpdates } from "./update.js";
 
 const PREFIX = "girlpages:";
 
@@ -45,7 +36,9 @@ function forgetLocalStorage() {
 // within the site, or searching: from then on the static pages are only
 // what the first visit, search engines, and browsers without JavaScript
 // see. History leads back. A link's files are fetched as soon as it's
-// pointed at or touched. It returns how it follows a link.
+// pointed at or touched. It returns how it follows a link. Once a newer
+// version of the site has taken over (update.js), links are followed as
+// plain ones.
 function startApp(base) {
   /** @type {Promise<any> | null} */
   let loading = null;
@@ -60,12 +53,12 @@ function startApp(base) {
   const open = () => load().then(m => m.start());
   // Following a link: the app's router takes it from here (see router.js).
   // If the app can't load, the link's followed as a plain one.
-  const go = (href) => load().then(m => m.navigate(href), () => { location.href = href; });
+  const go = (href) => outdated() ? void (location.href = href) : load().then(m => m.navigate(href), () => { location.href = href; });
   // A link the app shows, from an event on it, or null: routes always,
   // anything else once the app has loaded (but not links within a page).
   const appLink = (e) => {
     const a = e.target.closest?.("a[href]");
-    if (!a || a.target || a.hasAttribute("download")) return null;
+    if (!a || outdated() || a.target || a.hasAttribute("download")) return null;
     const u = new URL(a.href, location.href);
     if (u.origin !== location.origin) return null;
     if (u.pathname === base && isRoute(u.hash)) return u;
@@ -82,7 +75,7 @@ function startApp(base) {
   });
   document.addEventListener("submit", (e) => {
     const f = /** @type {HTMLFormElement} */ (e.target);
-    if (!app || e.defaultPrevented || f.method.toLowerCase() !== "get") return;
+    if (!app || outdated() || e.defaultPrevented || f.method.toLowerCase() !== "get") return;
     const u = new URL(f.action, location.href);
     u.search = new URLSearchParams(/** @type {any} */ (new FormData(f))).toString();
     if (!app.handles(u.href)) return;
@@ -102,6 +95,19 @@ function startApp(base) {
   return go;
 }
 
+// behindUs marks a page loaded whole from a link on another of the site's
+// as having one of the site's behind it in history, for going back to it
+// (keys.js); the app's own entries say how many (router.js).
+/** @param {string} base */
+function behindUs(base) {
+  if (history.state?.depth != null || !document.referrer) return;
+  const nav = /** @type {PerformanceNavigationTiming | undefined} */ (performance.getEntriesByType("navigation")[0]);
+  if (nav && nav.type !== "navigate") return;
+  const from = new URL(document.referrer);
+  if (from.origin !== location.origin || !from.pathname.startsWith(base)) return;
+  history.replaceState({ ...(history.state || {}), depth: 1 }, "");
+}
+
 // boot runs on every page: it registers the service worker, starts
 // watching the repository for updates, and wires up save buttons.
 function boot() {
@@ -109,9 +115,11 @@ function boot() {
   const base = root.dataset.base, repo = root.dataset.repo;
   if (!base) return;
   if ("serviceWorker" in navigator && location.protocol !== "file:") {
+    watchUpdates();
     navigator.serviceWorker.register(base + "sw.js", { scope: base }).catch(() => {});
   }
   forgetLocalStorage();
+  behindUs(base);
   menus();
   // A long page is drawn ahead of scrolling (see draw.js).
   new Drawer().watch(document.querySelectorAll(".content > *, .original > *"));

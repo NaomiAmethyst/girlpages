@@ -20,7 +20,11 @@
 // Nothing else changes the address: links go through navigate, a view
 // changes its own with nav.replace (a listing following its scroll), and
 // nav.redirect (a search naming a page). Every history entry remembers its
-// scroll position, so going back or forward lands where it was.
+// scroll position, so going back or forward lands where it was. Once a
+// newer version of the site has taken over (update.js), every change of
+// address loads the page whole.
+
+import { outdated } from "./update.js";
 
 const isRoute = (hash) => /^#\/./.test(hash);
 
@@ -179,6 +183,10 @@ export class Router {
   // sync shows whatever the address is now: the static view, or a view of
   // the app's (unless it's already showing or on its way).
   async sync() {
+    if (this.started && outdated()) {
+      location.reload();
+      return;
+    }
     const url = location.href;
     const nav = this.nav;
     if (this.isStatic()) {
