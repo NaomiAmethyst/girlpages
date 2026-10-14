@@ -7,7 +7,9 @@
 //   Esc          close a menu, leave the search box, or else go back (but
 //                not off the site)
 //   Ctrl+Enter   go to a page: by name, with suggestions as you type
-//   typing       on a listing, jump to the names that start that way
+//   typing       on a listing, jump to the names that start that way,
+//                picking the first; ↑↓ pick the one before or after, Enter
+//                goes to it, Esc lets it go
 
 import { html } from "./html.js";
 import { pageURL } from "./urls.js";
@@ -28,6 +30,27 @@ export function keys({ go, base, repo }) {
   let typed = "", typedAt = 0, seeking = 0, seekTimer = 0;
   /** @type {HTMLElement | null} */
   let shown = null;
+  // The entry picked (highlighted), and the seek that's to pick one, if
+  // typing's paused for less long than it waits (run it, for Enter not to
+  // wait), and the one going on.
+  /** @type {HTMLElement | null} */
+  let picked = null;
+  /** @type {(() => Promise<void>) | null} */
+  let toSeek = null;
+  let seekDone = Promise.resolve();
+
+  /** @param {HTMLElement | null} li */
+  const pick = (li) => {
+    picked?.classList.remove("found");
+    picked = li;
+    li?.classList.add("found");
+  };
+  // pickedNow is the entry picked, if it's still on the screen.
+  const pickedNow = () => {
+    if (picked && !(picked.isConnected && picked.checkVisibility())) pick(null);
+    return picked;
+  };
+  addEventListener("pointerdown", () => pick(null), { passive: true });
 
   document.addEventListener("keydown", (e) => {
     if (e.defaultPrevented || e.isComposing) return;
@@ -44,6 +67,11 @@ export function keys({ go, base, repo }) {
         for (const d of /** @type {NodeListOf<HTMLDetailsElement>} */ (menus)) d.open = false;
       } else if (field) {
         /** @type {HTMLElement} */ (document.activeElement).blur();
+      } else if (pickedNow() || toSeek) {
+        clearTimeout(seekTimer);
+        toSeek = null;
+        seeking++;
+        pick(null);
       } else if ((history.state?.depth ?? 0) > 0) {
         history.back();
       } else {
@@ -61,6 +89,16 @@ export function keys({ go, base, repo }) {
       box.select();
       return;
     }
+    if (e.key === "Enter" && !e.shiftKey && (pickedNow() || toSeek)) {
+      e.preventDefault();
+      follow();
+      return;
+    }
+    if ((e.key === "ArrowDown" || e.key === "ArrowUp") && !e.shiftKey && pickedNow()) {
+      e.preventDefault();
+      step(e.key === "ArrowDown" ? 1 : -1);
+      return;
+    }
     if (e.key.length !== 1 || !/[\p{L}\p{N}._+:@-]/u.test(e.key)) return;
     const listing = [...document.querySelectorAll(".listing")].find(l => l.checkVisibility());
     if (!listing) return;
@@ -71,8 +109,35 @@ export function keys({ go, base, repo }) {
     // Once typing pauses, so each letter doesn't set off a jump of its own.
     clearTimeout(seekTimer);
     const prefix = typed;
-    seekTimer = setTimeout(() => seek(listing, prefix), 150);
+    toSeek = () => {
+      toSeek = null;
+      return (seekDone = seek(listing, prefix));
+    };
+    seekTimer = setTimeout(() => toSeek?.(), 150);
   });
+
+  // follow goes to the entry picked, once what's been typed is sought.
+  async function follow() {
+    if (toSeek) {
+      clearTimeout(seekTimer);
+      toSeek();
+    }
+    await seekDone;
+    pickedNow()?.querySelector("a")?.click();
+  }
+
+  // step picks the entry by (1 or -1) from the one picked, in what's on
+  // the page (the listing loads more as it nears the end of it).
+  /** @param {number} by */
+  function step(by) {
+    const listing = picked?.closest(".listing");
+    if (!listing) return;
+    const lis = [.../** @type {NodeListOf<HTMLElement>} */ (listing.querySelectorAll("li[data-name]"))];
+    const next = lis[lis.indexOf(/** @type {HTMLElement} */ (picked)) + by];
+    if (!next) return;
+    pick(next);
+    next.scrollIntoView({ block: "nearest" });
+  }
 
   // show says what's been typed, for a moment.
   /** @param {string} text */
@@ -98,22 +163,24 @@ export function keys({ go, base, repo }) {
     if (mine !== seeking) return; // typed on meanwhile
     const l = shownListing();
     if (l) {
-      if (!(await l.seek(prefix)) && shown) shown.textContent = `↪ ${prefix} · nothing 🤷`;
+      const li = await l.seek(prefix);
+      if (mine !== seeking) return;
+      if (!li && shown) shown.textContent = `↪ ${prefix} · nothing 🤷`;
+      pick(li);
       return;
     }
     const p = prefix.toLowerCase();
     const li = [.../** @type {NodeListOf<HTMLElement>} */ (listing.querySelectorAll("li[data-name]"))]
       .find(x => (x.dataset.name || "").toLowerCase() >= p);
-    if (!li) return;
-    li.scrollIntoView({ block: "center" });
-    li.classList.add("found");
-    setTimeout(() => li.classList.remove("found"), 1500);
+    li?.scrollIntoView({ block: "center" });
+    pick(li || null);
   }
 }
 
 // goTo opens the "go to page" box: a name (ls, open(2), 2 open), with
 // suggestions from search as it's typed; Enter goes to the one picked, or
-// the page named, or else searches for it.
+// the page named (open alone is the one man would show), or else searches
+// for it.
 /** @param {{go: (href: string) => void, base: string, repo: string}} opts */
 async function goTo({ go, base, repo }) {
   /** @type {HTMLDialogElement | null} */
@@ -130,6 +197,19 @@ async function goTo({ go, base, repo }) {
   d.showModal();
   const input = /** @type {HTMLInputElement} */ (d.querySelector("input"));
   input.select();
+}
+
+// named is the page called q (any case) that search ranks best, as man
+// would pick (the earliest section), if there's one: for going to a page
+// by its name alone, before suggestions come.
+/** @param {any} sr @param {string} q @returns {Promise<{name: string, sec: string} | null>} */
+async function named(sr, q) {
+  const want = q.toLowerCase();
+  for (const [id] of (await sr.rank(q)).slice(0, 20)) {
+    const [name, sec] = await sr.name(id);
+    if (name.toLowerCase() === want) return { name, sec };
+  }
+  return null;
 }
 
 /** @param {HTMLDialogElement} d @param {{go: (href: string) => void, base: string, repo: string}} opts */
@@ -199,8 +279,9 @@ function setUp(d, { go, base, repo }) {
     if (!q) return d.close();
     if (items[picked]) return follow(items[picked].href);
     const { searcher, directPage } = await import("./search.js");
-    const direct = await directPage(q, searcher(repo)).catch(() => null);
-    follow(direct ? pageURL(base, direct.name, direct.sec) : `${base}search/?${new URLSearchParams({ q })}`);
+    const sr = searcher(repo);
+    const page = await directPage(q, sr).catch(() => null) || await named(sr, q).catch(() => null);
+    follow(page ? pageURL(base, page.name, page.sec) : `${base}search/?${new URLSearchParams({ q })}`);
   });
   list.addEventListener("click", () => d.close());
 }

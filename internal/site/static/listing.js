@@ -301,16 +301,16 @@ export class Listing {
   }
 
   // seek goes to the first entry whose name starts with prefix (ignoring
-  // case), or the first after where it would be, and highlights it. It
-  // resolves to whether there was one.
-  /** @param {string} prefix @returns {Promise<boolean>} */
+  // case), or the first after where it would be, resolving to its entry
+  // (or null if there's none).
+  /** @param {string} prefix @returns {Promise<HTMLElement | null>} */
   async seek(prefix) {
     const mine = ++this.seeks;
     const p = prefix.toLowerCase();
     const at = (name) => name.toLowerCase().startsWith(p) || nameCmp(name.toLowerCase(), p) >= 0;
     /** @param {ParentNode} root */
     const find = (root) => [.../** @type {NodeListOf<HTMLElement>} */ (root.querySelectorAll("li[data-name]"))].find(li => at(li.dataset.name || "")) || null;
-    /** @type {Element | null} */
+    /** @type {HTMLElement | null} */
     let li = null;
     if (!this.list) {
       li = find(this.el);
@@ -320,18 +320,14 @@ export class Listing {
       // can be empty).
       for (let n = this.plan.chunkOf(p); n <= this.plan.count && !this.dead; n++) {
         const items = await this.plan.load(n);
-        if (mine !== this.seeks) return false; // a later seek's going on
+        if (mine !== this.seeks) return null; // a later seek's going on
         if (!items.some(it => at(it.name))) continue;
         const got = await this.list.jump(n, find);
-        li = got.matches("li") ? got : null;
+        li = got.matches("li") ? /** @type {HTMLElement} */ (got) : null;
         break;
       }
     }
-    if (!li) return false;
-    const found = li;
-    found.classList.add("found");
-    setTimeout(() => found.classList.remove("found"), 1500);
-    return true;
+    return li;
   }
 
   // destroy stops everything it set going.
