@@ -433,7 +433,8 @@ func (b *Batcher) Submit(ctx context.Context, jobs []BatchJob) (int, error) {
 	}
 	// A batch the API says is too big (by its reckoning: Sail's isn't the
 	// bytes sent) is sent again in batches half as big, from where it
-	// started; those before it were sent, and are saved.
+	// started; those before it were sent, and are saved. A page too big
+	// alone is left out.
 	sent := 0
 	for {
 		n, err := b.submit(ctx, jobs, maxBytes, maxReqs)
@@ -443,7 +444,10 @@ func (b *Batcher) Submit(ctx context.Context, jobs []BatchJob) (int, error) {
 			return sent, err
 		}
 		if big.jobs <= 1 {
-			return sent, big.err // as small as it goes
+			// A page too big to send even alone: on without it.
+			b.logf("📦 %s is too big for a batch on its own, so it's left out (%v)\n", jobs[big.from].Title, big.err)
+			jobs = jobs[big.from+1:]
+			continue
 		}
 		maxBytes /= 2
 		b.logf("📦 the API said that batch was too big, so on in batches of %s\n", sizeOf(maxBytes))

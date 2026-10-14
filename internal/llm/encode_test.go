@@ -141,3 +141,50 @@ func TestBatcherTooBig(t *testing.T) {
 		t.Errorf("%d of %d pages saved as pending", len(saved), len(jobs))
 	}
 }
+
+// A long page's parts say which sections came before, but only the last
+// few, so a page with thousands doesn't make prompts bigger than its text.
+func TestCoveredSections(t *testing.T) {
+	var hs []string
+	for i := 0; i < 5000; i++ {
+		hs = append(hs, fmt.Sprintf("SECTION %d %s", i, strings.Repeat("x", i%200)))
+	}
+	p := UserPrompt("BIG(1)", 3, 9, hs, "text\n")
+	if len(p) > 2000 || !strings.Contains(p, "4988 earlier ones, then SECTION 4988") || !strings.Contains(p, "SECTION 4999") || strings.Contains(p, "SECTION 4987 ") {
+		t.Errorf("prompt (%d bytes): %.600s", len(p), p)
+	}
+	if got := covered([]string{"NAME", "SYNOPSIS"}); got != "NAME, SYNOPSIS" {
+		t.Errorf("a few sections: %q", got)
+	}
+}
+
+// A page too big for a batch even alone is left out, and the rest go on.
+func TestBatcherSkipsHugePage(t *testing.T) {
+	var mu sync.Mutex
+	var accepted int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		defer mu.Unlock()
+		if strings.Contains(string(b), "HUGE(1)") {
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			fmt.Fprint(w, `{"error":{"message":"request body too large (max 256 MB)"}}`)
+			return
+		}
+		accepted += strings.Count(string(b), `"custom_id"`)
+		fmt.Fprintf(w, `{"id":"batch_%d","request_counts":1,"created_at":1}`, accepted)
+	}))
+	defer srv.Close()
+	b := &Batcher{Client: &SailBatch{URL: srv.URL + "/v1/batches", Model: "m"}, Dir: t.TempDir(), Options: Options{ChunkSize: 2000}, MaxRequests: 1}
+	jobs := []BatchJob{
+		{Key: "a", Title: "A(1)", Text: page("a", "-a")},
+		{Key: "huge", Title: "HUGE(1)", Text: page("huge", "-h")},
+		{Key: "b", Title: "B(1)", Text: page("b", "-b")},
+	}
+	if _, err := b.Submit(context.Background(), jobs); err != nil {
+		t.Fatal(err)
+	}
+	if saved, _ := b.Pending(); len(saved) != 2 || !saved["a"] || !saved["b"] {
+		t.Errorf("pending: %v", saved)
+	}
+}

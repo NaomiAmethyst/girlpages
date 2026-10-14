@@ -49,6 +49,34 @@ func SystemPrompt(extra string) string {
 }
 
 // UserPrompt is the request for one chunk of a page.
+// Of the sections a long page's earlier parts covered, its prompt lists the
+// last few (each cut short), and how many came before: enough to say where
+// it's got to. All of them, in a page with thousands (salt(7), say), would
+// make prompts bigger than its text, and its batch bigger than an API takes.
+const (
+	coveredShown = 12
+	coveredLen   = 80
+)
+
+// covered says which sections earlier parts covered.
+func covered(prev []string) string {
+	shown := prev
+	if len(shown) > coveredShown {
+		shown = shown[len(shown)-coveredShown:]
+	}
+	cut := make([]string, len(shown))
+	for i, h := range shown {
+		if r := []rune(h); len(r) > coveredLen {
+			h = string(r[:coveredLen]) + "…"
+		}
+		cut[i] = h
+	}
+	if n := len(prev) - len(shown); n > 0 {
+		return fmt.Sprintf("%d earlier ones, then %s", n, strings.Join(cut, ", "))
+	}
+	return strings.Join(cut, ", ")
+}
+
 func UserPrompt(title string, part, parts int, prevHeadings []string, text string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Rewrite the manual page %s.\n", title)
@@ -58,7 +86,7 @@ func UserPrompt(title string, part, parts int, prevHeadings []string, text strin
 			b.WriteString(" Continue seamlessly from the previous part: no greeting, no re-introducing the page, ")
 			b.WriteString("and if this part starts in the middle of a section, just carry on without repeating its heading.")
 			if len(prevHeadings) > 0 {
-				fmt.Fprintf(&b, " Sections already covered: %s.", strings.Join(prevHeadings, ", "))
+				fmt.Fprintf(&b, " Sections already covered: %s.", covered(prevHeadings))
 			}
 		}
 		if part < parts {
@@ -162,7 +190,7 @@ func UserPromptFor(kind, title string, part, parts int, prevHeadings []string, t
 			b.WriteString(" Continue seamlessly from the previous part: no greeting, no re-introducing the document, ")
 			b.WriteString("and if this part starts in the middle of a section, just carry on without repeating its heading.")
 			if len(prevHeadings) > 0 {
-				fmt.Fprintf(&b, " Sections already covered: %s.", strings.Join(prevHeadings, ", "))
+				fmt.Fprintf(&b, " Sections already covered: %s.", covered(prevHeadings))
 			}
 		}
 		if part < parts {
