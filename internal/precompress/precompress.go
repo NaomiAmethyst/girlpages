@@ -81,13 +81,7 @@ var Encodings = []Encoding{
 			}
 			return enc.EncodeAll(src, nil), nil
 		},
-		Reader: func(r io.Reader) (io.ReadCloser, error) {
-			d, err := zstd.NewReader(r, zstd.WithDecoderConcurrency(1))
-			if err != nil {
-				return nil, err
-			}
-			return d.IOReadCloser(), nil
-		}},
+		Reader: func(r io.Reader) (io.ReadCloser, error) { return NewReader("zstd", r) }},
 	{Name: "br", Ext: ".br",
 		Compress: func(src []byte) ([]byte, error) {
 			var b bytes.Buffer
@@ -98,7 +92,7 @@ var Encodings = []Encoding{
 			err := w.Close()
 			return b.Bytes(), err
 		},
-		Reader: func(r io.Reader) (io.ReadCloser, error) { return io.NopCloser(brotli.NewReader(r)), nil }},
+		Reader: func(r io.Reader) (io.ReadCloser, error) { return NewReader("br", r) }},
 	{Name: "gzip", Ext: ".gz",
 		Compress: func(src []byte) ([]byte, error) {
 			var b bytes.Buffer
@@ -112,7 +106,26 @@ var Encodings = []Encoding{
 			err = w.Close()
 			return b.Bytes(), err
 		},
-		Reader: func(r io.Reader) (io.ReadCloser, error) { return gzip.NewReader(r) }},
+		Reader: func(r io.Reader) (io.ReadCloser, error) { return NewReader("gzip", r) }},
+}
+
+// NewReader undoes an encoding, by its name (an error if it isn't one of
+// Encodings). It's apart from them so that what only reads (girlc)
+// is built without the compressors, which are most of their size.
+func NewReader(name string, r io.Reader) (io.ReadCloser, error) {
+	switch name {
+	case "zstd":
+		d, err := zstd.NewReader(r, zstd.WithDecoderConcurrency(1))
+		if err != nil {
+			return nil, err
+		}
+		return d.IOReadCloser(), nil
+	case "br":
+		return io.NopCloser(brotli.NewReader(r)), nil
+	case "gzip":
+		return gzip.NewReader(r)
+	}
+	return nil, fmt.Errorf("unknown encoding %q", name)
 }
 
 // Lookup finds an encoding by its name.

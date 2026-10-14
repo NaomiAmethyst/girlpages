@@ -125,11 +125,11 @@ func decode(r io.Reader, encoding string) (io.ReadCloser, error) {
 	if strings.Contains(encoding, ",") {
 		return nil, fmt.Errorf("can't undo layered Content-Encoding %q", encoding)
 	}
-	e, ok := precompress.Lookup(encoding)
-	if !ok {
+	d, err := precompress.NewReader(encoding, r)
+	if err != nil {
 		return nil, fmt.Errorf("unexpected Content-Encoding %q", encoding)
 	}
-	return e.Reader(r)
+	return d, nil
 }
 
 // escapePath percent-encodes each segment of a relative path, so the %XX
