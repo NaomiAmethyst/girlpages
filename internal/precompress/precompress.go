@@ -42,10 +42,21 @@ type Encoding struct {
 // zstdEncoder is shared: EncodeAll may be called from many goroutines.
 // Site files are small, so a 1 MiB window loses nothing and keeps memory
 // down.
-var zstdEncoder = sync.OnceValues(func() (*zstd.Encoder, error) {
-	return zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedBestCompression),
-		zstd.WithEncoderConcurrency(workers()), zstd.WithWindowSize(1<<20))
-})
+// (It's made in a function, not by sync.OnceValues at init, so that what
+// only reads, importing this package, isn't built with zstd.)
+func zstdEncoder() (*zstd.Encoder, error) {
+	zstdOnce.Do(func() {
+		zstdEnc, zstdErr = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedBestCompression),
+			zstd.WithEncoderConcurrency(workers()), zstd.WithWindowSize(1<<20))
+	})
+	return zstdEnc, zstdErr
+}
+
+var (
+	zstdOnce sync.Once
+	zstdEnc  *zstd.Encoder
+	zstdErr  error
+)
 
 // Workers is how many files are compressed at once: one per CPU, unless
 // it's set. Each takes tens of megabytes at most (windows are fitted to

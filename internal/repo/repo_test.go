@@ -453,6 +453,9 @@ func TestClientEncodings(t *testing.T) {
 	s := testStore(t)
 	raw, _ := os.ReadFile(filepath.Join(s.Dir, ManifestPath()))
 	for _, e := range precompress.Encodings {
+		if e.Name == "zstd" {
+			continue // for browsers (see AcceptEncoding)
+		}
 		t.Run(e.Name, func(t *testing.T) {
 			data, _ := e.Compress(raw)
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -469,9 +472,10 @@ func TestClientEncodings(t *testing.T) {
 		})
 	}
 	// A compression bomb is refused rather than read into memory.
-	bomb, _ := precompress.Encodings[0].Compress(bytes.Repeat([]byte{' '}, maxDocument+10))
+	br, _ := precompress.Lookup("br")
+	bomb, _ := br.Compress(bytes.Repeat([]byte{' '}, maxDocument+10))
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Encoding", "zstd")
+		w.Header().Set("Content-Encoding", "br")
 		w.Write(bomb)
 	}))
 	defer srv.Close()
@@ -480,7 +484,7 @@ func TestClientEncodings(t *testing.T) {
 	}
 	// An encoding it didn't ask for is an error, not garbage.
 	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Encoding", "compress")
+		w.Header().Set("Content-Encoding", "zstd")
 		w.Write(raw)
 	}))
 	defer srv2.Close()

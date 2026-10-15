@@ -8,6 +8,7 @@ require (
 	github.com/klauspost/compress v1.19.2
 	github.com/mattn/go-runewidth v0.0.31
 	github.com/spf13/pflag v1.0.10
+	golang.org/x/crypto/x509roots/fallback v0.0.0-20260209214922-2f26647a795e
 	golang.org/x/term v0.32.0
 )
 

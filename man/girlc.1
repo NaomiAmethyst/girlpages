@@ -32,8 +32,13 @@ the way
 reads them from the system.
 Nothing needs to be installed but
 .B girlc
-itself: no model, no cache, and no man pages; it reads any page the
-repository has, in any version and variant.
+itself: no model, no cache, no man pages, no configuration file, and no
+libraries (it's one static binary, with root certificates of its own for
+systems without any); it reads any page the repository has, in any version
+and variant.
+That makes it a light way to have the manual in containers, which usually
+leave man pages out for their size (see
+.BR CONTAINERS ).
 .PP
 Pages are named as for
 .BR man :
@@ -145,62 +150,59 @@ The repository to read: an http(s) URL, a
 .B file://
 URL or a directory, either the repository itself or a site with it in
 .BR repo/ .
-.TP
-.BR \-C ", " \-\-config\-file =\fIfile\fR
-Read this configuration file instead of the user's.
+The default is
+.BR $GIRLC_REPO ,
+else the one
+.B girlc
+was built with (see
+.BR \-\-help ;
+packagers set it with
+.BR "make girlc GIRLC_REPO=" \fIurl\fR).
 .TP
 .BR \-h ", " \-\-help
 Show a summary of the options.
 .TP
 .BR \-V ", " \-\-version
 Show the version.
-.SH CONFIGURATION
+.SH CONTAINERS
 .B girlc
-reads
-.BR girl 's
-configuration files (see
-.BR girl (1)),
-for the repository, its timeout and the pager:
+needs nothing from the system it runs on, so it can be copied into any
+image, even one built from
+.BR scratch :
 .PP
 .RS
 .nf
-pager = ""
-
-[repo]
-url = "https://example.org/repo"
-timeout = "20s"
+COPY girlc /usr/local/bin/girlc
+ENV GIRLC_REPO=https://example.org/repo
 .fi
 .RE
 .PP
-The repository is the one given with
-.BR \-\-repo ,
-else
-.B url
-from the configuration, else the one
-.B girlc
-was built with (set by packagers with
-.BR "make girlc GIRLC_REPO=" \fIurl\fR).
+It pages with
+.B less
+if there is one, and otherwise prints.
+Installed as
+.B man
+(a link to it, say), it takes the usual
+.BR man " commands: " "man ls" ,
+.BR "man 3 printf" ,
+.BR "man \-k" " and " "man \-f" .
 .SH ENVIRONMENT
+.TP
+.B GIRLC_REPO
+The repository to read, if
+.B \-\-repo
+isn't given.
 .TP
 .BR GIRLPAGER ", " PAGER
 The pager, if
 .B \-P
-and
-.B pager
-aren't set.
+isn't given.
 .TP
 .B MANWIDTH
 The width to render pages at (by default the terminal's, up to 100).
 .TP
 .B NO_COLOR
 Turns colour off.
-.SH FILES
-.TP
-.I /etc/girlpages/config.toml
-System configuration.
-.TP
-.I ~/.config/girlpages/config.toml
-User configuration.
 .SH "EXIT STATUS"
 .TP
 .B 0

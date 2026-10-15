@@ -149,11 +149,19 @@ girl -r -k "list directory"                   # search it (--ngrams for words in
 ### girlc
 
 Just want to read? `girlc` is the same thing on its own: a little `man` that
-only reads from a repo, for machines with no model, no cache, and not even
-man pages (`make girlc && sudo make install-girlc`, documented in
-`girlc(1)`). It takes the same options as `girl -r`, and reads `[repo] url`
-from girl's config, or `--repo`; packagers can build in a default with
-`make girlc GIRLC_REPO=https://…/repo`.
+only reads from a repo. It's one static binary (about 7 MB) with no config
+file and no libraries, and brings its own root certificates for systems that
+have none. So it's a light way to keep the manual in containers that leave
+man pages out for their size: copy it into any image, even `scratch`, and
+point it at a repo with `GIRLC_REPO` or `--repo`. Packagers can build in a
+default with `make girlc GIRLC_REPO=https://…/repo`. It takes the same
+options as `girl -r` (`make girlc && sudo make install-girlc`, documented in
+`girlc(1)`).
+
+```dockerfile
+COPY girlc /usr/local/bin/girlc
+ENV GIRLC_REPO=https://example.org/repo
+```
 
 ```sh
 girlc ls                # ls(1), girlified

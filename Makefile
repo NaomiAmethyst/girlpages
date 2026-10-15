@@ -72,9 +72,10 @@ girlrepo: $(SOURCES)
 	$(GO) build -trimpath -ldflags '$(LDFLAGS)' -o $@ ./cmd/girlrepo
 
 # girlc reads pages from a repository, as man does from the system: for
-# machines that don't need girl itself.
+# machines (containers, say) that don't need girl itself, or man pages. It's
+# static, with no cgo, so it runs anywhere (musl, distroless, scratch).
 girlc: $(SOURCES)
-	$(GO) build -trimpath -ldflags '$(LDFLAGS) -X main.defaultRepo=$(GIRLC_REPO)' -o $@ ./cmd/girlc
+	CGO_ENABLED=0 $(GO) build -trimpath -ldflags '$(LDFLAGS) -X main.defaultRepo=$(GIRLC_REPO)' -o $@ ./cmd/girlc
 
 test:
 	$(GO) test ./...

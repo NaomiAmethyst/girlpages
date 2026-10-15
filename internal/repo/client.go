@@ -4,6 +4,7 @@
 package repo
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -18,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/NaomiAmethyst/girlpages/internal/precompress"
+	"github.com/andybalholm/brotli"
 )
 
 // Client fetches from a published repository: an http(s) URL, a file://
@@ -112,9 +113,11 @@ func (c *Client) Raw(ctx context.Context, rel string) ([]byte, error) {
 	return b, nil
 }
 
-// AcceptEncoding is what the client asks for: zstd, brotli or gzip, in
-// that order of preference.
-const AcceptEncoding = "zstd, br, gzip"
+// AcceptEncoding is what the client asks for: brotli, which makes the
+// smallest repository files, or gzip. (Not zstd, which repositories have
+// too, for browsers: it's bigger here, and its decoder would be most of
+// what girlc is built with besides Go's own.)
+const AcceptEncoding = "br, gzip"
 
 // decode undoes the Content-Encoding of a response body.
 func decode(r io.Reader, encoding string) (io.ReadCloser, error) {
@@ -125,11 +128,13 @@ func decode(r io.Reader, encoding string) (io.ReadCloser, error) {
 	if strings.Contains(encoding, ",") {
 		return nil, fmt.Errorf("can't undo layered Content-Encoding %q", encoding)
 	}
-	d, err := precompress.NewReader(encoding, r)
-	if err != nil {
-		return nil, fmt.Errorf("unexpected Content-Encoding %q", encoding)
+	switch encoding {
+	case "br":
+		return io.NopCloser(brotli.NewReader(r)), nil
+	case "gzip":
+		return gzip.NewReader(r)
 	}
-	return d, nil
+	return nil, fmt.Errorf("unexpected Content-Encoding %q", encoding)
 }
 
 // escapePath percent-encodes each segment of a relative path, so the %XX

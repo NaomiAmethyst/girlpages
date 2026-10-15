@@ -15,10 +15,13 @@ import (
 	"runtime/debug"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/spf13/pflag"
+	// Root certificates, for containers with none of their own (Debian's
+	// slim images, scratch): used only if the system has none.
+	_ "golang.org/x/crypto/x509roots/fallback"
 
-	"github.com/NaomiAmethyst/girlpages/internal/config"
 	"github.com/NaomiAmethyst/girlpages/internal/remote"
 	"github.com/NaomiAmethyst/girlpages/internal/repo"
 )
@@ -26,15 +29,18 @@ import (
 // version is set by the Makefile.
 var version = ""
 
-// defaultRepo is the repository read if none is configured (set by the
+// defaultRepo is the repository read if none is given (set by the
 // Makefile, from GIRLC_REPO).
 var defaultRepo = ""
+
+// timeout is how long a request to the repository can take.
+const timeout = 20 * time.Second
 
 func main() { os.Exit(run(os.Args[1:])) }
 
 type flags struct {
 	all, apropos, whatis, help, version, raw, versions, ngrams bool
-	sections, pager, configFile, repo, color                   string
+	sections, pager, repo, color                               string
 	pageVersion, variant                                       string
 	limit                                                      int
 }
@@ -64,12 +70,11 @@ options:
       --color=WHEN        auto, always or never (default auto; NO_COLOR works)
   -P, --pager=PAGER       page output with PAGER (default $GIRLPAGER, $PAGER, less)
       --repo=URL          the repository (or a site with one in repo/) to read
-  -C, --config-file=FILE  read this config instead of girl's
   -h, --help              show this help
   -V, --version           show the version
 
-The repository is --repo, else [repo] url from girl's config, else the one
-she was built with. Full details: girlc girlc (or man girlc).
+The repository is --repo, else $GIRLC_REPO, else the one she was built
+with%s. Full details: girlc girlc.
 `
 
 func newFlagSet(f *flags) *pflag.FlagSet {
@@ -91,15 +96,12 @@ func newFlagSet(f *flags) *pflag.FlagSet {
 	fs.StringVar(&f.color, "color", "auto", "")
 	fs.StringVarP(&f.pager, "pager", "P", "", "")
 	fs.StringVar(&f.repo, "repo", "", "")
-	fs.StringVarP(&f.configFile, "config-file", "C", "", "")
 	fs.BoolVarP(&f.help, "help", "h", false, "")
 	fs.BoolVarP(&f.version, "version", "V", false, "")
 	fs.SetNormalizeFunc(func(_ *pflag.FlagSet, name string) pflag.NormalizedName {
 		switch name {
 		case "colour":
 			name = "color"
-		case "config":
-			name = "config-file"
 		}
 		return pflag.NormalizedName(name)
 	})
@@ -114,7 +116,11 @@ func run(args []string) int {
 		return remote.ExitUsage
 	}
 	if f.help {
-		fmt.Print(usage)
+		built := " (none)"
+		if defaultRepo != "" {
+			built = " (" + defaultRepo + ")"
+		}
+		fmt.Printf(usage, built)
 		return remote.ExitOK
 	}
 	if f.version {
@@ -138,23 +144,15 @@ func run(args []string) int {
 		return remote.ExitUsage
 	}
 
-	cfg, err := config.Load(f.configFile)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "girlc: %v\n", err)
+	u := firstOf(f.repo, os.Getenv("GIRLC_REPO"), defaultRepo)
+	if u == "" {
+		fmt.Fprintln(os.Stderr, "girlc: which repo, bestie? use --repo=URL, or set GIRLC_REPO")
 		return remote.ExitUsage
-	}
-	u := firstOf(f.repo, cfg.Repo.URL, defaultRepo)
-	if u == "" || u == "none" {
-		fmt.Fprintf(os.Stderr, "girlc: which repo, bestie? use --repo=URL, or set [repo] url in %s\n", config.UserConfigPath())
-		return remote.ExitUsage
-	}
-	if f.pager != "" {
-		cfg.Pager = f.pager
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	c, err := repo.Find(ctx, u, cfg.Repo.Timeout.Duration, "girlc/"+getVersion())
+	c, err := repo.Find(ctx, u, timeout, "girlc/"+getVersion())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "girlc: %v\n", err)
 		return remote.ExitFailed
@@ -173,7 +171,7 @@ func run(args []string) int {
 		Footer:  "girlpages " + getVersion(),
 		Raw:     f.raw,
 		Page:    t.TTY,
-		Pager:   cfg.Pager,
+		Pager:   f.pager,
 		Stdout:  os.Stdout,
 		Stderr:  os.Stderr,
 	}
