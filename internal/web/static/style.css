@@ -457,6 +457,8 @@ dialog.keys th[colspan] { padding-top: 0.75rem; color: var(--muted); font-size: 
 dialog.keys tr > th:first-child:not([colspan]) { white-space: nowrap; font-weight: 400; }
 dialog.keys kbd { font: inherit; font-size: 0.85em; padding: 0 0.35em; border: 1px solid var(--card-edge); border-radius: 0.35em; background: var(--card); }
 dialog.keys p { margin: 0.75rem 0 0; text-align: right; }
+footer .get { margin: 0.5rem 0 0; }
+footer .get a { font-weight: 700; }
 footer .keys { margin: 0.5rem 0 0; }
 footer kbd { font: inherit; font-size: 0.8em; padding: 0 0.35em; border: 1px solid var(--card-edge); border-radius: 0.35em; background: var(--card); }
 @media (hover: none) { footer .keys { display: none; } }
