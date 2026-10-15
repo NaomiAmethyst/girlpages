@@ -99,3 +99,64 @@ func TestOriginalHTMLRFC(t *testing.T) {
 		t.Errorf("toc: %+v", toc)
 	}
 }
+
+// rfcSections reads testdata/rfc.json: an RFC's text as the repository
+// has it (after its title block), with the things in RFC 1459 and others
+// that were taken for headings (a diagram whose edge sticks out left of
+// the text, a grammar at the margin, a table of contents numbered like a
+// list, a page's footer) and the headings that are, numbered every way
+// RFCs number them.
+func rfcSections(t *testing.T) []OriginalSection {
+	t.Helper()
+	b, err := os.ReadFile("testdata/rfc.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []OriginalSection
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func TestOriginalRFCHeadings(t *testing.T) {
+	h, toc := OriginalHTML("", "", rfcSections(t), HTMLOptions{Indent: 3, Width: 72})
+	var subs []string
+	for _, x := range toc {
+		if x.Level == 2 {
+			subs = append(subs, x.Text)
+		}
+	}
+	want := []string{"1.1 Servers", "2.3.1  Message format in 'pseudo' BNF", "4.3. Name server internals",
+		"4.3.1. Queries and responses", "2.16. Minimal VMTP Implementation",
+		"3.2  Alternatives                               Rule1 / Rule2", "3.9  L2C (URL to URC):"}
+	if strings.Join(subs, "\n") != strings.Join(want, "\n") {
+		t.Errorf("subsections:\n  %q\nwant\n  %q", subs, want)
+	}
+	if strings.Contains(h, "<ol") {
+		t.Error("the table of contents was taken for a list")
+	}
+	// The diagram is one block, its edge and all.
+	if !strings.Contains(h, "<pre><code>                  [ Server 1 ]\n                   /       \\\n[ Server 7 ] [ Server 8 ]   [ Server 10 ]</code></pre>") {
+		t.Errorf("the diagram was split:\n%s", h)
+	}
+	for _, code := range []string{"&lt;message&gt;  ::=", "Cheriton"} {
+		if !strings.Contains(h, "<pre><code>"+code) {
+			t.Errorf("%s isn't code:\n%s", code, h)
+		}
+	}
+	if strings.Contains(h, "------------") {
+		t.Errorf("a heading's underline was kept:\n%s", h)
+	}
+	if !strings.Contains(h, "\n&lt;!ELEMENT BODY") {
+		t.Errorf("<!ELEMENT isn't code:\n%s", h)
+	}
+
+	// In man's rendering of a page, a line left of the text is a
+	// subsection (.SS), whatever it says.
+	_, toc = OriginalHTML("", "", []OriginalSection{{Heading: "FUNCTIONS", Body: "\n" +
+		"   check_dependencies_opts($meta, $phase, $type)\n       Checks them.\n"}}, HTMLOptions{})
+	if len(toc) != 2 || toc[1].Text != "check_dependencies_opts($meta, $phase, $type)" {
+		t.Errorf("man subsection: %v", toc)
+	}
+}

@@ -402,10 +402,73 @@ function textLike(t) {
     const f = trim(t).split(/\s+/);
     if (rs[0] !== "-" || f.length < 3 || !/^\p{Ll}+$/u.test(f[1])) return false;
   }
+  return !codeLike(t);
+}
+
+// codeLike reports whether more than a tenth of a line is the symbols code
+// is made of.
+function codeLike(t) {
+  const rs = runes(t);
   let odd = 0;
   for (const r of rs) if ("{}[]<>|=$#;/\\_*&~^`@%".includes(r)) odd++;
-  return odd * 10 <= rs.length;
+  return odd * 10 > rs.length;
 }
+
+// tocLine matches a line of a table of contents, with dot leaders to its
+// page number ("6. REPLIES ........ 43").
+const tocLine = /\.(\s?\.){3,}\s*[0-9]+\s*$/;
+
+// subHeading reports whether line i of a plain-text document, left of its
+// section's text, is a subsection heading: after a blank line (or, if
+// it's numbered, before one: where a page break was taken out, it can
+// follow anything), with nothing more at its indent right after it, and a
+// title (after its number, if it has one: "2.2   Operations",
+// "4.6.2.10 ID_DER_ASN1_DN"; else text, see textLike), not code (a
+// diagram, a grammar) or a line of a table of contents.
+function subHeading(lines, i) {
+  const l = lines[i], prev = lines[i - 1], next = lines[i + 1];
+  // Right under it can be its underline, or a heading of its own (4.3.
+  // above 4.3.1.).
+  const heads = next && (underline.test(next.text) || numberedSub.test(next.text));
+  if (next && next.text && next.ind <= l.ind && !heads) return false;
+  const m = numberedSub.exec(l.text);
+  const t = m ? m[1] : l.text;
+  const after = !prev || !prev.text, before = !next || !next.text || heads;
+  if (!after && !(m && before)) return false;
+  if (runes(t).length >= 72 || tocLine.test(t)) return false;
+  // Columns are for tables and diagrams, but a numbered heading can have
+  // a note at the end ("3.2  Alternatives   Rule1 / Rule2"), as long as it
+  // isn't a page number (a table of contents').
+  const gap = t.indexOf("   ");
+  if (gap >= 0 && (!m || pageNumber.test(trim(t.slice(gap + 3))) || !trim(t.slice(0, gap)))) return false;
+  return !!m || textLike(t);
+}
+
+// pageNumber matches a page number, in a table of contents.
+const pageNumber = /^([0-9]+|[ivxlc]+)$/;
+
+// dropUnderline leaves out the underline of a plain-text document's
+// heading, at the start of its section.
+function dropUnderline(lines) {
+  const i = lines.findIndex(l => l.text);
+  return i >= 0 && underline.test(lines[i].text) ? lines.slice(i + 1) : lines;
+}
+
+// drawn reports whether a block of lines (more than one) is a drawing or a
+// table: half of them or more are laid out in columns, or made of symbols.
+function drawn(block) {
+  if (block.length < 2) return false;
+  let n = 0;
+  for (const l of block) if (l.text.includes("   ") || codeLike(l.text) || !runes(l.text).some(isLetterOrDigit)) n++;
+  return n * 2 >= block.length;
+}
+
+// numberedSub matches a numbered subsection's heading: its number, then
+// its title (m[1]).
+const numberedSub = /^(?:[0-9]+|[A-Z])(?:\.[0-9]+)+\.?\s+(\S.*)$/;
+
+// underline matches a line underlining a heading.
+const underline = /^(-{3,}|={3,}|~{3,})$/;
 
 function regionEnd(lines, start, ind) {
   let end = start;
@@ -475,6 +538,7 @@ function codeNodes(lines) {
 
 function tagAt(tagInds, lines, i) {
   const l = lines[i], rs = runes(l.text);
+  if (tocLine.test(l.text)) return null;
   const next = lines[i + 1];
   if (next && next.text && next.ind > l.ind) {
     const col = next.ind, c = col - l.ind;
@@ -503,20 +567,36 @@ function tagAt(tagInds, lines, i) {
   return null;
 }
 
-function parseOriginal(tagInds, lines, ind, top, indented, width) {
+// parseOriginal is render.oparser.parse: plain is its plain field.
+function parseOriginal(tagInds, lines, ind, top, indented, width, plain = false) {
   const out = [];
   const add = (i, n) => { n.gap = i > 0 && !lines[i - 1].text; out.push(n); };
   for (let i = 0; i < lines.length;) {
     const l = lines[i];
     if (!l.text) { i++; continue; }
-    if (top && l.ind < ind) { add(i, { kind: "sub", text: l.text }); i++; continue; }
+    const heading = (k) => top && lines[k].ind < ind && (!plain || subHeading(lines, k));
+    if (plain && !heading(i)) {
+      // A drawing (a diagram, a table) is code, whatever its lines look
+      // like on their own: in plain text, it's drawn between blank lines
+      // (or headings). Anything left of the text that isn't a heading is
+      // laid out by hand too: a diagram's edge, a grammar at the margin.
+      let j = i + 1;
+      while (j < lines.length && lines[j].text && !heading(j)) j++;
+      if (drawn(lines.slice(i, j)) || (top && l.ind < ind)) { add(i, { kind: "code", lines: lines.slice(i, j) }); i = j; continue; }
+    }
+    if (heading(i)) {
+      add(i, { kind: "sub", text: l.text });
+      i++;
+      if (plain && i < lines.length && underline.test(lines[i].text)) i++;
+      continue;
+    }
     const t = tagAt(tagInds, lines, i);
     if (t) {
       const end = regionEnd(lines, i + 1, t.col);
       let sub = lines.slice(i + 1, end);
       if (t.desc) sub = [{ ind: t.col, text: t.desc }, ...sub];
       const kind = BULLETS.has(t.tag) ? "ul" : orderedTag.test(t.tag) ? "ol" : "dl";
-      const item = { tag: t.tag, body: parseOriginal(tagInds, sub, t.col, false, false, width) };
+      const item = { tag: t.tag, body: parseOriginal(tagInds, sub, t.col, false, false, width, plain) };
       const last = out[out.length - 1];
       if (last && last.kind === kind) last.items.push(item);
       else add(i, { kind, items: [item] });
@@ -525,7 +605,7 @@ function parseOriginal(tagInds, lines, ind, top, indented, width) {
     }
     if (l.ind > ind) {
       const end = regionEnd(lines, i, l.ind);
-      const sub = parseOriginal(tagInds, lines.slice(i, end), l.ind, false, true, width);
+      const sub = parseOriginal(tagInds, lines.slice(i, end), l.ind, false, true, width, plain);
       if (sub.length) sub[0].gap = i > 0 && !lines[i - 1].text;
       out.push(...sub);
       i = end;
@@ -592,14 +672,15 @@ export function renderOriginalHTML(doc, { link = undefined, indent = 0, width = 
   };
   (doc.sections || []).forEach((s, i) => {
     const heading = trim(stripControls(s.heading || ""));
-    const lines = origLines(stripControls(s.body || ""));
+    let lines = origLines(stripControls(s.body || ""));
+    if (indent > 0 && heading) lines = dropUnderline(lines);
     if (heading) {
       const hid = id(heading);
       toc.push({ id: hid, text: heading, level: 1 });
       b += `<h2 id="${hid}">${esc(heading)}</h2>\n`;
     }
     nodes(heading.toUpperCase() === "SYNOPSIS" || (titleBlock && !heading && i === 0) ? mergeCode(codeNodes(lines))
-      : parseOriginal(tagIndents(lines), lines, indent > 0 ? indent : baseIndent(lines), true, false, width > 0 ? width : FILL_WIDTH));
+      : parseOriginal(tagIndents(lines), lines, indent > 0 ? indent : baseIndent(lines), true, false, width > 0 ? width : FILL_WIDTH, indent > 0));
   });
   const foot = splitFields(doc.footer);
   if (foot.length) b += `<p class="manhead">${esc(foot.join(" · "))}</p>\n`;

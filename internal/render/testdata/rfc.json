@@ -1,0 +1,14 @@
+[
+  {
+    "body": "\n   1.  INTRODUCTION ...............................................    4\n      1.1  Servers ................................................    4\n   6. REPLIES .....................................................   43\n      6.1 Error Replies ...........................................   43\n",
+    "heading": "Table of Contents"
+  },
+  {
+    "body": "\n1.1 Servers\n\n   The server forms the backbone of IRC.\n\n                   [ Server 1 ]\n                    /       \\\n [ Server 7 ] [ Server 8 ]   [ Server 10 ]\n\n2.3.1  Message format in 'pseudo' BNF\n\n<message>  ::= [':' <prefix> <SPACE> ] <command> <params> <crlf>\n<prefix>   ::= <servername> | <nick> [ '!' <user> ] [ '@' <host> ]\n\n<!ELEMENT BODY O O  %body.content>\n\n4.3. Name server internals\n4.3.1. Queries and responses\n\n   The principal activity of name servers is to answer queries.\n\nCheriton                                                       [page 32]\n2.16. Minimal VMTP Implementation\n\n   A minimal VMTP client needs to be able to send a Request.\n\n3.2  Alternatives                               Rule1 / Rule2\n\n   Elements separated by a forward slash are alternatives.\n\n3.9  L2C (URL to URC):\n----------------------\n\n   The L2C operation returns the URC.\n",
+    "heading": "1.  INTRODUCTION"
+  },
+  {
+    "heading": "Introduction",
+    "body": "------------\n\nThis User Datagram  Protocol  (UDP)  is  defined  to  make  available  a\ndatagram   mode  of  packet-switched   computer   communication  in  the\nunderlying protocol.\n"
+  }
+]

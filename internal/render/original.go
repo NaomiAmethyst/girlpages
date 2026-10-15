@@ -36,6 +36,9 @@ func OriginalHTML(header, footer string, sections []OriginalSection, o HTMLOptio
 	for i, s := range sections {
 		heading := strings.TrimSpace(StripControls(s.Heading))
 		lines := origLines(StripControls(s.Body))
+		if o.Indent > 0 && heading != "" {
+			lines = dropUnderline(lines)
+		}
 		if heading != "" {
 			id := h.id(heading)
 			h.toc = append(h.toc, Heading{ID: id, Text: heading, Level: 1})
@@ -52,7 +55,7 @@ func OriginalHTML(header, footer string, sections []OriginalSection, o HTMLOptio
 			}
 			base := baseIndent(lines)
 			if o.Indent > 0 {
-				base = o.Indent
+				base, p.plain = o.Indent, true
 			}
 			nodes = p.parse(lines, base, true, false)
 		}
@@ -165,6 +168,11 @@ type oitem struct {
 type oparser struct {
 	tagInds map[int]bool
 	width   int // the last column text is filled to
+	// plain is set for documents that are plain text (RFCs), not man's
+	// rendering of a page, where a line left of the text is only a
+	// heading if it looks like one (see subHeading): in man's, it's
+	// always one (.SS), whatever it says.
+	plain bool
 }
 
 // parse turns lines indented at least ind into nodes. At the top of a
@@ -183,9 +191,30 @@ func (p *oparser) parse(lines []oline, ind int, top, indented bool) []onode {
 			i++
 			continue
 		}
-		if top && l.ind < ind {
+		heading := func(k int) bool { return top && lines[k].ind < ind && (!p.plain || subHeading(lines, k)) }
+		if p.plain && !heading(i) {
+			// A drawing (a diagram, a table) is code, whatever its lines
+			// look like on their own: in plain text, it's drawn between
+			// blank lines (or headings).
+			j := i + 1
+			for j < len(lines) && lines[j].text != "" && !heading(j) {
+				j++
+			}
+			if drawn(lines[i:j]) || top && l.ind < ind {
+				// Anything left of the text that isn't a heading is laid
+				// out by hand too: a diagram's edge, a grammar at the
+				// margin.
+				add(i, onode{kind: oCode, lines: lines[i:j]})
+				i = j
+				continue
+			}
+		}
+		if heading(i) {
 			add(i, onode{kind: oSub, text: l.text})
 			i++
+			if p.plain && i < len(lines) && underline.MatchString(lines[i].text) {
+				i++
+			}
 			continue
 		}
 		if tag, desc, col, ok := p.tagAt(lines, i); ok {
@@ -248,6 +277,91 @@ func (p *oparser) parse(lines []oline, ind int, top, indented bool) []onode {
 
 var orderedTag = regexp.MustCompile(`^\(?[0-9]{1,3}[.)]$`)
 
+// tocLine matches a line of a table of contents, with dot leaders to its
+// page number ("6. REPLIES ........ 43").
+var tocLine = regexp.MustCompile(`\.(\s?\.){3,}\s*[0-9]+\s*$`)
+
+// subHeading reports whether line i of a plain-text document, left of its
+// section's text, is a subsection heading: after a blank line (or, if
+// it's numbered, before one: where a page break was taken out, it can
+// follow anything), with nothing more at its indent right after it, and a
+// title (after its number, if it has one: "2.2   Operations",
+// "4.6.2.10 ID_DER_ASN1_DN"; else text, see textLike), not code (a
+// diagram, a grammar) or a line of a table of contents.
+func subHeading(lines []oline, i int) bool {
+	l := lines[i]
+	// Right under it can be its underline, or a heading of its own (4.3.
+	// above 4.3.1.).
+	if n := i + 1; n < len(lines) && lines[n].text != "" && lines[n].ind <= l.ind &&
+		!underline.MatchString(lines[n].text) && !numberedSub.MatchString(lines[n].text) {
+		return false
+	}
+	t := l.text
+	m := numberedSub.FindStringSubmatch(t)
+	if m != nil {
+		t = m[1]
+	}
+	after := i == 0 || lines[i-1].text == ""
+	before := i+1 == len(lines) || lines[i+1].text == "" || underline.MatchString(lines[i+1].text) ||
+		numberedSub.MatchString(lines[i+1].text)
+	if !after && !(m != nil && before) {
+		return false
+	}
+	if utf8.RuneCountInString(t) >= 72 || tocLine.MatchString(t) {
+		return false
+	}
+	// Columns are for tables and diagrams, but a numbered heading can have
+	// a note at the end ("3.2  Alternatives   Rule1 / Rule2"), as long as
+	// it isn't a page number (a table of contents').
+	if title, rest, ok := strings.Cut(t, "   "); ok {
+		if m == nil || pageNumber.MatchString(strings.TrimSpace(rest)) || strings.TrimSpace(title) == "" {
+			return false
+		}
+	}
+	return m != nil || textLike(t)
+}
+
+// pageNumber matches a page number, in a table of contents.
+var pageNumber = regexp.MustCompile(`^([0-9]+|[ivxlc]+)$`)
+
+// dropUnderline leaves out the underline of a plain-text document's
+// heading, at the start of its section.
+func dropUnderline(lines []oline) []oline {
+	for i, l := range lines {
+		if l.text == "" {
+			continue
+		}
+		if underline.MatchString(l.text) {
+			return lines[i+1:]
+		}
+		break
+	}
+	return lines
+}
+
+// drawn reports whether a block of lines (more than one) is a drawing or a
+// table: half of them or more are laid out in columns, or made of symbols.
+func drawn(block []oline) bool {
+	if len(block) < 2 {
+		return false
+	}
+	n := 0
+	for _, l := range block {
+		if strings.Contains(l.text, "   ") || codeLike(l.text) ||
+			!strings.ContainsFunc(l.text, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }) {
+			n++
+		}
+	}
+	return n*2 >= len(block)
+}
+
+// numberedSub matches a numbered subsection's heading: its number, then
+// its title (m[1]).
+var numberedSub = regexp.MustCompile(`^(?:[0-9]+|[A-Z])(?:\.[0-9]+)+\.?\s+(\S.*)$`)
+
+// underline matches a line underlining a heading.
+var underline = regexp.MustCompile(`^(-{3,}|={3,}|~{3,})$`)
+
 func isBullet(tag string) bool {
 	switch tag {
 	case "•", "·", "◦", "‣", "∙", "*", "-", "+", "o":
@@ -261,6 +375,9 @@ func isBullet(tag string) bool {
 // tag's own (desc, starting at column col).
 func (p *oparser) tagAt(lines []oline, i int) (tag, desc string, col int, ok bool) {
 	l := lines[i]
+	if tocLine.MatchString(l.text) {
+		return "", "", 0, false
+	}
 	rs := []rune(l.text)
 	if i+1 < len(lines) && lines[i+1].text != "" && lines[i+1].ind > l.ind {
 		col = lines[i+1].ind
@@ -389,6 +506,12 @@ func textLike(t string) bool {
 			return false
 		}
 	}
+	return !codeLike(t)
+}
+
+// codeLike reports whether more than a tenth of a line is the symbols code
+// is made of.
+func codeLike(t string) bool {
 	n, odd := 0, 0
 	for _, r := range t {
 		n++
@@ -396,7 +519,7 @@ func textLike(t string) bool {
 			odd++
 		}
 	}
-	return odd*10 <= n
+	return odd*10 > n
 }
 
 // joinProse joins filled lines into one, without a space after a line

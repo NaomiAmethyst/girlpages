@@ -894,6 +894,16 @@ func TestOriginalJS(t *testing.T) {
 				"1.1.  Requirements Language\n\n   The key words \"MUST\" and \"SHOULD\" are to be interpreted as in\n   BCP 14.\n\n" +
 				"      +--------+\n      | header |\n      +--------+\n"}}},
 	)
+	// What RFC 1459 and others had taken for headings, and the headings.
+	rb, err := os.ReadFile("../render/testdata/rfc.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rfcSections []render.OriginalSection
+	if err := json.Unmarshal(rb, &rfcSections); err != nil {
+		t.Fatal(err)
+	}
+	docs = append(docs, doc{Indent: 3, Width: 72, Sections: rfcSections})
 	type result struct {
 		HTML string
 		TOC  []render.Heading

@@ -334,7 +334,7 @@ func WriteVersions(w io.Writer, l *repo.Listing) error {
 		}
 		return vs[i].Added.After(vs[j].Added)
 	})
-	title := l.Name + "(" + l.Section + ")"
+	title := Request{Name: l.Name, Section: l.Section}.String()
 	n := "1 version"
 	if len(vs) != 1 {
 		n = fmt.Sprintf("%d versions", len(vs))

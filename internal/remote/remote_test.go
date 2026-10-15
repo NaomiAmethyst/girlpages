@@ -225,6 +225,14 @@ func TestVersionsAndVariants(t *testing.T) {
 	if b.String() != want {
 		t.Errorf("WriteVersions:\n%s\nwant:\n%s", b.String(), want)
 	}
+	rfc, err := r.Listings(ctx, Request{"9110", "rfc"}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Reset()
+	if err := WriteVersions(&b, rfc[0]); err != nil || !strings.HasPrefix(b.String(), "RFC 9110: 1 version\n") {
+		t.Errorf("WriteVersions of an RFC: %q, %v", b.String(), err)
+	}
 }
 
 func TestSearch(t *testing.T) {
