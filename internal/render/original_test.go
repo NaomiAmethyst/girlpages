@@ -129,7 +129,7 @@ func TestOriginalRFCHeadings(t *testing.T) {
 	}
 	want := []string{"1.1 Servers", "2.3.1  Message format in 'pseudo' BNF", "4.3. Name server internals",
 		"4.3.1. Queries and responses", "2.16. Minimal VMTP Implementation",
-		"3.2  Alternatives                               Rule1 / Rule2", "3.9  L2C (URL to URC):"}
+		"3.2  Alternatives                               Rule1 / Rule2", "3.9  L2C (URL to URC):", "Format", "Fields"}
 	if strings.Join(subs, "\n") != strings.Join(want, "\n") {
 		t.Errorf("subsections:\n  %q\nwant\n  %q", subs, want)
 	}
@@ -143,6 +143,26 @@ func TestOriginalRFCHeadings(t *testing.T) {
 	for _, code := range []string{"&lt;message&gt;  ::=", "Cheriton"} {
 		if !strings.Contains(h, "<pre><code>"+code) {
 			t.Errorf("%s isn't code:\n%s", code, h)
+		}
+	}
+	// Old RFCs: written at the margin, and justified.
+	for _, para := range []string{
+		"<p>This User Datagram Protocol (UDP) is defined to make available a datagram mode of packet-switched computer communication in the underlying protocol.</p>",
+		"<p>Source Port is an optional field, when meaningful, it indicates the port of the sending process, and may be assumed to be the port to which a reply should be addressed.</p>",
+		"<p>The fields are as follows.</p>",
+		"<p>Length is the length in octets of this user datagram including this header and the data.</p>",
+	} {
+		if !strings.Contains(h, para) {
+			t.Errorf("no %s in:\n%s", para, h)
+		}
+	}
+	if !strings.Contains(h, "<pre><code> 0      7 8") {
+		t.Errorf("the old RFC's diagram isn't code:\n%s", h)
+	}
+	// References are a list, two lines or three, not drawings.
+	for _, ref := range []string{"<dt>[CONDISP]</dt>", "<dt>[HOSTS]</dt>"} {
+		if !strings.Contains(h, ref) {
+			t.Errorf("no %s in:\n%s", ref, h)
 		}
 	}
 	if strings.Contains(h, "------------") {

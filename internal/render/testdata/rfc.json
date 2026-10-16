@@ -10,5 +10,13 @@
   {
     "heading": "Introduction",
     "body": "------------\n\nThis User Datagram  Protocol  (UDP)  is  defined  to  make  available  a\ndatagram   mode  of  packet-switched   computer   communication  in  the\nunderlying protocol.\n"
+  },
+  {
+    "heading": "",
+    "body": "Format\n------\n\n                  0      7 8     15 16    23 24    31\n                 +--------+--------+--------+--------+\n                 |     Source      |   Destination   |\n                 +--------+--------+--------+--------+\n\nFields\n\nSource Port is an optional field, when meaningful, it indicates the port\nof the sending  process,  and may be assumed  to be the port  to which a\nreply should be addressed.\n\nThe fields are as follows.\n\nLength  is the length  in octets  of this user datagram  including  this\nheader and the data.\n"
+  },
+  {
+    "heading": "References",
+    "body": "   [CONDISP]       R. Troost, S. Dorner: \"Communicating Presentation\n                   Information in Internet Messages: The\n                   Content-Disposition Header\", RFC 1806, June 1995.\n\n   [HOSTS]         R. Braden (editor): \"Requirements for Internet Hosts --\n                   Application and Support\", STD-3, RFC 1123, October 1989.\n"
   }
 ]

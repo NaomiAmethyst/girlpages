@@ -454,12 +454,73 @@ function dropUnderline(lines) {
   return i >= 0 && underline.test(lines[i].text) ? lines.slice(i + 1) : lines;
 }
 
+// textIndent is where a plain-text section's text is: at indent, as
+// usual, or wherever most of its lines of prose are, if that's left of it
+// (old RFCs are written at the margin).
+function textIndent(lines, indent) {
+  const at = new Map();
+  let n = 0;
+  for (const l of lines) {
+    if (runes(l.text).length >= 40 && textLike(squeeze(l.text))) {
+      at.set(l.ind, (at.get(l.ind) || 0) + 1);
+      n++;
+    }
+  }
+  let best = indent;
+  for (const [ind, c] of at) if (ind < indent && c * 2 > n && (best === indent || c > (at.get(best) || 0))) best = ind;
+  return best;
+}
+
+// marginHeading reports whether line i of plain text written at the
+// margin, where its headings are too, is one: a subsection heading by
+// subHeading, and numbered, underlined, or a short title (not a sentence
+// on its own, ending in punctuation).
+function marginHeading(lines, i) {
+  if (!subHeading(lines, i)) return false;
+  const t = lines[i].text, next = lines[i + 1];
+  if (numberedSub.test(t) || (next && underline.test(next.text))) return true;
+  const rs = runes(t);
+  return rs.length <= 50 && /^\p{Lu}/u.test(t) && !".,;:".includes(t[t.length - 1]);
+}
+
+// squeeze undoes justification in a line's text (which starts and ends
+// with words): one space between words, and after sentences, where two
+// were typed (as HTML shows them anyway).
+const squeeze = (t) => t.replace(/ {2,}/g, " ");
+
+// justified reports whether a block of lines is a justified paragraph
+// (as old RFCs are typed): words, every line but the last ending at the
+// same column, the right margin (for two lines, the width text is filled
+// to, so that a table's two rows aren't taken for one).
+function justified(block, width) {
+  if (block.length < 2 || (block.length === 2 && block[0].ind + runes(block[0].text).length !== width)) return false;
+  let end = 0;
+  for (let k = 0; k < block.length; k++) {
+    const l = block[k], e = l.ind + runes(l.text).length;
+    if (k === 0) end = e;
+    // (Justifying stretches a gap by a space or two; more is a column, a
+    // tag's say.)
+    if ((k < block.length - 1 && (e !== end || e < 55)) || l.text.includes("     ") || !textLike(squeeze(l.text))) return false;
+  }
+  return true;
+}
+
 // drawn reports whether a block of lines (more than one) is a drawing or a
 // table: half of them or more are laid out in columns, or made of symbols.
 function drawn(block) {
   if (block.length < 2) return false;
   let n = 0;
-  for (const l of block) if (l.text.includes("   ") || codeLike(l.text) || !runes(l.text).some(isLetterOrDigit)) n++;
+  for (let k = 0; k < block.length; k++) {
+    const l = block[k];
+    // A tag, with its paragraph starting after a gap and going on below,
+    // isn't a column.
+    const g = l.text.indexOf("   ");
+    if (g >= 0 && k + 1 < block.length) {
+      const rest = l.text.slice(g);
+      if (block[k + 1].ind === l.ind + runes(l.text.slice(0, g)).length + rest.length - rest.trimStart().length) continue;
+    }
+    if (l.text.includes("   ") || codeLike(l.text) || !runes(l.text).some(isLetterOrDigit)) n++;
+  }
   return n * 2 >= block.length;
 }
 
@@ -567,14 +628,18 @@ function tagAt(tagInds, lines, i) {
   return null;
 }
 
-// parseOriginal is render.oparser.parse: plain is its plain field.
-function parseOriginal(tagInds, lines, ind, top, indented, width, plain = false) {
+// parseOriginal is render.oparser.parse: plain and margin are its fields.
+function parseOriginal(tagInds, lines, ind, top, indented, width, plain = false, margin = false) {
   const out = [];
   const add = (i, n) => { n.gap = i > 0 && !lines[i - 1].text; out.push(n); };
   for (let i = 0; i < lines.length;) {
     const l = lines[i];
     if (!l.text) { i++; continue; }
-    const heading = (k) => top && lines[k].ind < ind && (!plain || subHeading(lines, k));
+    const heading = (k) => {
+      if (!top) return false;
+      if (margin && lines[k].ind === ind) return marginHeading(lines, k);
+      return lines[k].ind < ind && (!plain || subHeading(lines, k));
+    };
     if (plain && !heading(i)) {
       // A drawing (a diagram, a table) is code, whatever its lines look
       // like on their own: in plain text, it's drawn between blank lines
@@ -582,7 +647,7 @@ function parseOriginal(tagInds, lines, ind, top, indented, width, plain = false)
       // laid out by hand too: a diagram's edge, a grammar at the margin.
       let j = i + 1;
       while (j < lines.length && lines[j].text && !heading(j)) j++;
-      if (drawn(lines.slice(i, j)) || (top && l.ind < ind)) { add(i, { kind: "code", lines: lines.slice(i, j) }); i = j; continue; }
+      if ((drawn(lines.slice(i, j)) && !justified(lines.slice(i, j), width)) || (top && l.ind < ind)) { add(i, { kind: "code", lines: lines.slice(i, j) }); i = j; continue; }
     }
     if (heading(i)) {
       add(i, { kind: "sub", text: l.text });
@@ -596,7 +661,7 @@ function parseOriginal(tagInds, lines, ind, top, indented, width, plain = false)
       let sub = lines.slice(i + 1, end);
       if (t.desc) sub = [{ ind: t.col, text: t.desc }, ...sub];
       const kind = BULLETS.has(t.tag) ? "ul" : orderedTag.test(t.tag) ? "ol" : "dl";
-      const item = { tag: t.tag, body: parseOriginal(tagInds, sub, t.col, false, false, width, plain) };
+      const item = { tag: t.tag, body: parseOriginal(tagInds, sub, t.col, false, false, width, plain, margin) };
       const last = out[out.length - 1];
       if (last && last.kind === kind) last.items.push(item);
       else add(i, { kind, items: [item] });
@@ -605,16 +670,17 @@ function parseOriginal(tagInds, lines, ind, top, indented, width, plain = false)
     }
     if (l.ind > ind) {
       const end = regionEnd(lines, i, l.ind);
-      const sub = parseOriginal(tagInds, lines.slice(i, end), l.ind, false, true, width, plain);
+      const sub = parseOriginal(tagInds, lines.slice(i, end), l.ind, false, true, width, plain, margin);
       if (sub.length) sub[0].gap = i > 0 && !lines[i - 1].text;
       out.push(...sub);
       i = end;
       continue;
     }
     let j = i + 1;
-    while (j < lines.length && lines[j].text && lines[j].ind === ind && !tagAt(tagInds, lines, j)) j++;
+    while (j < lines.length && lines[j].text && lines[j].ind === ind && !heading(j) && !tagAt(tagInds, lines, j)) j++;
     const run = lines.slice(i, j);
     if (indented && run.length === 1 && !run[0].text.endsWith(".")) add(i, { kind: "code", lines: run });
+    else if (plain && justified(run, width)) add(i, { kind: "para", text: squeeze(joinProse(run)) });
     else if (isProse(run, width)) add(i, { kind: "para", text: joinProse(run) });
     else if (isText(run)) add(i, { kind: "para", text: run.map(l => l.text).join("\n") });
     else add(i, { kind: "code", lines: run });
@@ -679,8 +745,9 @@ export function renderOriginalHTML(doc, { link = undefined, indent = 0, width = 
       toc.push({ id: hid, text: heading, level: 1 });
       b += `<h2 id="${hid}">${esc(heading)}</h2>\n`;
     }
+    const base = indent > 0 ? textIndent(lines, indent) : baseIndent(lines);
     nodes(heading.toUpperCase() === "SYNOPSIS" || (titleBlock && !heading && i === 0) ? mergeCode(codeNodes(lines))
-      : parseOriginal(tagIndents(lines), lines, indent > 0 ? indent : baseIndent(lines), true, false, width > 0 ? width : FILL_WIDTH, indent > 0));
+      : parseOriginal(tagIndents(lines), lines, base, true, false, width > 0 ? width : FILL_WIDTH, indent > 0, indent > 0 && base < indent));
   });
   const foot = splitFields(doc.footer);
   if (foot.length) b += `<p class="manhead">${esc(foot.join(" · "))}</p>\n`;

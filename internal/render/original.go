@@ -55,7 +55,8 @@ func OriginalHTML(header, footer string, sections []OriginalSection, o HTMLOptio
 			}
 			base := baseIndent(lines)
 			if o.Indent > 0 {
-				base, p.plain = o.Indent, true
+				base, p.plain = textIndent(lines, o.Indent), true
+				p.margin = base < o.Indent
 			}
 			nodes = p.parse(lines, base, true, false)
 		}
@@ -173,6 +174,9 @@ type oparser struct {
 	// heading if it looks like one (see subHeading): in man's, it's
 	// always one (.SS), whatever it says.
 	plain bool
+	// margin is set for plain text written at the margin (old RFCs), not
+	// indented as usual: headings are at the margin too.
+	margin bool
 }
 
 // parse turns lines indented at least ind into nodes. At the top of a
@@ -191,7 +195,15 @@ func (p *oparser) parse(lines []oline, ind int, top, indented bool) []onode {
 			i++
 			continue
 		}
-		heading := func(k int) bool { return top && lines[k].ind < ind && (!p.plain || subHeading(lines, k)) }
+		heading := func(k int) bool {
+			if !top {
+				return false
+			}
+			if p.margin && lines[k].ind == ind {
+				return marginHeading(lines, k)
+			}
+			return lines[k].ind < ind && (!p.plain || subHeading(lines, k))
+		}
 		if p.plain && !heading(i) {
 			// A drawing (a diagram, a table) is code, whatever its lines
 			// look like on their own: in plain text, it's drawn between
@@ -200,7 +212,7 @@ func (p *oparser) parse(lines []oline, ind int, top, indented bool) []onode {
 			for j < len(lines) && lines[j].text != "" && !heading(j) {
 				j++
 			}
-			if drawn(lines[i:j]) || top && l.ind < ind {
+			if drawn(lines[i:j]) && !justified(lines[i:j], p.width) || top && l.ind < ind {
 				// Anything left of the text that isn't a heading is laid
 				// out by hand too: a diagram's edge, a grammar at the
 				// margin.
@@ -250,7 +262,7 @@ func (p *oparser) parse(lines []oline, ind int, top, indented bool) []onode {
 			continue
 		}
 		j := i + 1
-		for j < len(lines) && lines[j].text != "" && lines[j].ind == ind {
+		for j < len(lines) && lines[j].text != "" && lines[j].ind == ind && !heading(j) {
 			if _, _, _, ok := p.tagAt(lines, j); ok {
 				break
 			}
@@ -259,6 +271,8 @@ func (p *oparser) parse(lines []oline, ind int, top, indented bool) []onode {
 		switch run := lines[i:j]; {
 		case indented && len(run) == 1 && !strings.HasSuffix(run[0].text, "."):
 			add(i, onode{kind: oCode, lines: run})
+		case p.plain && justified(run, p.width):
+			add(i, onode{kind: oPara, text: squeeze(joinProse(run))})
 		case isProse(run, p.width):
 			add(i, onode{kind: oPara, text: joinProse(run)})
 		case isText(run):
@@ -339,6 +353,74 @@ func dropUnderline(lines []oline) []oline {
 	return lines
 }
 
+// textIndent is where a plain-text section's text is: at indent, as
+// usual, or wherever most of its lines of prose are, if that's left of it
+// (old RFCs are written at the margin).
+func textIndent(lines []oline, indent int) int {
+	at := map[int]int{}
+	n := 0
+	for _, l := range lines {
+		if utf8.RuneCountInString(l.text) >= 40 && textLike(squeeze(l.text)) {
+			at[l.ind]++
+			n++
+		}
+	}
+	best := indent
+	for ind, c := range at {
+		if ind < indent && c*2 > n && (best == indent || c > at[best]) {
+			best = ind
+		}
+	}
+	return best
+}
+
+// marginHeading reports whether line i of plain text written at the
+// margin, where its headings are too, is one: a subsection heading by
+// subHeading, and numbered, underlined, or a short title (not a sentence
+// on its own, ending in punctuation).
+func marginHeading(lines []oline, i int) bool {
+	if !subHeading(lines, i) {
+		return false
+	}
+	t := lines[i].text
+	if numberedSub.MatchString(t) || i+1 < len(lines) && underline.MatchString(lines[i+1].text) {
+		return true
+	}
+	r, _ := utf8.DecodeRuneInString(t)
+	return utf8.RuneCountInString(t) <= 50 && unicode.IsUpper(r) && !strings.ContainsAny(t[len(t)-1:], ".,;:")
+}
+
+// spaces is a run of spaces, as justification stretches between words.
+var spaces = regexp.MustCompile(` {2,}`)
+
+// squeeze undoes justification in a line's text (which starts and ends
+// with words): one space between words, and after sentences, where two
+// were typed (as HTML shows them anyway).
+func squeeze(t string) string { return spaces.ReplaceAllString(t, " ") }
+
+// justified reports whether a block of lines is a justified paragraph
+// (as old RFCs are typed): words, every line but the last ending at the
+// same column, the right margin (for two lines, the width text is filled
+// to, so that a table's two rows aren't taken for one).
+func justified(block []oline, width int) bool {
+	if len(block) < 2 || len(block) == 2 && block[0].ind+utf8.RuneCountInString(block[0].text) != width {
+		return false
+	}
+	end := 0
+	for k, l := range block {
+		e := l.ind + utf8.RuneCountInString(l.text)
+		if k == 0 {
+			end = e
+		}
+		// (Justifying stretches a gap by a space or two; more is a
+		// column, a tag's say.)
+		if k < len(block)-1 && (e != end || e < 55) || strings.Contains(l.text, "     ") || !textLike(squeeze(l.text)) {
+			return false
+		}
+	}
+	return true
+}
+
 // drawn reports whether a block of lines (more than one) is a drawing or a
 // table: half of them or more are laid out in columns, or made of symbols.
 func drawn(block []oline) bool {
@@ -346,7 +428,15 @@ func drawn(block []oline) bool {
 		return false
 	}
 	n := 0
-	for _, l := range block {
+	for k, l := range block {
+		// A tag, with its paragraph starting after a gap and going on
+		// below, isn't a column.
+		if g := strings.Index(l.text, "   "); g >= 0 && k+1 < len(block) {
+			col := l.ind + utf8.RuneCountInString(l.text[:g]) + len(l.text[g:]) - len(strings.TrimLeft(l.text[g:], " "))
+			if block[k+1].ind == col {
+				continue
+			}
+		}
 		if strings.Contains(l.text, "   ") || codeLike(l.text) ||
 			!strings.ContainsFunc(l.text, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }) {
 			n++
