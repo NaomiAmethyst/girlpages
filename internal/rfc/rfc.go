@@ -11,8 +11,10 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/NaomiAmethyst/girlpages/internal/repo"
 )
@@ -139,10 +141,24 @@ func ParseIndex(r io.Reader) ([]Entry, error) {
 	}
 }
 
+// sectionName reports whether a line could be a running header's name
+// for the section a page is in: a short title, not a sentence or code.
+func sectionName(l string) bool {
+	t := strings.TrimSpace(l)
+	if t == "" || len(t) > 40 || strings.ContainsAny(t[len(t)-1:], ".,;:") {
+		return false
+	}
+	return unicode.IsLetter([]rune(t)[0])
+}
+
 var (
-	footerRE = regexp.MustCompile(`\[Page [0-9]+\]\s*$`)
+	// fieldsRE separates a running header's fields.
+	fieldsRE = regexp.MustCompile(`\s{2,}`)
+	// A footer has the page number at the end of the line ("Postel
+	// [Page 3]"), or on even pages of the oldest RFCs, at the start
+	// ("[page 2]   Postel"), in any case, in roman numerals for a preface.
+	footerRE = regexp.MustCompile(`(?i)\[page\s+[0-9ivxlc]+\]\s*$|^\s*\[page\s+[0-9ivxlc]+\](\s|$)`)
 	digitsRE = regexp.MustCompile(`[0-9]+`)
-	spacesRE = regexp.MustCompile(`\s+`)
 )
 
 // Clean strips what an RFC's text has for paper: a byte order mark,
@@ -164,13 +180,17 @@ func Clean(text string) string {
 	}
 	if len(lines) > 1 {
 		// Running headers: lines that start more than one page, the same
-		// but for numbers (dates, page numbers).
+		// but for numbers (dates, page numbers), and the order of their
+		// fields (the oldest RFCs swap sides on even pages: "User Datagram
+		// Protocol   RFC 768", then "RFC 768   User Datagram Protocol").
 		norm := func(l string) string {
-			return spacesRE.ReplaceAllString(digitsRE.ReplaceAllString(strings.TrimSpace(l), "#"), " ")
+			fields := fieldsRE.Split(strings.TrimSpace(digitsRE.ReplaceAllString(l, "#")), -1)
+			sort.Strings(fields)
+			return strings.Join(fields, "|")
 		}
 		seen := map[string]int{}
 		for _, ls := range lines[1:] {
-			for _, l := range leading(ls, 3) {
+			for _, l := range headerBlock(ls) {
 				seen[norm(l)]++
 			}
 		}
@@ -180,7 +200,23 @@ func Clean(text string) string {
 				ls = trimBlank(ls[:n-1])
 			}
 			if i > 0 {
-				for len(ls) > 0 && (strings.TrimSpace(ls[0]) == "" || seen[norm(ls[0])] > 1) {
+				// The header's lines go, as far as a blank line after them.
+				header := false
+				for len(ls) > 0 {
+					if strings.TrimSpace(ls[0]) == "" {
+						if header {
+							break
+						}
+					} else if seen[norm(ls[0])] > 1 {
+						header = true
+					} else {
+						break
+					}
+					ls = ls[1:]
+				}
+				// Some name the section the page is in under the header
+				// (RFC 768's "Fields"): a title right under it, alone.
+				if header && len(ls) > 1 && strings.TrimSpace(ls[0]) != "" && strings.TrimSpace(ls[1]) == "" && sectionName(ls[0]) {
 					ls = ls[1:]
 				}
 			}
@@ -205,15 +241,19 @@ func Clean(text string) string {
 	return strings.Join(trimBlank(out), "\n") + "\n"
 }
 
-// leading is up to n of a page's first non-blank lines.
-func leading(ls []string, n int) []string {
+// headerBlock is where a page's running header can be: its first lines,
+// up to three, as far as a blank line after them.
+func headerBlock(ls []string) []string {
 	var out []string
 	for _, l := range ls {
 		if strings.TrimSpace(l) == "" {
+			if len(out) > 0 {
+				break
+			}
 			continue
 		}
 		out = append(out, l)
-		if len(out) == n {
+		if len(out) == 3 {
 			break
 		}
 	}
