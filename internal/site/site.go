@@ -14,6 +14,7 @@ package site
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
@@ -91,6 +92,8 @@ type Options struct {
 	// Written, if set, is told of each file written, so it can be
 	// compressed straight away.
 	Written func(path string)
+	// Ctx, if set, stops the build early when it's done.
+	Ctx context.Context
 }
 
 // Stats summarises a build.
@@ -119,6 +122,9 @@ func Build(s *repo.Store, pages []repo.PageRef, m *repo.Manifest, o Options) (St
 	o.URL = strings.TrimSuffix(o.URL, "/")
 	if o.Log == nil {
 		o.Log = io.Discard
+	}
+	if o.Ctx == nil {
+		o.Ctx = context.Background()
 	}
 	b := &builder{o: o, s: s, m: m, written: map[string]bool{}, byName: map[string][]string{}}
 	for _, p := range pages {
@@ -751,11 +757,12 @@ func (b *builder) sections(pages []repo.PageRef) error {
 			}
 		}
 	}
-	return parallel(jobs)
+	return parallel(b.o.Ctx, jobs)
 }
 
-// parallel runs jobs, one per CPU at a time, and joins their errors.
-func parallel(jobs []func() error) error {
+// parallel runs jobs, one per CPU at a time, and joins their errors; if
+// ctx is done, it runs no more, and says so.
+func parallel(ctx context.Context, jobs []func() error) error {
 	errs := make([]error, len(jobs))
 	var next atomic.Int64
 	var wg sync.WaitGroup
@@ -765,7 +772,7 @@ func parallel(jobs []func() error) error {
 			defer wg.Done()
 			for {
 				i := int(next.Add(1)) - 1
-				if i >= len(jobs) {
+				if i >= len(jobs) || ctx.Err() != nil {
 					return
 				}
 				errs[i] = jobs[i]()
@@ -773,6 +780,9 @@ func parallel(jobs []func() error) error {
 		}()
 	}
 	wg.Wait()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	return errors.Join(errs...)
 }
 
@@ -863,7 +873,7 @@ func (b *builder) pages(pages []repo.PageRef) error {
 			defer wg.Done()
 			for {
 				i := int(next.Add(1)) - 1
-				if i >= len(pages) {
+				if i >= len(pages) || b.o.Ctx.Err() != nil {
 					return
 				}
 				err := b.page(pages[i])
@@ -879,6 +889,9 @@ func (b *builder) pages(pages []repo.PageRef) error {
 		}()
 	}
 	wg.Wait()
+	if err := b.o.Ctx.Err(); err != nil {
+		return err
+	}
 	return errors.Join(errs...)
 }
 
@@ -1108,7 +1121,7 @@ func (b *builder) prune() error {
 			})
 		}
 	}
-	if err := parallel(jobs); err != nil {
+	if err := parallel(b.o.Ctx, jobs); err != nil {
 		return err
 	}
 	// Remove whichever of those are empty now, deepest first.

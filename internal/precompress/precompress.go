@@ -12,6 +12,7 @@ package precompress
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -237,7 +238,13 @@ type Queue struct {
 	// Progress, if set, is told how many files have been compressed of
 	// how many queued so far.
 	Progress func(done, queued int)
+	// Ctx, if set, stops it early when it's done: files queued then are
+	// left as they are (for the next publish to find stale).
+	Ctx context.Context
 }
+
+// stopped reports whether the queue's context is done.
+func (q *Queue) stopped() bool { return q.Ctx != nil && q.Ctx.Err() != nil }
 
 // NewQueue starts compressing (with Workers workers) whatever's added.
 func NewQueue(encodings []Encoding) *Queue {
@@ -265,6 +272,10 @@ func (q *Queue) Add(path string) {
 func (q *Queue) work() {
 	defer q.wg.Done()
 	for path := range q.ch {
+		if q.stopped() {
+			q.done.Add(1)
+			continue
+		}
 		did, size, saved, err := compress(path, q.enc)
 		q.mu.Lock()
 		switch {
@@ -290,6 +301,9 @@ func (q *Queue) work() {
 // are gone, or that the encodings no longer include.
 func (q *Queue) Stale(root string) error {
 	return walkDirs(root, func(dir string, ents []fs.DirEntry) error {
+		if q.stopped() {
+			return q.Ctx.Err()
+		}
 		byName := make(map[string]fs.DirEntry, len(ents))
 		for _, d := range ents {
 			byName[d.Name()] = d
@@ -414,6 +428,9 @@ func (q *Queue) Wait() (Stats, error) {
 	q.wg.Wait()
 	q.mu.Lock()
 	defer q.mu.Unlock()
+	if q.stopped() {
+		return q.st, q.Ctx.Err()
+	}
 	return q.st, errors.Join(q.errs...)
 }
 

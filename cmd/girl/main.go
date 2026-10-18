@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"runtime/debug"
 	"strings"
@@ -27,6 +26,7 @@ import (
 	"github.com/NaomiAmethyst/girlpages/internal/config"
 	"github.com/NaomiAmethyst/girlpages/internal/core"
 	"github.com/NaomiAmethyst/girlpages/internal/ingest"
+	"github.com/NaomiAmethyst/girlpages/internal/interrupt"
 	"github.com/NaomiAmethyst/girlpages/internal/llm"
 	"github.com/NaomiAmethyst/girlpages/internal/manpage"
 	"github.com/NaomiAmethyst/girlpages/internal/pager"
@@ -289,7 +289,7 @@ func run(args []string) int {
 	mo := manpage.Options{ManPath: f.manPath, Locale: f.locale, Sections: f.sections, All: f.all}
 	g := &core.Girl{Cfg: &cfg, Caches: core.CacheSet(&cfg), Man: mo, Repo: core.NewRepo(&cfg, getVersion())}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := interrupt.Context("girl", os.Stderr)
 	defer stop()
 
 	if f.doctor {

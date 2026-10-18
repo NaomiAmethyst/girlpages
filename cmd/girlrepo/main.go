@@ -13,14 +13,12 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"regexp"
 	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/spf13/pflag"
@@ -29,6 +27,7 @@ import (
 	"github.com/NaomiAmethyst/girlpages/internal/core"
 	"github.com/NaomiAmethyst/girlpages/internal/crawl"
 	"github.com/NaomiAmethyst/girlpages/internal/ingest"
+	"github.com/NaomiAmethyst/girlpages/internal/interrupt"
 	"github.com/NaomiAmethyst/girlpages/internal/llm"
 	"github.com/NaomiAmethyst/girlpages/internal/precompress"
 	"github.com/NaomiAmethyst/girlpages/internal/repo"
@@ -96,7 +95,7 @@ func run(args []string) int {
 		fmt.Fprintf(os.Stderr, "girlrepo: %v\n", err)
 		return 1
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := interrupt.Context("girlrepo", os.Stderr)
 	defer stop()
 	a := &app{dir: *dir, cfg: &cfg}
 	cmds := map[string]func(context.Context, []string) error{
@@ -555,6 +554,9 @@ func (a *app) girlify(ctx context.Context, args []string) error {
 	start := time.Now()
 	st, err := ingest.Girlify(ctx, s, o)
 	if *dry {
+		if err != nil {
+			return err // (an estimate of part of it would mislead)
+		}
 		e := st.Estimate
 		fmt.Fprintf(os.Stderr, "✨ %d pages to girlify", e.Pages)
 		if e.Cached > 0 {
@@ -635,22 +637,23 @@ func (a *app) publish(ctx context.Context, args []string) error {
 		root = s.Dir
 	}
 	q := precompress.NewQueue(encodings)
+	q.Ctx = ctx
 	s.Written = q.Add
 	stale := make(chan error, 1)
 	go func() { stale <- q.Stale(root) }()
-	pages, err := s.AllPages()
+	pages, err := s.AllPagesContext(ctx)
 	if err != nil {
 		return err
 	}
-	if n, err := s.Refresh(pages); err != nil {
+	if n, err := s.RefreshContext(ctx, pages); err != nil {
 		return err
 	} else if n > 0 {
 		pr.say("🔄 brought %d listings up to date\n", n)
-		if pages, err = s.AllPages(); err != nil {
+		if pages, err = s.AllPagesContext(ctx); err != nil {
 			return err
 		}
 	}
-	m, err := s.Publish(pages)
+	m, err := s.PublishContext(ctx, pages)
 	if err != nil {
 		return err
 	}
@@ -659,7 +662,7 @@ func (a *app) publish(ctx context.Context, args []string) error {
 	locked = false
 	if !*noSite {
 		st, err := site.Build(s, pages, m, site.Options{Out: a.dir, Base: *base, URL: *siteURL,
-			Version: getVersion(), Log: os.Stderr, Progress: pr.report, Written: q.Add})
+			Version: getVersion(), Log: os.Stderr, Progress: pr.report, Written: q.Add, Ctx: ctx})
 		if err != nil {
 			return err
 		}
@@ -671,7 +674,7 @@ func (a *app) publish(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		st, err := s.GC(false)
+		st, err := s.GCContext(ctx, false)
 		unlock()
 		if err != nil {
 			return err
@@ -699,7 +702,7 @@ func (a *app) publish(ctx context.Context, args []string) error {
 	return ctx.Err()
 }
 
-func (a *app) gc(_ context.Context, args []string) error {
+func (a *app) gc(ctx context.Context, args []string) error {
 	fs := flags("gc", "[options]")
 	dry := fs.BoolP("dry-run", "n", false, "say what would be removed")
 	if err := parse(fs, args); err != nil {
@@ -714,7 +717,7 @@ func (a *app) gc(_ context.Context, args []string) error {
 		return err
 	}
 	defer unlock()
-	st, err := s.GC(*dry)
+	st, err := s.GCContext(ctx, *dry)
 	if err != nil {
 		return err
 	}

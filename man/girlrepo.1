@@ -697,6 +697,10 @@ A page's current version on the website.
 Sends links from earlier versions of the browser app to where it is now.
 .SH "EXIT STATUS"
 0 on success, 1 for a usage error, 2 if something failed, 130 if interrupted.
+.PP
+Ctrl+C stops any command: the first asks it to stop, which it does as soon
+as it's safe (a publish leaves the repository as it was published last),
+and a second stops it right away.
 .SH EXAMPLES
 .TP
 .B girlrepo ingest \-\-system && girlrepo girlify \-\-limit 100 && girlrepo publish

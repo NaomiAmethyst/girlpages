@@ -478,6 +478,7 @@ interrupting it is safe, as every
 .B \-\-bulk
 run starts by collecting whatever has finished and doesn't send pages that are
 still out.
+Ctrl+C asks a run to stop; a second stops it right away.
 Batches sent with one API are only collected while that API is configured.
 A page that changed in the meantime is sent again.
 Replies get the same completeness check as live ones, and any part that failed

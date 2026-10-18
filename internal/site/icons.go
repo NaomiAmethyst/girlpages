@@ -5,6 +5,7 @@ package site
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"image"
 	"image/color"
@@ -77,7 +78,7 @@ func rows(n int, fn func(y int)) {
 	for y := range jobs {
 		jobs[y] = func() error { fn(y); return nil }
 	}
-	_ = parallel(jobs)
+	_ = parallel(context.Background(), jobs)
 }
 
 // iconSample is the icon's colour at (u, v) in the unit square, and

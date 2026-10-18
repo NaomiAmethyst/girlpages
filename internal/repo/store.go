@@ -5,6 +5,7 @@ package repo
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -262,6 +263,11 @@ func (l *Listing) derive() {
 // the fields derived from versions are worked out again. The caller must
 // hold Lock.
 func (s *Store) Refresh(pages []PageRef) (int, error) {
+	return s.RefreshContext(context.Background(), pages)
+}
+
+// RefreshContext is Refresh, stopping early if ctx is done.
+func (s *Store) RefreshContext(ctx context.Context, pages []PageRef) (int, error) {
 	var n atomic.Int64
 	var mu sync.Mutex
 	contents := map[string]*Contents{}
@@ -287,6 +293,9 @@ func (s *Store) Refresh(pages []PageRef) (int, error) {
 	errs := make([]error, len(pages))
 	parallel(len(pages), func(i int) {
 		defer c.add()
+		if ctx.Err() != nil {
+			return
+		}
 		p := pages[i]
 		want := *p.Listing
 		want.Versions = append([]Version(nil), p.Listing.Versions...)
@@ -328,6 +337,9 @@ func (s *Store) Refresh(pages []PageRef) (int, error) {
 			n.Add(1)
 		}
 	})
+	if err := ctx.Err(); err != nil {
+		return int(n.Load()), err
+	}
 	return int(n.Load()), errors.Join(errs...)
 }
 
@@ -471,18 +483,24 @@ func (s *Store) Pages(fn func(Pointer) error) error {
 }
 
 // eachPage calls fn with every page's pointer, from every CPU at once.
-func (s *Store) eachPage(fn func(Pointer) error) error {
+func (s *Store) eachPage(ctx context.Context, fn func(Pointer) error) error {
 	paths, err := s.pointerPaths()
 	if err != nil {
 		return err
 	}
 	errs := make([]error, len(paths))
 	parallel(len(paths), func(i int) {
+		if ctx.Err() != nil {
+			return
+		}
 		var p Pointer
 		if errs[i] = s.Read(paths[i], &p); errs[i] == nil {
 			errs[i] = fn(p)
 		}
 	})
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	return errors.Join(errs...)
 }
 

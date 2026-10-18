@@ -4,6 +4,7 @@
 package repo
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -50,11 +51,14 @@ func (p *PageRef) Girlified() bool {
 }
 
 // AllPages reads every page's listing, sorted by section then name.
-func (s *Store) AllPages() ([]PageRef, error) {
+func (s *Store) AllPages() ([]PageRef, error) { return s.AllPagesContext(context.Background()) }
+
+// AllPagesContext is AllPages, stopping early if ctx is done.
+func (s *Store) AllPagesContext(ctx context.Context) ([]PageRef, error) {
 	var out []PageRef
 	var mu sync.Mutex
 	c := s.counter("reading listings", 0)
-	err := s.eachPage(func(p Pointer) error {
+	err := s.eachPage(ctx, func(p Pointer) error {
 		defer c.add()
 		l, err := s.ListingByHash(p.SHA256)
 		if err != nil {
@@ -81,6 +85,13 @@ func (s *Store) AllPages() ([]PageRef, error) {
 // Publish writes the section indexes, the search index and finally
 // manifest.json from the pages in the store. The caller must hold Lock.
 func (s *Store) Publish(pages []PageRef) (*Manifest, error) {
+	return s.PublishContext(context.Background(), pages)
+}
+
+// PublishContext is Publish, stopping early if ctx is done: before
+// manifest.json is written, so the repository is as it was published
+// last (and what was written for it meanwhile is left for GC).
+func (s *Store) PublishContext(ctx context.Context, pages []PageRef) (*Manifest, error) {
 	m := &Manifest{Format: Format, Generated: now(), Sources: Sources(pages), Variants: map[string]int{}}
 	ids, count := s.assignIDs(pages)
 
@@ -91,6 +102,9 @@ func (s *Store) Publish(pages []PageRef) (*Manifest, error) {
 	c := s.counter("reading pages for the search index", len(pages))
 	parallel(len(pages), func(i int) {
 		defer c.add()
+		if ctx.Err() != nil {
+			return
+		}
 		p := pages[i]
 		keys, _ := p.Listing.SourceKeys()
 		d := IndexDoc{ID: ids[i], Name: p.Pointer.Name, Section: p.Pointer.Section, Description: p.Current().Description,
@@ -124,6 +138,9 @@ func (s *Store) Publish(pages []PageRef) (*Manifest, error) {
 		d.Body = body.String()
 		docs[i] = d
 	})
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
 	}
@@ -173,6 +190,9 @@ func (s *Store) Publish(pages []PageRef) (*Manifest, error) {
 	cerrs := make([]error, len(chapters))
 	parallel(len(chapters), func(i int) {
 		defer sc.add()
+		if ctx.Err() != nil {
+			return
+		}
 		ch := chapters[i]
 		sha, err := s.writeChapterIndex(ch, byChapter[ch])
 		if err == nil {
@@ -181,12 +201,18 @@ func (s *Store) Publish(pages []PageRef) (*Manifest, error) {
 		m.Chapters[i] = ChapterEntry{Chapter: ch, SHA256: sha, Pages: len(byChapter[ch])}
 		cerrs[i] = err
 	})
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := errors.Join(cerrs...); err != nil {
 		return nil, err
 	}
 
 	s.counter("building the search index", 0)
 	bi := BuildIndex(docs)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.counter("writing the search index", 0)
 	var err error
 	if m.Index.Words, err = s.writeShards("words", bi.WordRanges, func(i int) any { return &bi.Words[i] }); err != nil {
@@ -200,6 +226,9 @@ func (s *Store) Publish(pages []PageRef) (*Manifest, error) {
 	}
 
 	if m.Index.Variants, err = s.writeVariantIndexes(pages); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
@@ -386,7 +415,11 @@ type GCStats struct {
 // section indexes and index shards, and contents of versions no listing
 // mentions. It keeps what the current manifest needs, so run it after
 // Publish. The caller must hold Lock.
-func (s *Store) GC(dryRun bool) (GCStats, error) {
+func (s *Store) GC(dryRun bool) (GCStats, error) { return s.GCContext(context.Background(), dryRun) }
+
+// GCContext is GC, stopping early if ctx is done (having removed some of
+// the garbage, and nothing else).
+func (s *Store) GCContext(ctx context.Context, dryRun bool) (GCStats, error) {
 	var st GCStats
 	live := map[string]bool{ManifestPath(): true}
 	m, err := s.Manifest()
@@ -436,7 +469,7 @@ func (s *Store) GC(dryRun bool) (GCStats, error) {
 	seenSource := map[string]bool{}
 	gc := s.counter("finding what's in use", 0)
 	var mu sync.Mutex
-	err = s.eachPage(func(p Pointer) error {
+	err = s.eachPage(ctx, func(p Pointer) error {
 		defer gc.add()
 		l, err := s.ListingByHash(p.SHA256)
 		if err != nil {
@@ -493,6 +526,9 @@ func (s *Store) GC(dryRun bool) (GCStats, error) {
 	errs := make([]error, len(roots))
 	parallel(len(roots), func(i int) {
 		errs[i] = filepath.WalkDir(roots[i], func(path string, d fs.DirEntry, err error) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if err != nil {
 				if errors.Is(err, fs.ErrNotExist) {
 					return nil

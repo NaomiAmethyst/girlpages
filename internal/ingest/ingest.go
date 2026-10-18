@@ -651,7 +651,7 @@ func Girlify(ctx context.Context, s *repo.Store, o GirlifyOptions) (GirlifyStats
 			return st, err
 		}
 	}
-	pages, err := s.AllPages()
+	pages, err := s.AllPagesContext(ctx)
 	if err != nil {
 		return st, err
 	}
@@ -667,6 +667,9 @@ func Girlify(ctx context.Context, s *repo.Store, o GirlifyOptions) (GirlifyStats
 	bySource := map[string]*work{}
 	var order []string
 	for _, p := range pages {
+		if err := ctx.Err(); err != nil {
+			return st, err
+		}
 		// A name matches in any section; name(section) in that one.
 		if len(names) > 0 && !names[p.Pointer.Name] && !names[p.Pointer.Name+"("+p.Pointer.Section+")"] {
 			continue
@@ -734,6 +737,9 @@ func Girlify(ctx context.Context, s *repo.Store, o GirlifyOptions) (GirlifyStats
 		}
 		e := &st.Estimate
 		for _, src := range order {
+			if err := ctx.Err(); err != nil {
+				return st, err
+			}
 			w := bySource[src]
 			man, err := s.Variant(src, repo.VariantMan)
 			if err != nil {
@@ -769,6 +775,9 @@ func Girlify(ctx context.Context, s *repo.Store, o GirlifyOptions) (GirlifyStats
 		jobs := make([]llm.BatchJob, 0, len(order))
 		made := cacheMakers(o.Cache)
 		for _, src := range order {
+			if err := ctx.Err(); err != nil {
+				return st, err
+			}
 			w := bySource[src]
 			man, err := s.Variant(src, repo.VariantMan)
 			if err != nil {

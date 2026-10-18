@@ -11,6 +11,8 @@ import (
 	"os/exec"
 	"strings"
 	"syscall"
+
+	"github.com/NaomiAmethyst/girlpages/internal/interrupt"
 )
 
 // Command picks the pager: an explicit choice, then $GIRLPAGER, then
@@ -62,6 +64,8 @@ func Show(pagerCmd, text, prompt string) error {
 		_, werr := io.WriteString(os.Stdout, text)
 		return werr
 	}
+	// The terminal's the pager's now, and Ctrl+C with it.
+	defer interrupt.Hold()()
 	_, werr := io.WriteString(stdin, text)
 	stdin.Close()
 	err = cmd.Wait()
