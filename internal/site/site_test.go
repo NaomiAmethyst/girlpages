@@ -373,6 +373,7 @@ func TestRenderJS(t *testing.T) {
 		"no heading at all\n\n\n\nlots of blanks\n   \n",
 		"- a\n\n- b\n    - c\n        - d\n- e\n\n1. x\n- y\n",
 		"keywords are in RFC 2119 and [RFC8174]; RFC0791 is IP, RFC 99999 isn't, and NOTRFC 1 neither\n",
+		"<bold>big</bold>, <italic>soft</italic>, <kbd>Ctrl</kbd>+<KBD>C</KBD>, <pink><bold>both</bold></pink>, the <kbd> element, stray </italic>\n",
 	}
 	link := func(name, sec string) string {
 		if name == "nope" {

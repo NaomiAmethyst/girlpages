@@ -195,6 +195,9 @@ func (h *htmlWriter) inline(s string) string {
 		if sg.st.italic {
 			add("<em>", "</em>")
 		}
+		if sg.st.kbd {
+			add("<kbd>", "</kbd>")
+		}
 		if sg.st.code {
 			add("<code>", "</code>")
 		}

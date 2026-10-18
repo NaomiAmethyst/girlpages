@@ -155,12 +155,25 @@ function colorTag(s) {
   return null;
 }
 
-// parseInline turns a paragraph into [{text, st: {bold, italic, code, color}}].
+// styleTag reads a <bold>, <italic> or <kbd> tag (or its closing tag).
+function styleTag(s) {
+  const end = s.indexOf(">");
+  if (end < 2 || end > 8) return null;
+  let inner = s.slice(1, end).toLowerCase(), closing = false;
+  if (inner.startsWith("/")) { closing = true; inner = inner.slice(1); }
+  return inner === "bold" || inner === "italic" || inner === "kbd" ? { name: inner, closing, n: end + 1 } : null;
+}
+
+// parseInline turns a paragraph into [{text, st: {bold, italic, code, kbd,
+// color}}].
 export function parseInline(s) {
   const out = [];
   let buf = "", bold = false, italic = false;
   const colors = [];
-  const apply = () => ({ bold, italic, code: false, color: colors.length ? colors[colors.length - 1] : "" });
+  // How deep in each of the tags it is.
+  const tags = { bold: 0, italic: 0, kbd: 0 };
+  const apply = () => ({ bold: bold || tags.bold > 0, italic: italic || tags.italic > 0, code: false, kbd: tags.kbd > 0,
+    color: colors.length ? colors[colors.length - 1] : "" });
   let cur = apply();
   const flush = () => { if (buf) { out.push({ text: buf, st: cur }); buf = ""; } };
   const restyle = () => { flush(); cur = apply(); };
@@ -202,6 +215,15 @@ export function parseInline(s) {
         } else colors.push(tag.name);
         restyle();
         i += tag.n;
+        continue;
+      }
+      const st = styleTag(s.slice(i));
+      // A tag that isn't closed (or closes none) is text: pages can
+      // mention "<kbd>".
+      if (st && (st.closing ? tags[st.name] > 0 : s.slice(i + st.n).toLowerCase().includes(`</${st.name}>`))) {
+        tags[st.name] += st.closing ? -1 : 1;
+        restyle();
+        i += st.n;
         continue;
       }
     }
@@ -282,6 +304,7 @@ export function renderHTML(markup, { link = undefined } = {}) {
       else if (g.st.color) add(`<span class="c-${g.st.color}">`, "</span>");
       if (g.st.bold) add("<strong>", "</strong>");
       if (g.st.italic) add("<em>", "</em>");
+      if (g.st.kbd) add("<kbd>", "</kbd>");
       if (g.st.code) add("<code>", "</code>");
       out += open.join("") + linkify(g.text) + close.join("");
     }

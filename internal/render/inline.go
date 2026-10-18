@@ -10,8 +10,8 @@ import (
 )
 
 type style struct {
-	bold, italic, code bool
-	color              string // palette name, "rainbow", or ""
+	bold, italic, code, kbd bool
+	color                   string // palette name, "rainbow", or ""
 }
 
 type seg struct {
@@ -20,18 +20,22 @@ type seg struct {
 }
 
 // parseInline turns one paragraph of markup into styled segments: `code`,
-// **bold**, *italic*, <colour>…</colour> and backslash escapes.
+// **bold**, *italic*, <colour>…</colour>, <bold>…</bold>,
+// <italic>…</italic>, <kbd>…</kbd> and backslash escapes.
 func parseInline(s string, base style) []seg {
 	var out []seg
 	var buf strings.Builder
 	cur := base
 	var colors []string
 	bold, italic := false, false
+	// How deep in each of the tags it is.
+	tags := map[string]int{}
 
 	apply := func() style {
 		st := base
-		st.bold = base.bold || bold
-		st.italic = base.italic || italic
+		st.bold = base.bold || bold || tags["bold"] > 0
+		st.italic = base.italic || italic || tags["italic"] > 0
+		st.kbd = base.kbd || tags["kbd"] > 0
 		if len(colors) > 0 {
 			st.color = colors[len(colors)-1]
 		}
@@ -119,6 +123,20 @@ func parseInline(s string, base style) []seg {
 				i += n
 				continue
 			}
+			if name, closing, n := styleTag(s[i:]); n > 0 {
+				// A tag that isn't closed (or closes none) is text: pages
+				// can mention "<kbd>".
+				if closing && tags[name] > 0 || !closing && strings.Contains(strings.ToLower(s[i+n:]), "</"+name+">") {
+					if closing {
+						tags[name]--
+					} else {
+						tags[name]++
+					}
+					restyle()
+					i += n
+					continue
+				}
+			}
 		}
 		r, size := utf8.DecodeRuneInString(s[i:])
 		buf.WriteRune(r)
@@ -140,6 +158,23 @@ func colorTag(s string) (name string, closing bool, n int) {
 	}
 	inner = strings.ToLower(inner)
 	if _, ok := palette[inner]; ok || inner == "rainbow" {
+		return inner, closing, end + 1
+	}
+	return "", false, 0
+}
+
+// styleTag reads a <bold>, <italic> or <kbd> tag (or its closing tag).
+func styleTag(s string) (name string, closing bool, n int) {
+	end := strings.IndexByte(s, '>')
+	if end < 2 || end > 8 {
+		return "", false, 0
+	}
+	inner := strings.ToLower(s[1:end])
+	if strings.HasPrefix(inner, "/") {
+		closing, inner = true, inner[1:]
+	}
+	switch inner {
+	case "bold", "italic", "kbd":
 		return inner, closing, end + 1
 	}
 	return "", false, 0

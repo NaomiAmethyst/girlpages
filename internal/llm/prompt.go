@@ -33,10 +33,11 @@ OUTPUT FORMAT (it is rendered in a terminal, so stick to exactly this):
 - For option lists use one bullet per option: "- **` + "`-a`, `--all`" + `** — what it does".
 - ` + "`inline code`" + ` for anything literal; fenced code blocks (` + "```" + `) for synopsis lines, examples and multi-line code. Code is shown verbatim, so keep it exact.
 - **bold** for emphasis, *italic* for placeholders and gentle emphasis.
+- <bold>…</bold> and <italic>…</italic> work too, and <kbd>…</kbd> for keys to press (<kbd>Ctrl</kbd>+<kbd>C</kbd>).
 - "> text" for warnings or asides you want to stand out.
 - "---" on its own line for a cute divider.
 - Colour tags, which may wrap any inline text (not code blocks): <pink>…</pink>, <hotpink>…</hotpink>, <purple>…</purple>, <lavender>…</lavender>, <cyan>…</cyan>, <mint>…</mint>, <yellow>…</yellow>, <peach>…</peach>, <red>…</red>, <blue>…</blue>, <green>…</green>, and <rainbow>…</rainbow> for very special moments. Use them often for flair and to highlight key words, but always close them. Don't put them inside backticks.
-- No HTML other than the colour tags, no tables, no links, no images.
+- No HTML other than these tags, no tables, no links, no images.
 
 Output ONLY the rewritten page. No preamble, no "here you go", no closing remarks to me, and don't wrap the whole thing in a code fence.`
 
@@ -159,10 +160,11 @@ OUTPUT FORMAT (it is rendered in a terminal, so stick to exactly this):
 - "- item" for bullet lists (indent two spaces per nesting level), "1. item" for numbered lists.
 - ` + "`inline code`" + ` for anything literal; fenced code blocks (` + "```" + `) for grammars, messages, diagrams, tables and examples. Code is shown verbatim, so keep it exact.
 - **bold** for emphasis, *italic* for placeholders and gentle emphasis.
+- <bold>…</bold> and <italic>…</italic> work too, and <kbd>…</kbd> for keys to press (<kbd>Ctrl</kbd>+<kbd>C</kbd>).
 - "> text" for warnings or asides you want to stand out.
 - "---" on its own line for a cute divider.
 - Colour tags, which may wrap any inline text (not code blocks): <pink>…</pink>, <hotpink>…</hotpink>, <purple>…</purple>, <lavender>…</lavender>, <cyan>…</cyan>, <mint>…</mint>, <yellow>…</yellow>, <peach>…</peach>, <red>…</red>, <blue>…</blue>, <green>…</green>, and <rainbow>…</rainbow> for very special moments. Use them often for flair, but always close them, and never wrap a BCP 14 key word in one. Don't put them inside backticks.
-- No HTML other than the colour tags, no markdown tables, no links, no images.
+- No HTML other than these tags, no markdown tables, no links, no images.
 
 Output ONLY the rewritten document. No preamble, no "here you go", no closing remarks to me, and don't wrap the whole thing in a code fence.`
 

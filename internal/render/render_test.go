@@ -34,6 +34,14 @@ func TestInline(t *testing.T) {
 		{"<file> and <b>", []seg{{"<file> and <b>", style{}}}},
 		{`\*not em\*`, []seg{{"*not em*", style{}}}},
 		{"`<pink>` literal", []seg{{"<pink>", style{code: true}}, {" literal", style{}}}},
+		// The tags models write anyway, as well as ** and *.
+		{"<bold>big</bold> <italic>soft</italic>", []seg{{"big", style{bold: true}}, {" ", style{}}, {"soft", style{italic: true}}}},
+		{"press <kbd>Ctrl</kbd>+<KBD>C</KBD>", []seg{{"press ", style{}}, {"Ctrl", style{kbd: true}}, {"+", style{}}, {"C", style{kbd: true}}}},
+		{"<pink><bold>both</bold></pink>", []seg{{"both", style{bold: true, color: "pink"}}}},
+		// Unclosed, or closing nothing, they're text: a page can be about
+		// <kbd>.
+		{"the <kbd> element", []seg{{"the <kbd> element", style{}}}},
+		{"stray </bold> here", []seg{{"stray </bold> here", style{}}}},
 	}
 	for _, c := range cases {
 		got := parseInline(c.in, style{})
@@ -79,6 +87,16 @@ func TestBlocks(t *testing.T) {
 	}
 	if bl[10].text != "careful bestie" {
 		t.Errorf("quote = %q", bl[10].text)
+	}
+}
+
+func TestKbdTerminal(t *testing.T) {
+	out := Render("press <kbd>q</kbd> to quit", Options{Width: 40, Color: Color256})
+	if !strings.Contains(out, "\x1b[1;7mq\x1b[0m") {
+		t.Errorf("kbd isn't a key cap: %q", out)
+	}
+	if out := Render("press <kbd>q</kbd> to quit", Options{Width: 40}); !strings.Contains(out, "press q to quit") {
+		t.Errorf("without colour: %q", out)
 	}
 }
 

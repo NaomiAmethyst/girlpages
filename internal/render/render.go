@@ -302,6 +302,10 @@ func (r *renderer) sgr(st style) string {
 	if st.italic {
 		codes = append(codes, "3")
 	}
+	if st.kbd {
+		// A key: bold, in reverse, like a key cap.
+		codes = append(codes, "1", "7")
+	}
 	if c, ok := palette[st.color]; ok {
 		switch r.o.Color {
 		case TrueColor:

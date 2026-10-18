@@ -282,7 +282,8 @@ make lint    # type-check the website's JavaScript (needs npx)
 ```
 
 Pages are stored as a small Markdown dialect with colour tags (`<pink>…</pink>`
-and friends, plus `<rainbow>`); `internal/render` turns that into ANSI or
+and friends, plus `<rainbow>`), and `<bold>`, `<italic>` and `<kbd>`, which
+models write anyway; `internal/render` turns that into ANSI or
 HTML, and `internal/web` is the server, templates and stylesheet. The prompt
 lives in `internal/llm/prompt.go`. Repositories are `internal/repo` (format,
 store, client, search index), `internal/ingest` and `internal/site`; the

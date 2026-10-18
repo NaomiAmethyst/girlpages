@@ -269,6 +269,7 @@ ul.pages .done { flex: none; }
   font-family: ui-monospace, "Cascadia Code", "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
 }
 .content code { background: var(--code-bg); color: var(--code-text); padding: 0.1em 0.35em; border-radius: 0.35em; font-size: 0.9em; }
+.content kbd { font: inherit; font-size: 0.85em; font-weight: 700; padding: 0.05em 0.4em; border: 1px solid var(--card-edge); border-bottom-width: 2px; border-radius: 0.35em; background: var(--card); white-space: nowrap; }
 .content pre {
   background: var(--pre-bg); border: 2px solid var(--card-edge); border-radius: 0.9rem;
   padding: 0.9rem 1.1rem; overflow-x: auto; line-height: 1.45;
