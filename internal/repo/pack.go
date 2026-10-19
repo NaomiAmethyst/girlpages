@@ -636,8 +636,9 @@ func readPack(ctx context.Context, file string, header func(*PackHeader) error, 
 }
 
 // applyPack replays a pack into the files in dir, returning its header
-// and the paths it put.
-func applyPack(ctx context.Context, file, dir string) (*PackHeader, []string, error) {
+// and the paths it put; progress, if set, is told how many it's put so
+// far, of how many.
+func applyPack(ctx context.Context, file, dir string, progress func(done, total int)) (*PackHeader, []string, error) {
 	var h *PackHeader
 	var puts []string
 	err := readPack(ctx, file, func(ph *PackHeader) error {
@@ -650,6 +651,9 @@ func applyPack(ctx context.Context, file, dir string) (*PackHeader, []string, er
 		return nil
 	}, func(p string, data []byte) error {
 		puts = append(puts, p)
+		if progress != nil {
+			progress(len(puts), h.Puts)
+		}
 		return WriteFile(filepath.Join(dir, filepath.FromSlash(p)), data)
 	})
 	return h, puts, err

@@ -159,10 +159,15 @@ func (s *Store) syncPacks(ctx context.Context, listed []PackEntry, fetch fetchPa
 		for _, r := range h.Replaces {
 			delete(stale, r)
 		}
+		stage := fmt.Sprintf("unpacking pack %d of %d into %s", i+1, len(listed), tree)
 		if progress != nil {
-			progress(fmt.Sprintf("unpacking pack %d of %d", i+1, len(listed)), 0, 0)
+			progress(stage, 0, h.Puts)
 		}
-		_, put, err := applyPack(ctx, file, tree)
+		_, put, err := applyPack(ctx, file, tree, func(done, total int) {
+			if progress != nil {
+				progress(stage, done, total)
+			}
+		})
 		if err != nil {
 			return st, err
 		}

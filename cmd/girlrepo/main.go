@@ -437,9 +437,10 @@ func (a *app) importRepo(ctx context.Context, args []string) error {
 		return err
 	}
 	var st repo.ImportStats
+	pr := newProgress(os.Stderr)
+	o.Progress = pr.report
 	if len(m.Packs) > 0 && !*noPacks {
 		// A few big files, not a request for every one.
-		pr := newProgress(os.Stderr)
 		s.SyncRoot = syncRoot(s.Dir)
 		sst, err := s.SyncFrom(ctx, c, m, pr.report)
 		if err != nil {
@@ -447,9 +448,11 @@ func (a *app) importRepo(ctx context.Context, args []string) error {
 		}
 		pr.say("📦 %s\n", synced(sst))
 		st, err = s.ImportFrom(ctx, filepath.Join(sst.Dir, "tree"), sst.Changed, o)
+		pr.say("")
 		return reportImport(st, err, *dry, *preferRemote, start)
 	}
 	st, err = s.Import(ctx, c, o)
+	pr.say("")
 	return reportImport(st, err, *dry, *preferRemote, start)
 }
 
@@ -539,7 +542,9 @@ func (a *app) unpack(ctx context.Context, args []string) error {
 		return err
 	}
 	pr.say("📦 %s\n", synced(sst))
+	o.Progress = pr.report
 	st, err := s.ImportFrom(ctx, filepath.Join(sst.Dir, "tree"), sst.Changed, o)
+	pr.say("")
 	return reportImport(st, err, *dry, *preferRemote, start)
 }
 

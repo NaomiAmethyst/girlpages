@@ -27,9 +27,11 @@ type ImportOptions struct {
 	// Otherwise the local one stays.
 	PreferRemote bool
 	// Jobs is how many pages are fetched at once.
-	Jobs   int
-	DryRun bool
-	Log    io.Writer
+	Jobs int
+	// Progress, if set, is told how many pages are done, of how many.
+	Progress Progress
+	DryRun   bool
+	Log      io.Writer
 }
 
 // ImportStats summarises an Import.
@@ -162,6 +164,9 @@ func (s *Store) importPages(ctx context.Context, c *Client, todo []IndexPage, o 
 				i := int(next.Add(1)) - 1
 				if i >= len(todo) || ctx.Err() != nil {
 					return
+				}
+				if o.Progress != nil {
+					o.Progress("merging pages", i, len(todo))
 				}
 				ip := todo[i]
 				sec := ip.Section

@@ -47,7 +47,7 @@ func replayAll(t *testing.T, root string) string {
 	}
 	tree := t.TempDir()
 	for _, e := range log.Packs {
-		if _, _, err := applyPack(context.Background(), filepath.Join(root, e.Path), tree); err != nil {
+		if _, _, err := applyPack(context.Background(), filepath.Join(root, e.Path), tree, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -314,7 +314,7 @@ func TestPackTampering(t *testing.T) {
 	b[len(b)-40] ^= 0xff
 	bad := filepath.Join(t.TempDir(), "bad.tar.zst")
 	os.WriteFile(bad, b, 0o644)
-	if _, _, err := applyPack(context.Background(), bad, t.TempDir()); err == nil {
+	if _, _, err := applyPack(context.Background(), bad, t.TempDir(), nil); err == nil {
 		t.Error("a damaged pack was applied")
 	}
 }
