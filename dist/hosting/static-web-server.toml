@@ -57,6 +57,12 @@ source = "/repo/{section/*-*.json,contents/*/*/*-*.json}"
 [advanced.headers.headers]
 Cache-Control = "public, max-age=31536000, immutable"
 
+# Packs (but not packs/index.json, which changes).
+[[advanced.headers]]
+source = "/repo/packs/*.tar.zst"
+[advanced.headers.headers]
+Cache-Control = "public, max-age=31536000, immutable"
+
 # Versions of static-web-server whose headers take a status list (after
 # 2.44.1) can make not-found pages checked again soon, as a publish may
 # add the page. Older ones ignore status and would apply it to everything,

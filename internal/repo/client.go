@@ -6,6 +6,8 @@ package repo
 import (
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -311,4 +313,86 @@ func (c *Client) Page(ctx context.Context, name, section string) (*Listing, erro
 		return nil, err
 	}
 	return &l, nil
+}
+
+// Download fetches a big file (a pack) into dst, streaming it, and checks
+// it's bytes long and hashes to sha.
+func (c *Client) Download(ctx context.Context, rel, dst, sha string, bytes int64) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	var src io.ReadCloser
+	base := c.Base
+	if dir, ok := strings.CutPrefix(base, "file://"); ok {
+		base = dir
+	}
+	if !strings.HasPrefix(base, "http://") && !strings.HasPrefix(base, "https://") {
+		f, err := os.Open(filepath.Join(base, filepath.FromSlash(rel)))
+		if errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("%s: %w", rel, ErrNotFound)
+		}
+		if err != nil {
+			return err
+		}
+		src = f
+	} else {
+		u := strings.TrimSuffix(base, "/") + "/" + escapePath(rel)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+		if err != nil {
+			return err
+		}
+		if c.UserAgent != "" {
+			req.Header.Set("User-Agent", c.UserAgent)
+		}
+		// No timeout for the whole of a big file: only for it to start.
+		hc := &http.Client{Transport: http.DefaultTransport}
+		if c.HTTP != nil && c.HTTP.Transport != nil {
+			hc.Transport = c.HTTP.Transport
+		}
+		resp, err := hc.Do(req)
+		if err != nil {
+			return err
+		}
+		switch {
+		case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone:
+			resp.Body.Close()
+			return fmt.Errorf("%s: %w", rel, ErrNotFound)
+		case resp.StatusCode != http.StatusOK:
+			resp.Body.Close()
+			return fmt.Errorf("%s: %s", u, resp.Status)
+		}
+		body, err := decode(resp.Body, resp.Header.Get("Content-Encoding"))
+		if err != nil {
+			resp.Body.Close()
+			return fmt.Errorf("%s: %w", u, err)
+		}
+		src = struct {
+			io.Reader
+			io.Closer
+		}{body, resp.Body}
+	}
+	defer src.Close()
+	f, err := os.CreateTemp(filepath.Dir(dst), ".tmp-download-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	sum := sha256.New()
+	n, err := io.Copy(io.MultiWriter(f, sum), io.LimitReader(src, bytes+1))
+	if err == nil {
+		err = f.Chmod(0o644)
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return fmt.Errorf("%s: %w", rel, err)
+	}
+	if n != bytes {
+		return fmt.Errorf("%s is %d bytes, not %d", rel, n, bytes)
+	}
+	if hex.EncodeToString(sum.Sum(nil)) != sha {
+		return fmt.Errorf("%s doesn't match its hash", rel)
+	}
+	return os.Rename(f.Name(), dst)
 }

@@ -31,6 +31,9 @@ type Store struct {
 	// Written, if set, is told of each file written (by its path), so it
 	// can be compressed straight away.
 	Written func(path string)
+	// SyncRoot, if set, is where it keeps the logs it syncs packs from
+	// (see SyncDir).
+	SyncRoot string
 
 	mu  sync.Mutex // serialises listing updates within this process
 	vmu sync.Mutex // and variants.json updates

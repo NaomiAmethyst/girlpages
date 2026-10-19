@@ -50,18 +50,11 @@ type ImportStats struct {
 // packages and missing variants, and every file fetched is checked against
 // the hash its listing gives. The caller must hold Lock.
 func (s *Store) Import(ctx context.Context, c *Client, o ImportOptions) (ImportStats, error) {
-	var st ImportStats
-	logf := func(format string, a ...any) {
-		if o.Log != nil {
-			fmt.Fprintf(o.Log, format, a...)
-		}
-	}
 	m, err := c.Manifest(ctx)
 	if err != nil {
-		return st, err
+		return ImportStats{}, err
 	}
 	var todo []IndexPage
-	var secs []string
 	for _, ce := range m.Chapters {
 		wanted := false
 		for _, se := range m.Sections {
@@ -72,14 +65,65 @@ func (s *Store) Import(ctx context.Context, c *Client, o ImportOptions) (ImportS
 		}
 		pages, err := c.ChapterPages(ctx, ce)
 		if err != nil {
-			return st, err
+			return ImportStats{}, err
 		}
 		for _, p := range pages {
 			if !manpage.SectionMatches(p.Section, o.Sections) || (o.Match != nil && !o.Match.MatchString(p.Name)) {
 				continue
 			}
 			todo = append(todo, p)
-			secs = append(secs, p.Section)
+		}
+	}
+	return s.importPages(ctx, c, todo, o)
+}
+
+// ImportFrom merges the repository files in tree (page/ and contents/, as
+// replaying packs gives them) into this one, as Import does: every page
+// there, or if only is set, those whose pointer files (by their paths
+// from tree) it names. The caller must hold Lock.
+func (s *Store) ImportFrom(ctx context.Context, tree string, only map[string]bool, o ImportOptions) (ImportStats, error) {
+	if only != nil {
+		// A repository with nothing in it wants everything, whatever's
+		// changed in the tree (it may have been emptied since the last
+		// sync).
+		if paths, err := s.pointerPaths(); err == nil && len(paths) == 0 {
+			only = nil
+		}
+	}
+	src := &Store{Dir: tree}
+	var todo []IndexPage
+	var mu sync.Mutex
+	err := src.eachPage(ctx, func(p Pointer) error {
+		if only != nil && !only[NamePath(p.Name, p.Section)] {
+			return nil
+		}
+		if !manpage.SectionMatches(p.Section, o.Sections) || (o.Match != nil && !o.Match.MatchString(p.Name)) {
+			return nil
+		}
+		mu.Lock()
+		todo = append(todo, IndexPage{Name: p.Name, Section: p.Section, Page: p.SHA256})
+		mu.Unlock()
+		return nil
+	})
+	if err != nil {
+		return ImportStats{}, err
+	}
+	sort.Slice(todo, func(i, j int) bool {
+		if todo[i].Section != todo[j].Section {
+			return todo[i].Section < todo[j].Section
+		}
+		return todo[i].Name < todo[j].Name
+	})
+	return s.importPages(ctx, NewClient(tree, 0), todo, o)
+}
+
+// importPages merges pages (by name, section and listing hash) from a
+// repository c reads into this one.
+func (s *Store) importPages(ctx context.Context, c *Client, todo []IndexPage, o ImportOptions) (ImportStats, error) {
+	var st ImportStats
+	logf := func(format string, a ...any) {
+		if o.Log != nil {
+			fmt.Fprintf(o.Log, format, a...)
 		}
 	}
 	st.Pages = len(todo)
@@ -119,7 +163,8 @@ func (s *Store) Import(ctx context.Context, c *Client, o ImportOptions) (ImportS
 				if i >= len(todo) || ctx.Err() != nil {
 					return
 				}
-				ip, sec := todo[i], secs[i]
+				ip := todo[i]
+				sec := ip.Section
 				key := ip.Name + "\x00" + sec
 				title := ip.Name + "(" + sec + ")"
 				if local[key] == ip.Page {

@@ -50,7 +50,11 @@ commands:
   crawl KIND URL     add every package with man pages from a repository:
                      apt URL SUITE, rpm URL, or pacman URL
   import SOURCE      merge another girlpages repository (a URL or a
-                     directory) into this one
+                     directory) into this one, by its packs if it has them
+  unpack [PATH]      merge packs you have (in DIR/repo/packs, or PATH)
+                     into this repository
+  export DIR         write the repository as packs, into a pack-only
+                     repository in DIR (adding to it, if it's there)
   girlify [NAME...]  girlify pages that aren't yet
   publish            write the section lists, search index, manifest and
                      website
@@ -102,6 +106,8 @@ func run(args []string) int {
 		"ingest":  a.ingest,
 		"crawl":   a.crawl,
 		"import":  a.importRepo,
+		"unpack":  a.unpack,
+		"export":  a.export,
 		"girlify": a.girlify,
 		"publish": a.publish,
 		"gc":      a.gc,
@@ -394,6 +400,7 @@ func (a *app) importRepo(ctx context.Context, args []string) error {
 	preferRemote := fs.Bool("prefer-remote", false, "when both have a version's variant and they differ, take theirs")
 	jobs := fs.IntP("jobs", "j", 8, "pages to fetch at once")
 	dry := fs.BoolP("dry-run", "n", false, "say what would be imported")
+	noPacks := fs.Bool("no-packs", false, "fetch files one by one, even if it has packs")
 	if err := parse(fs, args); err != nil {
 		return err
 	}
@@ -425,15 +432,174 @@ func (a *app) importRepo(ctx context.Context, args []string) error {
 	}
 	defer unlock()
 	start := time.Now()
-	st, err := s.Import(ctx, c, o)
+	m, err := c.Manifest(ctx)
+	if err != nil {
+		return err
+	}
+	var st repo.ImportStats
+	if len(m.Packs) > 0 && !*noPacks {
+		// A few big files, not a request for every one.
+		pr := newProgress(os.Stderr)
+		s.SyncRoot = syncRoot(s.Dir)
+		sst, err := s.SyncFrom(ctx, c, m, pr.report)
+		if err != nil {
+			return err
+		}
+		pr.say("📦 %s\n", synced(sst))
+		st, err = s.ImportFrom(ctx, filepath.Join(sst.Dir, "tree"), sst.Changed, o)
+		return reportImport(st, err, *dry, *preferRemote, start)
+	}
+	st, err = s.Import(ctx, c, o)
+	return reportImport(st, err, *dry, *preferRemote, start)
+}
+
+// packed says what adding to a log of packs did.
+func packed(st repo.PackStats) string {
+	var size int64
+	for _, e := range st.Packs {
+		size += e.Bytes
+	}
+	out := fmt.Sprintf("packed %d changes into %d packs (%s)", st.Puts+st.Deletes, len(st.Packs), humanBytes(size))
+	if len(st.Replaced) > 0 {
+		out += fmt.Sprintf(", replacing %d tail packs", len(st.Replaced))
+	}
+	return out
+}
+
+// syncRoot is where a repository keeps the logs of packs it syncs from:
+// in the cache, not the repository (which is published).
+func syncRoot(dir string) string {
+	return filepath.Join(config.UserCacheDir(), "girlrepo-sync", repo.Hash([]byte(absPath(dir)))[:16])
+}
+
+// unpack merges packs there are files of into the repository.
+func (a *app) unpack(ctx context.Context, args []string) error {
+	fs := flags("unpack", "[options] [PATH]")
+	sections := fs.StringP("sections", "s", "", "only these sections (comma separated)")
+	match := fs.StringP("match", "m", "", "only pages whose names match this regular expression")
+	preferRemote := fs.Bool("prefer-remote", false, "when both have a version's variant and they differ, take theirs")
+	jobs := fs.IntP("jobs", "j", 8, "pages to import at once")
+	dry := fs.BoolP("dry-run", "n", false, "say what would be imported")
+	if err := parse(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() > 1 {
+		fs.Usage()
+		return errUsage
+	}
+	s, err := a.store()
+	if err != nil {
+		return err
+	}
+	s.SyncRoot = syncRoot(s.Dir)
+	o := repo.ImportOptions{Sections: splitSections(*sections), PreferRemote: *preferRemote,
+		Jobs: *jobs, DryRun: *dry, Log: os.Stderr}
+	if *match != "" {
+		if o.Match, err = regexp.Compile(*match); err != nil {
+			return fmt.Errorf("--match: %w", err)
+		}
+	}
+	// Packs dropped into the repository's packs/ (but not its own log's)
+	// are moved out of the way as they're unpacked; packs elsewhere (a
+	// mirror's, an export) are left as they are.
+	dir, move := filepath.Join(s.Dir, "packs"), true
+	own := map[string]bool{}
+	if fs.NArg() == 1 {
+		dir, move = fs.Arg(0), false
+		if fi, err := os.Stat(filepath.Join(dir, "packs")); err == nil && fi.IsDir() {
+			dir = filepath.Join(dir, "packs")
+		}
+	}
+	if abs, _ := filepath.Abs(dir); abs == absPath(filepath.Join(s.Dir, "packs")) {
+		log, err := repo.ReadPackLog(s.Dir)
+		if err != nil {
+			return err
+		}
+		for _, e := range log.Packs {
+			own[e.SHA256] = true
+		}
+		for _, r := range log.Retired {
+			own[strings.TrimSuffix(filepath.Base(r.Path), ".tar.zst")] = true
+		}
+	}
+	unlock, err := s.Lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	start := time.Now()
+	pr := newProgress(os.Stderr)
+	sst, err := s.UnpackDir(ctx, dir, own, move, pr.report)
+	if err != nil {
+		return err
+	}
+	pr.say("📦 %s\n", synced(sst))
+	st, err := s.ImportFrom(ctx, filepath.Join(sst.Dir, "tree"), sst.Changed, o)
+	return reportImport(st, err, *dry, *preferRemote, start)
+}
+
+// export writes the repository into a pack-only repository.
+func (a *app) export(ctx context.Context, args []string) error {
+	fs := flags("export", "[options] DIR")
+	size := fs.Int("pack-size", repo.PackLimit>>20, "how big full packs get, in MiB (fixed once there are some)")
+	if err := parse(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 || *size < 1 {
+		fs.Usage()
+		return errUsage
+	}
+	s, err := a.store()
+	if err != nil {
+		return err
+	}
+	out := fs.Arg(0)
+	if absPath(out) == absPath(s.Dir) || absPath(out) == absPath(a.dir) {
+		return fmt.Errorf("export goes somewhere else: DIR becomes a pack-only repository")
+	}
+	start := time.Now()
+	pr := newProgress(os.Stderr)
+	st, err := repo.AppendPacks(ctx, out, s.Dir, repo.PackOptions{Limit: int64(*size) << 20, Progress: pr.report})
+	if err != nil {
+		return err
+	}
+	log, err := repo.ReadPackLog(out)
+	if err != nil {
+		return err
+	}
+	if err := repo.WritePackManifest(out, log.Packs); err != nil {
+		return err
+	}
+	var total int64
+	for _, e := range log.Packs {
+		total += e.Bytes
+	}
+	if len(st.Packs) == 0 {
+		pr.say("📦 %s was up to date: %d packs (%s)\n", out, len(log.Packs), humanBytes(total))
+	} else {
+		pr.say("📦 %s; %s has %d packs (%s) (%s)\n", packed(st), out, len(log.Packs), humanBytes(total), time.Since(start).Round(time.Second))
+	}
+	return nil
+}
+
+// synced says what a pack sync did.
+func synced(st repo.SyncStats) string {
+	if len(st.Applied) == 0 {
+		return "the packs were up to date already"
+	}
+	return fmt.Sprintf("unpacked %d packs (%s)", len(st.Applied), humanBytes(st.Bytes))
+}
+
+// reportImport says what an import did.
+func reportImport(st repo.ImportStats, err error, dry, preferRemote bool, start time.Time) error {
 	verb := "imported"
-	if *dry {
+	if dry {
 		verb = "would import"
 	}
 	fmt.Fprintf(os.Stderr, "📥 %d pages: %d the same already; %s %d new pages, %d versions, %d variants, %d places found",
 		st.Pages, st.Same, verb, st.New, st.Versions, st.Variants, st.Packages)
 	if st.Conflicts > 0 {
-		if *preferRemote {
+		if preferRemote {
 			fmt.Fprintf(os.Stderr, "; %d conversions differed and theirs were taken", st.Replaced)
 		} else {
 			fmt.Fprintf(os.Stderr, "; %d conversions differed and ours were kept (--prefer-remote takes theirs)", st.Conflicts)
@@ -443,7 +609,7 @@ func (a *app) importRepo(ctx context.Context, args []string) error {
 		fmt.Fprintf(os.Stderr, "; %d failed", st.Failed)
 	}
 	fmt.Fprintf(os.Stderr, " (%s)\n", time.Since(start).Round(time.Second))
-	if err == nil && !*dry && st.New+st.Versions+st.Variants+st.Packages+st.Replaced > 0 {
+	if err == nil && !dry && st.New+st.Versions+st.Variants+st.Packages+st.Replaced > 0 {
 		fmt.Fprintln(os.Stderr, "   next: girlrepo publish ✨")
 	}
 	if err == nil && st.Failed > 0 {
@@ -596,6 +762,7 @@ func (a *app) publish(ctx context.Context, args []string) error {
 	gc := fs.Bool("gc", false, "collect garbage afterwards")
 	compress := fs.String("precompress", "zstd,br,gzip", "write compressed copies of files for the web server to send (or none)")
 	compressJobs := fs.Int("compress-jobs", 0, "files to compress at once (default: one per CPU)")
+	noPacks := fs.Bool("no-packs", false, "don't add to the repository's packs")
 	if err := parse(fs, args); err != nil {
 		return err
 	}
@@ -651,6 +818,15 @@ func (a *app) publish(ctx context.Context, args []string) error {
 		pr.say("🔄 brought %d listings up to date\n", n)
 		if pages, err = s.AllPagesContext(ctx); err != nil {
 			return err
+		}
+	}
+	if !*noPacks {
+		pst, err := repo.AppendPacks(ctx, s.Dir, s.Dir, repo.PackOptions{Progress: pr.report})
+		if err != nil {
+			return err
+		}
+		if len(pst.Packs) > 0 {
+			pr.say("📦 %s\n", packed(pst))
 		}
 	}
 	m, err := s.PublishContext(ctx, pages)

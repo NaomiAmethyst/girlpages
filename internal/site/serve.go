@@ -34,7 +34,7 @@ const (
 	CacheRevalidate = "no-cache"
 )
 
-var hashNamed = regexp.MustCompile(`(^|/|-)[0-9a-f]{64}\.json$`)
+var hashNamed = regexp.MustCompile(`(^|/|-)[0-9a-f]{64}\.json$|^repo/packs/[0-9a-f]{64}\.tar\.zst$`)
 
 // CacheControl is the Cache-Control a file on the site (by its path from
 // the site's root, without its compressed suffix) should be served with.

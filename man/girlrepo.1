@@ -38,6 +38,20 @@ girlrepo \- build and publish girlpages repositories and their website
 .B girlrepo
 .RB [ \-d
 .IR dir ]
+.B unpack
+.RI [ options ]
+.RI [ path ]
+.br
+.B girlrepo
+.RB [ \-d
+.IR dir ]
+.B export
+.RI [ options ]
+.I out
+.br
+.B girlrepo
+.RB [ \-d
+.IR dir ]
 .B girlify
 .RI [ options ]
 .RI [ name ...]
@@ -296,6 +310,14 @@ tampered file is refused (and reported) rather than imported.
 Run
 .B publish
 afterwards.
+.PP
+If the other repository has packs (see
+.BR publish ),
+it's synced by them: the packs this repository hasn't had from it are
+fetched (a few big files, rather than a request for every one), checked,
+and unpacked into a copy of it kept in the cache, and the pages they
+changed merged from there.
+The next import fetches just the packs added since.
 .TP
 .B \-\-prefer\-remote
 When both have a variant of the same version and they differ (two girl
@@ -309,6 +331,48 @@ Fetch this many pages at once (default 8).
 .TP
 .BR \-n ", " \-\-dry\-run
 Say what would be imported.
+.TP
+.B \-\-no\-packs
+Fetch its files one by one, even if it has packs.
+.SS "unpack [\fIpath\fR]"
+Merges packs that are already here into this repository, as
+.B import
+does with packs it fetches: those in
+.IR path ,
+a pack-only repository (as
+.B export
+writes) or a directory of pack files, or with no
+.IR path ,
+those dropped into
+.IR dir /repo/packs/
+(but not this repository's own).
+Packs in
+.IR dir /repo/packs/
+are moved out of the way as they're unpacked; those in
+.I path
+are left as they are.
+It takes
+.BR import 's
+options, but for
+.BR \-\-no\-packs .
+.SS "export \fIout\fR"
+Writes the repository as packs into
+.IR out ,
+a pack-only repository: its packs, and a
+.B manifest.json
+listing them, for
+.B import
+or
+.B unpack
+elsewhere (or serving).
+If
+.I out
+has packs already, the changes since its last are added, as
+.B publish
+adds to the repository's own.
+.TP
+.BR \-\-pack\-size =\fIMiB\fR
+How big full packs get (default 256).
 .SS "girlify [\fIname\fR...]"
 Converts the current (latest) version of every page (or just the named ones: a name for any section, or
 .IB name ( section )
@@ -446,6 +510,17 @@ for a GitHub Pages project site.
 .TP
 .B \-\-no\-site
 Only update the repository.
+.TP
+.B \-\-no\-packs
+Don't add to the repository's packs.
+Otherwise, each publish adds the changes since the last to
+.IR dir /repo/packs/:
+the repository's files (but not its indexes, which are worked out from
+them) as a log of packs, zstd-compressed tar files of about 256 MiB, for
+mirroring it without a request for every file.
+The changes since the last full pack are kept in small tail packs, which
+are replaced by full packs once they'd make one; full packs never change.
+The first publish packs everything, which takes a while.
 .TP
 .B \-\-gc
 Collect garbage afterwards.
@@ -685,6 +760,18 @@ The repository.
 .IR dir /repo/.lock
 Held while the repository is being changed.
 .TP
+.IR dir /repo/packs/
+The repository's packs, and
+.BR index.json ,
+which lists them.
+.TP
+.B ~/.cache/girlpages/girlrepo\-sync/
+Copies of the repositories
+.B import
+and
+.B unpack
+have synced packs from: their packs, and what unpacking them gives.
+.TP
 .B ~/.cache/girlpages/girlrepo\-parts/
 Parts of long pages
 .B girlify
@@ -720,6 +807,14 @@ Add tmux's page as of its 3.5a tag.
 .TP
 .B girlrepo girlify \-n \-q \-s 1 \-\-price 0.10/0.50
 Estimate what girlifying section 1 would cost.
+.TP
+.B girlrepo export /srv/girlpages\-packs
+.PD 0
+.TP
+.B girlrepo \-d mirror import https://example.org/girlpages\-packs
+.PD
+Write the repository as packs, then on another machine, merge them into a
+repository of its own (and again later, fetching just what's new).
 .TP
 .B girl \-\-repo ./repo ls
 Read

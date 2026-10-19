@@ -232,6 +232,12 @@ func (s *Store) PublishContext(ctx context.Context, pages []PageRef) (*Manifest,
 		return nil, err
 	}
 
+	// The packs (see pack.go), if it has them.
+	log, err := ReadPackLog(s.Dir)
+	if err != nil {
+		return nil, err
+	}
+	m.Packs = log.Packs
 	if _, _, err := s.Write(ManifestPath(), m); err != nil {
 		return nil, err
 	}

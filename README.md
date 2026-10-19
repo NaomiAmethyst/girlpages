@@ -200,7 +200,8 @@ girlrepo crawl apt https://deb.debian.org/debian trixie        # or a whole pack
 girlrepo crawl rpm https://dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os
 girlrepo crawl pacman https://geo.mirror.pkgbuild.com/core/os/x86_64
 girlrepo girlify -n --price 0.10/0.50                         # what would it cost?
-girlrepo import https://example.org/repo                       # merge in someone else's repo
+girlrepo import https://example.org/repo                       # merge in someone else's repo (by its packs)
+girlrepo export /srv/packs                                    # or write yours as just packs, for mirroring
 girlrepo girlify -j 8                                         # convert what isn't yet
 girlrepo publish --url https://example.org --gc               # index it and build the site
 girlrepo serve                                                # preview at localhost:1990
@@ -227,6 +228,15 @@ pages that are saved. When it notices a newly published repository it clears out
 search index files that aren't used any more, in the background. Each page version is stored once however
 many packages, distros or aliases share it, and everything but a few pointer
 files is content-addressed, so it caches forever and syncs cheaply. The format is specified in [doc/repo-format.md](doc/repo-format.md), for anyone building tools against it.
+
+A repo is a couple of million small files, though, which is a lot of
+requests to mirror. So `publish` also writes them as *packs*: a log of
+zstd-compressed tar files of about 256 MiB (the whole girlpages repo's
+8 GiB is 670 MiB of them), with each publish's changes in a small tail
+pack. `girlrepo import` syncs a repo by its packs when it has them,
+fetching just the new ones next time; `girlrepo export DIR` writes a
+pack-only copy to host anywhere, adding to it each time; and `girlrepo
+unpack` merges packs you've copied over by hand.
 
 ## Configure
 

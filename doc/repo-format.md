@@ -702,8 +702,8 @@ goes.
 A pack is a POSIX (pax) tar file, compressed with
 [zstd](https://www.rfc-editor.org/rfc/rfc8878) (with a window of no more
 than 128 MiB, which readers must accept), and named after the hash of the
-compressed file. Its first member is `pack.json`; then each put follows, in
-the order `pack.json` lists them, as a member named by its path.
+compressed file. Its first member is `pack.json`; then each put follows, as
+a regular file named by its path.
 
 ```json
 {
@@ -712,8 +712,7 @@ the order `pack.json` lists them, as a member named by its path.
   "prev": "9f1c…",
   "replaces": ["e2b0…", "77d4…"],
   "generated": "2026-10-19T09:38:14Z",
-  "puts": {"keys": ["path", "sha256", "bytes"],
-           "data": ["page/name-1/ls.json", "x}Gd…", 128, …]},
+  "puts": 4120,
   "deletes": ["page/name-1/old.json", …]
 }
 ```
@@ -723,13 +722,18 @@ the order `pack.json` lists them, as a member named by its path.
 | `seq` | Its place in the log: 1 for the first, and one more for each after. |
 | `prev` | The hash of the pack before it in the log (`""` for the first). Replacing tail packs makes the first of their replacements follow the pack before them. |
 | `replaces` | The tail packs it replaces, if any (on the first of a replacement's packs). |
-| `puts` | Each path put, with the hash and size of its bytes (a [table](#tables)). |
+| `puts` | How many files follow. |
 | `deletes` | Each path deleted. |
+
+A pack is checked as a whole, by its hash (which the manifest gives, and
+the next pack's `prev`), so the files in it aren't listed with hashes of
+their own: a reader should check each is a path in `page/` or `contents/`,
+put once, and if it's named after its hash, has it.
 
 Packs are ordered page by page (a page's pointer and listing, then every
 version's `variants.json` and variants), so the near-copies of a page from
 different distributions are together, which compresses well: the
-girlpages repository's 8 GiB of files come to about 540 MiB of packs.
+girlpages repository's 8 GiB of files come to about 670 MiB of packs.
 
 In `manifest.json`, `packs` lists the packs in the log as it is now, in
 order:

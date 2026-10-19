@@ -76,6 +76,8 @@ type Manifest struct {
 	Index    IndexEntry     `json:"index"`
 	// Sources are the distributions (and releases) pages come from.
 	Sources []SourceEntry `json:"sources,omitempty"`
+	// Packs, if it has them, are its packs (see pack.go), in order.
+	Packs []PackEntry `json:"packs,omitempty"`
 }
 
 // SectionEntry is a section in the manifest.
