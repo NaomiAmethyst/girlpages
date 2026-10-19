@@ -119,10 +119,32 @@ jobs:
           path: packages
           merge-multiple: true
       - run: cd packages && sha256sum * > SHA256SUMS
-      - env:
+      # Made, then filled, so running it again finishes what failed. GitHub
+      # sometimes fails to make a release with an HTTP 500 (working out
+      # its notes from the tags, it seems), and sometimes makes it anyway:
+      # so look before trying again, and after a couple of goes, do without
+      # the notes.
+      - name: Make the release
+        env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
-          prerelease=
-          [[ "$TAG" == *-* ]] && prerelease=--prerelease
-          gh release create "$TAG" packages/* --repo "$GITHUB_REPOSITORY" --title "$TAG" --generate-notes $prerelease
+          args=(--repo "$GITHUB_REPOSITORY" --title "$TAG" --verify-tag)
+          [[ "$TAG" == *-* ]] && args+=(--prerelease)
+          for try in 1 2 3 4; do
+            gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 && break
+            if (( try <= 2 )); then notes=(--generate-notes); else notes=(--notes "girlpages $TAG"); fi
+            gh release create "$TAG" "${args[@]}" "${notes[@]}" && break
+            sleep $(( try * 15 ))
+          done
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
+      - name: Upload the packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          for try in 1 2 3; do
+            gh release upload "$TAG" packages/* --repo "$GITHUB_REPOSITORY" --clobber && exit 0
+            sleep $(( try * 15 ))
+          done
+          exit 1
