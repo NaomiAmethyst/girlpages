@@ -511,6 +511,11 @@ for a GitHub Pages project site.
 .B \-\-no\-site
 Only update the repository.
 .TP
+.BR \-j ", " \-\-jobs =\fIn\fR
+Write this many files at once (default one per CPU).
+On a network file system (CephFS, NFS), where each file is mostly a wait
+for the server, many more than that (32, say) can be much quicker.
+.TP
 .B \-\-no\-packs
 Don't add to the repository's packs.
 Otherwise, each publish adds the changes since the last to
@@ -535,7 +540,7 @@ for none): see
 Only new and changed files are compressed, and copies of removed files go.
 .TP
 .BR \-\-compress\-jobs =\fIn\fR
-Compress this many files at once (default: one per CPU).
+Compress this many files at once (default: as many as --jobs).
 .PP
 The website is a progressive web app: it can be installed, and a service
 worker keeps the app itself (scripts, styles, and the browse, search and

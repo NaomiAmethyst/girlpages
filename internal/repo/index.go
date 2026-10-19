@@ -398,11 +398,23 @@ func BuildIndex(docs []IndexDoc) *BuiltIndex {
 	return bi
 }
 
-// parallel calls fn(0)…fn(n-1) on every CPU.
+// Workers is how many files the repository reads or writes at once:
+// one per CPU, unless it's set (more than that helps on a network file
+// system, where each file is mostly a wait).
+var Workers = 0
+
+func workers() int {
+	if Workers > 0 {
+		return Workers
+	}
+	return runtime.NumCPU()
+}
+
+// parallel calls fn(0)…fn(n-1), Workers (or one per CPU) at a time.
 func parallel(n int, fn func(int)) {
 	var next atomic.Int64
 	var wg sync.WaitGroup
-	for w := 0; w < runtime.NumCPU(); w++ {
+	for w := 0; w < workers(); w++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

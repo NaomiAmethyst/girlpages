@@ -11,6 +11,7 @@ import (
 	"image/color"
 	"image/png"
 	"math"
+	"runtime"
 	"sync"
 )
 
@@ -78,7 +79,7 @@ func rows(n int, fn func(y int)) {
 	for y := range jobs {
 		jobs[y] = func() error { fn(y); return nil }
 	}
-	_ = parallel(context.Background(), jobs)
+	_ = parallel(context.Background(), runtime.NumCPU(), jobs)
 }
 
 // iconSample is the icon's colour at (u, v) in the unit square, and

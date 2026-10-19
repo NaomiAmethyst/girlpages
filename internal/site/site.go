@@ -94,6 +94,8 @@ type Options struct {
 	Written func(path string)
 	// Ctx, if set, stops the build early when it's done.
 	Ctx context.Context
+	// Jobs is how many files are written at once (one per CPU if 0).
+	Jobs int
 }
 
 // Stats summarises a build.
@@ -125,6 +127,9 @@ func Build(s *repo.Store, pages []repo.PageRef, m *repo.Manifest, o Options) (St
 	}
 	if o.Ctx == nil {
 		o.Ctx = context.Background()
+	}
+	if o.Jobs <= 0 {
+		o.Jobs = runtime.NumCPU()
 	}
 	b := &builder{o: o, s: s, m: m, written: map[string]bool{}, byName: map[string][]string{}}
 	for _, p := range pages {
@@ -757,16 +762,16 @@ func (b *builder) sections(pages []repo.PageRef) error {
 			}
 		}
 	}
-	return parallel(b.o.Ctx, jobs)
+	return parallel(b.o.Ctx, b.o.Jobs, jobs)
 }
 
-// parallel runs jobs, one per CPU at a time, and joins their errors; if
+// parallel runs jobs, workers at a time, and joins their errors; if
 // ctx is done, it runs no more, and says so.
-func parallel(ctx context.Context, jobs []func() error) error {
+func parallel(ctx context.Context, workers int, jobs []func() error) error {
 	errs := make([]error, len(jobs))
 	var next atomic.Int64
 	var wg sync.WaitGroup
-	for range runtime.NumCPU() {
+	for range workers {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -867,7 +872,7 @@ func (b *builder) pages(pages []repo.PageRef) error {
 	}
 	report(0)
 	var wg sync.WaitGroup
-	for w := 0; w < runtime.NumCPU(); w++ {
+	for w := 0; w < b.o.Jobs; w++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -1121,7 +1126,7 @@ func (b *builder) prune() error {
 			})
 		}
 	}
-	if err := parallel(b.o.Ctx, jobs); err != nil {
+	if err := parallel(b.o.Ctx, b.o.Jobs, jobs); err != nil {
 		return err
 	}
 	// Remove whichever of those are empty now, deepest first.

@@ -771,7 +771,8 @@ func (a *app) publish(ctx context.Context, args []string) error {
 	siteURL := fs.String("url", "", "the site's absolute URL, for canonical links and sitemap.xml")
 	gc := fs.Bool("gc", false, "collect garbage afterwards")
 	compress := fs.String("precompress", "zstd,br,gzip", "write compressed copies of files for the web server to send (or none)")
-	compressJobs := fs.Int("compress-jobs", 0, "files to compress at once (default: one per CPU)")
+	compressJobs := fs.Int("compress-jobs", 0, "files to compress at once (default: --jobs, or one per CPU)")
+	jobs := fs.IntP("jobs", "j", 0, "files to write at once (default: one per CPU; more helps on network file systems)")
 	noPacks := fs.Bool("no-packs", false, "don't add to the repository's packs")
 	if err := parse(fs, args); err != nil {
 		return err
@@ -786,7 +787,11 @@ func (a *app) publish(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	repo.Workers = *jobs
 	precompress.Workers = *compressJobs
+	if precompress.Workers == 0 {
+		precompress.Workers = *jobs
+	}
 	// One publish at a time (they'd write the same website), but the
 	// repository is only locked while it's read and its indexes written:
 	// the website is made from what was read then, and crawls, ingests
@@ -848,7 +853,7 @@ func (a *app) publish(ctx context.Context, args []string) error {
 	locked = false
 	if !*noSite {
 		st, err := site.Build(s, pages, m, site.Options{Out: a.dir, Base: *base, URL: *siteURL,
-			Version: getVersion(), Log: os.Stderr, Progress: pr.report, Written: q.Add, Ctx: ctx})
+			Version: getVersion(), Log: os.Stderr, Progress: pr.report, Written: q.Add, Ctx: ctx, Jobs: *jobs})
 		if err != nil {
 			return err
 		}
