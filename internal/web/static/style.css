@@ -237,6 +237,9 @@ ul.pages .done { flex: none; }
 .toc ul { list-style: none; padding: 0; margin: 0; }
 .toc li a { display: block; padding: 0.15rem 0.5rem; border-radius: 0.4rem; text-decoration: none; color: var(--text); }
 .toc li a:hover { background: var(--accent-soft); }
+/* The section being read (static/spy.js). */
+.toc li a.here { background: var(--accent-soft); color: var(--accent); font-weight: 700; box-shadow: inset 3px 0 0 var(--accent); }
+.toc li.sub a.here { color: var(--accent); }
 .toc li.sub a { padding-left: 1.4rem; color: var(--muted); }
 /* minmax(0, …) rather than 1fr, so a wide code block scrolls inside itself
    instead of stretching the whole page sideways. */

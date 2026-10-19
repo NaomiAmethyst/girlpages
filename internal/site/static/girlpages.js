@@ -11,6 +11,7 @@ import { repoCache, idle } from "./cache.js";
 import { saveButton, menus } from "./widgets.js";
 import { isRoute } from "./routes.js";
 import { Drawer } from "./draw.js";
+import { Spy } from "./spy.js";
 import { keys } from "./keys.js";
 import { outdated, watchUpdates } from "./update.js";
 
@@ -123,6 +124,9 @@ function boot() {
   menus();
   // A long page is drawn ahead of scrolling (see draw.js).
   new Drawer().watch(document.querySelectorAll(".content > *, .original > *"));
+  // Its contents follow the reading (see spy.js).
+  const toc = /** @type {HTMLElement | null} */ (document.querySelector(".static-view .toc"));
+  if (toc) new Spy(toc).watch();
   if (!repo) {
     keys({ go: (href) => { location.href = href; }, base, repo: "" });
     return;

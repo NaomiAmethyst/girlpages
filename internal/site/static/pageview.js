@@ -7,6 +7,7 @@ import { html, raw, HTML } from "./html.js";
 import { renderHTML, renderOriginalHTML } from "./render.js";
 import { errorKind } from "./cache.js";
 import { Drawer } from "./draw.js";
+import { Spy } from "./spy.js";
 import { chapter, isSeries, sectionLabel, sourceLabel } from "./manual.js";
 
 // createPageView makes the page view for an app: ctx has its element (el),
@@ -207,6 +208,9 @@ export function createPageView({ el: app, base, listing, variant, browse, static
       pills.length > 0 && html`<div class="meta">${pills}</div>`}${notices}${body}${provenance}</article>${contents}</div>`)) return;
     // Drawn ahead of scrolling (see draw.js).
     nav.own(new Drawer()).watch(app.querySelectorAll(".content > *, .original > *"));
+    // The contents follow the reading (see spy.js).
+    const side = /** @type {HTMLElement | null} */ (app.querySelector(".toc"));
+    if (side) nav.own(new Spy(side)).watch();
     if (at) {
       nav.scrollTo(() => {
         const d = app.querySelector(`[id="${at}"]`);

@@ -69,6 +69,13 @@ def build_site(tmp):
         os.makedirs(d, exist_ok=True)
         with open(os.path.join(d, f"{name}.{sec}"), "w") as f:
             f.write(page_roff(name, sec, f"does {name} things"))
+    # A long page, for its contents to follow the reading (last in
+    # section 8, so the others are where they were).
+    long = '.TH ZLONGREAD 8 2026-01-01 test "Test Manual"\n.SH NAME\nzlongread \\- a long read\n'
+    for k in range(12):
+        long += f".SH PART{k:02d}\n" + " ".join(["words of part", str(k)] * 400) + "\n"
+    with open(os.path.join(man, "man8", "zlongread.8"), "w") as f:
+        f.write(long)
     site = os.path.join(tmp, "site")
     run = lambda *a: subprocess.run([GIRLREPO, "-d", site, *a], check=True, capture_output=True)
     run("ingest", man)
@@ -407,6 +414,38 @@ async def main():
             await page.wait_for_load_state("networkidle")
             s = await shown(page)
             check(path(page) == "/man/8/admin001/" and "ADMIN001" in s[1], f"and back still works: {path(page)} {s}")
+            await ctx.close()
+
+            print("the contents follow the reading")
+            here = "(root) => document.querySelector(root + ' .toc a.here')?.textContent.trim()"
+            # Scrolled to 120px down, again as the page draws in around it
+            # (or as near as the end of the page lets it come).
+            place = """async ([root, id]) => {
+                const h = document.querySelector(root + ' [id="' + id + '"]');
+                for (let i = 0; i < 10; i++) {
+                    const y = scrollY;
+                    scrollBy(0, h.getBoundingClientRect().top - 120);
+                    await new Promise(r => setTimeout(r, 100));
+                    if (Math.abs(h.getBoundingClientRect().top - 120) < 2 || scrollY === y) break;
+                }
+            }"""
+            ctx, page = await fresh("/man/8/zlongread/", width=1200)
+            for k in (3, 7, 11):
+                await page.evaluate(place, [".static-view", f"part{k:02d}"])
+                await page.wait_for_timeout(300)
+                got = await page.evaluate(here, ".static-view")
+                check(got == f"PART{k:02d}", f"reading PART{k:02d}, it's marked: {got}")
+            await ctx.close()
+            # In the app, over a static page with a heading or two of the
+            # same names.
+            ctx, page = await fresh("/man/8/admin001/", width=1200)
+            await tap(page, base + "/man/8/zlongread/")
+            s = await shown(page)
+            check(s[0] == "app", f"zlongread in the app: {s}")
+            await page.evaluate(place, ["#app", "part05"])
+            await page.wait_for_timeout(300)
+            got = await page.evaluate(here, "#app")
+            check(got == "PART05", f"and in the app: {got}")
             await ctx.close()
 
             print("no script errors")
