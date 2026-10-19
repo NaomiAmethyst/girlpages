@@ -20,6 +20,7 @@ disagree, that's a bug in one of them.
 * [Variants and their syntaxes](#variants-and-their-syntaxes), including
   [girlpages markup](#girlpages-markup)
 * [The search index](#the-search-index)
+* [Packs](#packs): the repository in a few big files, for mirroring
 * [Recipes](#recipes)
 * [Publishing and caching](#publishing-and-caching)
 * [Compatibility](#compatibility)
@@ -223,6 +224,7 @@ highest number.
 | `index/names/shard-ab/<sha>.json` | no | ″ |
 | `index/docs/manifest-<sha>.json` | no | ″ the page table: the rest |
 | `index/docs/shard-ab/<sha>.json` | no | ″ |
+| `packs/<sha>.tar.zst` | no | [Packs](#packs) of everything in `page/` and `contents/` |
 
 `<section>` and `<name>` are [escaped](#paths); `<source>` is a source
 hash, `<sha>` the file's own hash, and `ab` the first two digits of the
@@ -264,6 +266,7 @@ The root. Fetch it fresh to see the repository as it is now.
 | `index.words`, `.grams`, `.names`, `.docs` | Hashes of the [search index](#the-search-index) manifests. |
 | `index.variants` | For each variant, the hash of its [variant index](#variant-indexes) manifest. |
 | `sources` | Each [source](#sources), sorted by distro then release (a distro's entry, with no `release`, first): how many pages have a version from it, in all and by [chapter](#names-and-sections). |
+| `packs` | Optional: the repository's [packs](#packs), in order. |
 
 ### Pointers
 
@@ -664,6 +667,105 @@ docs shard is. A query that names a page exactly (`2 open`, `open(2)`,
 `rfc 9110`: a section, or every section of a chapter in turn, and a name)
 goes straight to it, if it's there, without searching.
 
+## Packs
+
+A repository is most of two million small files, which is a lot of
+requests to mirror. *Packs* hold the same files, in a few big ones: a
+repository may publish them alongside its files, and a *pack-only*
+repository has nothing but them (and a `manifest.json` listing them).
+
+### The log
+
+Packs are a log. Each pack is a list of changes to `page/` and
+`contents/`: *puts* (this path now holds these bytes) and *deletes* (this
+path is gone). Replaying every pack in order, from nothing, gives every
+file in `page/` and `contents/` as of the newest pack: everything but the
+[indexes](#sectionchapter-shajson) and the [search index](#the-search-index),
+which are worked out from those files (`girlrepo publish` does). A
+repository that publishes packs adds one each time it publishes, so the log
+always ends where its `manifest.json` does.
+
+Every change sets a path to some bytes or removes it, so replaying a pack
+again, or from part of the way through the log, does no harm. In one pack
+a path is put or deleted at most once.
+
+Most packs are *full*: about 256 MiB, and once written, never changed or
+removed. Each publish adds a *tail* pack with what's changed since the
+last pack, which is small; once the tail packs come to a full pack's worth,
+they're *replaced* by full packs holding the same changes (and any since),
+and the last of what's left is a new tail. A replaced pack stays published
+for a day or so, for clients part of the way through fetching it, and then
+goes.
+
+### packs/&lt;sha&gt;.tar.zst
+
+A pack is a POSIX (pax) tar file, compressed with
+[zstd](https://www.rfc-editor.org/rfc/rfc8878) (with a window of no more
+than 128 MiB, which readers must accept), and named after the hash of the
+compressed file. Its first member is `pack.json`; then each put follows, in
+the order `pack.json` lists them, as a member named by its path.
+
+```json
+{
+  "format": 1,
+  "seq": 3,
+  "prev": "9f1c…",
+  "replaces": ["e2b0…", "77d4…"],
+  "generated": "2026-10-19T09:38:14Z",
+  "puts": {"keys": ["path", "sha256", "bytes"],
+           "data": ["page/name-1/ls.json", "x}Gd…", 128, …]},
+  "deletes": ["page/name-1/old.json", …]
+}
+```
+
+| Field | |
+|---|---|
+| `seq` | Its place in the log: 1 for the first, and one more for each after. |
+| `prev` | The hash of the pack before it in the log (`""` for the first). Replacing tail packs makes the first of their replacements follow the pack before them. |
+| `replaces` | The tail packs it replaces, if any (on the first of a replacement's packs). |
+| `puts` | Each path put, with the hash and size of its bytes (a [table](#tables)). |
+| `deletes` | Each path deleted. |
+
+Packs are ordered page by page (a page's pointer and listing, then every
+version's `variants.json` and variants), so the near-copies of a page from
+different distributions are together, which compresses well: the
+girlpages repository's 8 GiB of files come to about 540 MiB of packs.
+
+In `manifest.json`, `packs` lists the packs in the log as it is now, in
+order:
+
+```json
+"packs": [
+  {"path": "packs/9f1c….tar.zst", "sha256": "9f1c…", "bytes": 268435000, "seq": 1, "tail": false},
+  {"path": "packs/c3a8….tar.zst", "sha256": "c3a8…", "bytes": 1840221, "seq": 2, "tail": true}
+]
+```
+
+`path` is where it is (its extension says how it's compressed: a reader
+skips packs it can't read, and falls back to fetching files), `bytes` its
+size, and `tail` whether it's a tail pack, which may be replaced.
+
+A pack-only repository's `manifest.json` has just `format`, `generated`
+and `packs`.
+
+### Syncing
+
+To mirror a repository, or keep up with one, keep the packs you've applied
+(or their hashes):
+
+1. Fetch `manifest.json`.
+2. Fetch each pack it lists that you haven't applied, and check its hash
+   and `prev`.
+3. Apply them in order: write each put's bytes (checking its hash) and
+   remove each delete.
+4. Forget packs that a listed pack `replaces`. If you've applied a pack
+   that's neither listed nor replaced by one that is, the log has started
+   again: start again from nothing.
+
+`girlrepo import` does this (merging what the packs hold into a repository
+of your own), `girlrepo unpack` does it with pack files you already have,
+and `girlrepo export` writes a pack-only repository.
+
 ## Recipes
 
 **Find the girl version of a page installed here** (what `girl` does):
@@ -691,8 +793,9 @@ it's one of several (`3ssl` of `3`, `3p`, `3ssl`…).
 listing they name, every `variants.json` for every version in them, and
 every generation those list; and the index manifests and their shards.
 Skip anything you already have whose name is its hash. Write
-`manifest.json` last. `girlrepo import` does this, merging into a
-repository of your own.
+`manifest.json` last. Or, if it has [packs](#packs), sync them: a few big
+requests rather than millions. `girlrepo import` does either, merging into
+a repository of your own.
 
 ## Publishing and caching
 
@@ -707,7 +810,7 @@ in `dist/hosting/` send):
 
 | Files | |
 |---|---|
-| Named after their own hash: `page/page-*/…`, `section/*-<sha>.json`, `contents/*/*/<variant>-<sha>.json`, `index/…` | `public, max-age=31536000, immutable` |
+| Named after their own hash: `page/page-*/…`, `section/*-<sha>.json`, `contents/*/*/<variant>-<sha>.json`, `index/…`, `packs/…` | `public, max-age=31536000, immutable` |
 | `manifest.json`, `page/name-*/…`, `section/<section>.json`, `contents/*/*/variants.json` | `public, max-age=300` |
 
 ## Compatibility
@@ -719,7 +822,10 @@ Within format 1, a repository may gain:
 * new variants, with names readers don't know (readers ignore them or show
   them by their `syntax`);
 * new syntaxes (readers show unknown ones as plain text);
-* new sources, sections and generations.
+* new sources, sections and generations;
+* [packs](#packs), and packs compressed other ways (with their own file
+  extensions; readers ignore packs they can't read, and fetch the files
+  instead).
 
 Anything that would make a format 1 reader misread a repository (removing
 or changing the meaning of a field, moving files, changing the source hash)
