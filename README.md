@@ -96,6 +96,22 @@ it's incremental you can interrupt it and pick up where you left off.
 left alone). Packagers: see the top of the `Makefile` for `DESTDIR` and
 friends.
 
+### Packages and images
+
+Each release has deb, rpm, apk and Arch packages for amd64 and arm64: of
+`girlpages`, which is everything above with each package manager's hook and
+the daily timer, and of `girlc` alone, one static binary with no
+dependencies. There are images too, `ghcr.io/naomiamethyst/girlpages`
+(everything, on Debian) and `ghcr.io/naomiamethyst/girlc` (girlc on its
+own, from scratch):
+
+```sh
+docker run --rm -e GIRLC_REPO=https://example.org/repo ghcr.io/naomiamethyst/girlc ls
+```
+
+`make packages` builds the packages here (it needs
+[nfpm](https://nfpm.goreleaser.com); `ARCH=arm64` for the other one).
+
 ## In your browser
 
 ```sh

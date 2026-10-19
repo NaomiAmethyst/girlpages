@@ -58,7 +58,7 @@ ifeq ($(SYSTEMD),auto)
   override SYSTEMD := $(if $(wildcard /run/systemd/system),yes,no)
 endif
 
-.PHONY: all build test check e2e lint install install-user install-girlrepo install-girlc uninstall uninstall-user clean
+.PHONY: all build test check e2e lint packages install install-user install-girlrepo install-girlc uninstall uninstall-user clean
 
 all: build
 
@@ -98,6 +98,11 @@ lint:
 # man; skipped without them).
 e2e: girlrepo
 	python3 test/e2e/navigation.py ./girlrepo
+
+# deb, rpm, apk and Arch packages of girlpages and of girlc alone, in
+# dist/packages (needs nfpm; ARCH=arm64 for another architecture).
+packages:
+	dist/package.sh $(if $(ARCH),-a $(ARCH))
 
 install-girlrepo: girlrepo
 	install -Dm755 girlrepo '$(DESTDIR)$(BINDIR)/girlrepo'

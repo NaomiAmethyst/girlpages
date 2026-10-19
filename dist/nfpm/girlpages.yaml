@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Naomi Persephone Amethyst <naomi@amethyst.name>
+#
+# The whole of girlpages, as nfpm builds it into a package: dist/package.sh
+# adds the files make install put in a stage for this kind of package, and
+# sets ARCH and VERSION.
+name: girlpages
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+version_schema: none
+section: utils
+priority: optional
+maintainer: Naomi Persephone Amethyst <naomi@amethyst.name>
+vendor: girlpages
+homepage: https://github.com/NaomiAmethyst/girlpages
+license: GPL-3.0-or-later
+description: |-
+  man pages, but make them girly
+  girl is man, but every page is rewritten by an LLM in the voice of a Gen Z
+  teenage girl, keeping every option, default and caveat, and cached. With it
+  come girlrepo, which builds and publishes repositories of girlified pages
+  and their website, and girlc, which reads pages from one.
+depends:
+  - man-db
+recommends:
+  - less
+scripts:
+  postinstall: dist/nfpm/postinstall.sh
+  preremove: dist/nfpm/preremove.sh
+# Last, as dist/package.sh adds to it.
+contents:
+  # Then each file make install put in STAGE (dist/package.sh lists them
+  # here), those in /etc as config files.
+  - src: dist/config.toml
+    dst: /etc/girlpages/config.toml
+    type: config|noreplace
+    file_info:
+      mode: 0644
+  - dst: /var/cache/girlpages
+    type: dir
+    file_info:
+      mode: 0755
