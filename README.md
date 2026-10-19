@@ -44,7 +44,7 @@ OpenAI, OpenRouter, Ollama, llama.cpp, vLLM, LM Studio and friends.
 
 ## Install
 
-You need Go 1.24+, `man-db`, and either the `claude` CLI or an
+You need Go 1.25+, `man-db`, and either the `claude` CLI or an
 OpenAI-compatible endpoint.
 
 ### Just for you

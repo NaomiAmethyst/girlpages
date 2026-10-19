@@ -33,7 +33,8 @@ import (
 // PackLimit is how big a full pack gets.
 const PackLimit = 256 << 20
 
-// packWindow is the most zstd's window may be, for writers and readers.
+// packWindow is the most zstd's window may be in a pack (readers must
+// accept it), and the window packs are written with.
 const packWindow = 128 << 20
 
 // PackEntry is a pack in a log, as manifest.json and packs/index.json list
@@ -638,8 +639,68 @@ func readPack(ctx context.Context, file string, header func(*PackHeader) error, 
 // applyPack replays a pack into the files in dir, returning its header
 // and the paths it put; progress, if set, is told how many it's put so
 // far, of how many.
+//
+// dir is a sync directory's tree, which nothing reads while it's being
+// written, so files are written as they are, not to a temporary file
+// renamed into place, and many at once: on a network file system
+// (CephFS), each file's round trips are what takes the time. A pack
+// that's stopped part of the way through isn't recorded as applied, so
+// it's applied again, whole, next time.
 func applyPack(ctx context.Context, file, dir string, progress func(done, total int)) (*PackHeader, []string, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	type job struct {
+		path string
+		data []byte
+	}
+	jobs := make(chan job, 256)
+	var (
+		wg      sync.WaitGroup
+		mu      sync.Mutex
+		failed  error
+		made    sync.Map // directories known to be there
+		written int
+	)
+	fail := func(err error) {
+		mu.Lock()
+		if failed == nil {
+			failed = err
+			cancel()
+		}
+		mu.Unlock()
+	}
 	var h *PackHeader
+	for w := 0; w < applyWorkers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range jobs {
+				if ctx.Err() != nil {
+					continue
+				}
+				full := filepath.Join(dir, filepath.FromSlash(j.path))
+				parent := filepath.Dir(full)
+				if _, ok := made.Load(parent); !ok {
+					if err := os.MkdirAll(parent, 0o755); err != nil {
+						fail(err)
+						continue
+					}
+					made.Store(parent, true)
+				}
+				if err := os.WriteFile(full, j.data, 0o644); err != nil {
+					fail(err)
+					continue
+				}
+				mu.Lock()
+				written++
+				n := written
+				mu.Unlock()
+				if progress != nil {
+					progress(n, h.Puts)
+				}
+			}
+		}()
+	}
 	var puts []string
 	err := readPack(ctx, file, func(ph *PackHeader) error {
 		h = ph
@@ -651,13 +712,23 @@ func applyPack(ctx context.Context, file, dir string, progress func(done, total 
 		return nil
 	}, func(p string, data []byte) error {
 		puts = append(puts, p)
-		if progress != nil {
-			progress(len(puts), h.Puts)
+		select {
+		case jobs <- job{p, data}:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
 		}
-		return WriteFile(filepath.Join(dir, filepath.FromSlash(p)), data)
 	})
+	close(jobs)
+	wg.Wait()
+	if failed != nil {
+		return h, puts, failed
+	}
 	return h, puts, err
 }
+
+// applyWorkers is how many files applyPack writes at once.
+const applyWorkers = 16
 
 // safePath reports whether a path stays inside the root: no .. or empty
 // parts, and not absolute.

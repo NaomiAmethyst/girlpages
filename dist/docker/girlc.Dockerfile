@@ -9,7 +9,7 @@
 #
 # GIRLC_REPO as a build argument builds a default repository in.
 
-FROM --platform=$BUILDPLATFORM golang:1.24 AS build
+FROM --platform=$BUILDPLATFORM golang:1.25 AS build
 ARG TARGETOS TARGETARCH VERSION=dev GIRLC_REPO=
 WORKDIR /src
 COPY go.mod go.sum ./

@@ -12,7 +12,7 @@
 # (Debian's slim image leaves out packages' man pages, so there's little
 # installed for girl to girlify by itself.)
 
-FROM --platform=$BUILDPLATFORM golang:1.24 AS build
+FROM --platform=$BUILDPLATFORM golang:1.25 AS build
 ARG TARGETOS TARGETARCH VERSION=dev GIRLC_REPO=
 WORKDIR /src
 COPY go.mod go.sum ./
