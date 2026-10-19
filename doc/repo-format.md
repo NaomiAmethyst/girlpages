@@ -712,6 +712,7 @@ a regular file named by its path.
   "prev": "9f1c…",
   "replaces": ["e2b0…", "77d4…"],
   "generated": "2026-10-19T09:38:14Z",
+  "tail": false,
   "puts": 4120,
   "deletes": ["page/name-1/old.json", …]
 }
@@ -722,6 +723,7 @@ a regular file named by its path.
 | `seq` | Its place in the log: 1 for the first, and one more for each after. |
 | `prev` | The hash of the pack before it in the log (`""` for the first). Replacing tail packs makes the first of their replacements follow the pack before them. |
 | `replaces` | The tail packs it replaces, if any (on the first of a replacement's packs). |
+| `tail` | Whether it's a tail pack, which may be replaced. |
 | `puts` | How many files follow. |
 | `deletes` | Each path deleted. |
 
@@ -765,6 +767,10 @@ To mirror a repository, or keep up with one, keep the packs you've applied
 4. Forget packs that a listed pack `replaces`. If you've applied a pack
    that's neither listed nor replaced by one that is, the log has started
    again: start again from nothing.
+
+The packs alone are enough: their headers say their order, so a log's
+pack files, copied anywhere, can be applied without its `manifest.json`
+(leaving out packs that others there `replace`).
 
 `girlrepo import` does this (merging what the packs hold into a repository
 of your own), `girlrepo unpack` does it with pack files you already have,

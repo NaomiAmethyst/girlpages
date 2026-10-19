@@ -248,7 +248,8 @@ func (s *Store) SyncFrom(ctx context.Context, c *Client, m *Manifest, progress P
 
 // UnpackDir syncs from pack files in dir (as a log's packs/ has them, or
 // just the files): those that make a log from its first pack on, in
-// order, but for own (a repository's own log, say). Those it uses go into
+// order, but for own (a repository's own log, say), and tail packs others
+// there replace (a log's packs/ keeps them a while). Those it uses go into
 // the sync directory: moved, if move is set (so they're not unpacked
 // again), or else linked or copied (leaving a mirror as it was).
 func (s *Store) UnpackDir(ctx context.Context, dir string, own map[string]bool, move bool, progress Progress) (SyncStats, error) {
@@ -257,11 +258,12 @@ func (s *Store) UnpackDir(ctx context.Context, dir string, own map[string]bool, 
 		return SyncStats{}, err
 	}
 	type found struct {
-		entry PackEntry
-		prev  string
-		file  string
+		entry    PackEntry
+		prev     string
+		file     string
+		replaces []string
 	}
-	bySeq := map[int][]found{}
+	var all []found
 	for _, d := range ents {
 		sha, ok := strings.CutSuffix(d.Name(), ".tar.zst")
 		if !ok || !ValidHash(sha) || own[sha] {
@@ -276,10 +278,22 @@ func (s *Store) UnpackDir(ctx context.Context, dir string, own map[string]bool, 
 		if err != nil {
 			return SyncStats{}, err
 		}
-		bySeq[h.Seq] = append(bySeq[h.Seq], found{PackEntry{Path: PackPath(sha), SHA256: sha, Bytes: fi.Size(), Seq: h.Seq}, h.Prev, file})
+		all = append(all, found{PackEntry{Path: PackPath(sha), SHA256: sha, Bytes: fi.Size(), Seq: h.Seq, Tail: h.Tail}, h.Prev, file, h.Replaces})
 	}
-	if len(bySeq) == 0 {
+	if len(all) == 0 {
 		return SyncStats{}, fmt.Errorf("no packs in %s", dir)
+	}
+	replaced := map[string]bool{}
+	for _, f := range all {
+		for _, r := range f.replaces {
+			replaced[r] = true
+		}
+	}
+	bySeq := map[int][]found{}
+	for _, f := range all {
+		if !replaced[f.entry.SHA256] {
+			bySeq[f.entry.Seq] = append(bySeq[f.entry.Seq], f)
+		}
 	}
 	// Follow the log from its first pack: each pack's successor is the
 	// one that names it.

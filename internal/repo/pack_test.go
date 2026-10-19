@@ -309,3 +309,36 @@ func TestPackTampering(t *testing.T) {
 		t.Error("a damaged pack was applied")
 	}
 }
+
+// TestUnpackReplaced unpacks a log's whole packs/ just after tail packs
+// were replaced, while they're still kept: the replaced ones are left out.
+func TestUnpackReplaced(t *testing.T) {
+	ctx := context.Background()
+	a := packedStore(t, 20)
+	appendPacks(t, a.Dir, a.Dir, 6<<10)
+	replaced := false
+	for i := 0; i < 40 && !replaced; i++ {
+		addVersion(t, a, fmt.Sprintf("more%03d", i), "1", "more "+strings.Repeat("yes ", i), "slay", Package{Distro: "arch"}, int64(200+i))
+		replaced = len(appendPacks(t, a.Dir, a.Dir, 6<<10).Replaced) > 0
+	}
+	log, _ := ReadPackLog(a.Dir)
+	if !replaced || len(log.Retired) == 0 {
+		t.Fatal("no tail packs were replaced")
+	}
+	c, _ := Open(t.TempDir())
+	st, err := c.UnpackDir(ctx, filepath.Join(a.Dir, "packs"), nil, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Applied) != len(log.Packs) {
+		t.Fatalf("applied %d packs; the log has %d", len(st.Applied), len(log.Packs))
+	}
+	for i, e := range st.Applied {
+		if e.SHA256 != log.Packs[i].SHA256 || e.Tail != log.Packs[i].Tail {
+			t.Errorf("pack %d: applied %.8s (tail %v), the log has %.8s (tail %v)", i, e.SHA256, e.Tail, log.Packs[i].SHA256, log.Packs[i].Tail)
+		}
+	}
+	if !reflect.DeepEqual(scan(t, filepath.Join(st.Dir, "tree")), scan(t, a.Dir)) {
+		t.Error("unpacking doesn't give the repository")
+	}
+}

@@ -54,8 +54,10 @@ type PackHeader struct {
 	Prev      string    `json:"prev"`
 	Replaces  []string  `json:"replaces"`
 	Generated time.Time `json:"generated"`
-	Puts      int       `json:"puts"`
-	Deletes   []string  `json:"deletes"`
+	// Tail is whether it's a tail pack, which may be replaced.
+	Tail    bool     `json:"tail"`
+	Puts    int      `json:"puts"`
+	Deletes []string `json:"deletes"`
 }
 
 // PackLog is a log's packs/index.json: the packs in the log, in order,
@@ -392,6 +394,7 @@ func (b *packBatch) write(ctx context.Context, puts, deletes []string) ([]PackEn
 		defer os.Remove(body.Name())
 		defer body.Close()
 		header.Generated = now()
+		header.Tail = tail
 		e, err := b.assemble(&header, body)
 		if err != nil {
 			return err
