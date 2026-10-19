@@ -5,6 +5,7 @@ package repo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -265,6 +266,14 @@ func TestSyncPacks(t *testing.T) {
 
 func TestUnpackDir(t *testing.T) {
 	ctx := context.Background()
+	// Nothing there, or no such place: nothing to unpack, which isn't a
+	// failure.
+	empty, _ := Open(t.TempDir())
+	for _, dir := range []string{t.TempDir(), filepath.Join(t.TempDir(), "nope")} {
+		if _, err := empty.UnpackDir(ctx, dir, nil, false, nil); !errors.Is(err, ErrNoPacks) {
+			t.Errorf("unpacking %s: %v", dir, err)
+		}
+	}
 	a := packedStore(t, 15)
 	appendPacks(t, a.Dir, a.Dir, 6<<10)
 	// The packs, copied somewhere as files.

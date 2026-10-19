@@ -246,6 +246,9 @@ func (s *Store) SyncFrom(ctx context.Context, c *Client, m *Manifest, progress P
 	}, progress)
 }
 
+// ErrNoPacks means there were no packs to unpack.
+var ErrNoPacks = errors.New("no packs to unpack")
+
 // UnpackDir syncs from pack files in dir (as a log's packs/ has them, or
 // just the files): those that make a log from its first pack on, in
 // order, but for own (a repository's own log, say), and tail packs others
@@ -254,6 +257,9 @@ func (s *Store) SyncFrom(ctx context.Context, c *Client, m *Manifest, progress P
 // again), or else linked or copied (leaving a mirror as it was).
 func (s *Store) UnpackDir(ctx context.Context, dir string, own map[string]bool, move bool, progress Progress) (SyncStats, error) {
 	ents, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return SyncStats{}, fmt.Errorf("%s: %w", dir, ErrNoPacks)
+	}
 	if err != nil {
 		return SyncStats{}, err
 	}
@@ -281,7 +287,7 @@ func (s *Store) UnpackDir(ctx context.Context, dir string, own map[string]bool, 
 		all = append(all, found{PackEntry{Path: PackPath(sha), SHA256: sha, Bytes: fi.Size(), Seq: h.Seq, Tail: h.Tail}, h.Prev, file, h.Replaces})
 	}
 	if len(all) == 0 {
-		return SyncStats{}, fmt.Errorf("no packs in %s", dir)
+		return SyncStats{}, fmt.Errorf("%s: %w", dir, ErrNoPacks)
 	}
 	replaced := map[string]bool{}
 	for _, f := range all {

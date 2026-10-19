@@ -530,6 +530,11 @@ func (a *app) unpack(ctx context.Context, args []string) error {
 	start := time.Now()
 	pr := newProgress(os.Stderr)
 	sst, err := s.UnpackDir(ctx, dir, own, move, pr.report)
+	if errors.Is(err, repo.ErrNoPacks) {
+		// Nothing's come yet (or it's all been unpacked): fine.
+		pr.say("📦 no packs to unpack in %s\n", dir)
+		return nil
+	}
 	if err != nil {
 		return err
 	}
