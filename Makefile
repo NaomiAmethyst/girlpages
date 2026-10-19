@@ -5,6 +5,8 @@
 #   make install-user             just for you, under ~/.local
 #   make install-girlc            just girlc, which reads pages from a repo
 #
+# Both installs put in girl, girlrepo and girlc, with their man pages.
+#
 # Packagers: set DESTDIR, PREFIX=/usr, SYSTEMDUNITDIR=/usr/lib/systemd/system,
 # PACMANHOOKDIR=/usr/share/libalpm/hooks and HOOKS as appropriate.
 
@@ -42,17 +44,18 @@ LDFLAGS := -s -w \
 
 SUBST = sed -e 's|@BINDIR@|$(1)|g' -e 's|@LIBEXECDIR@|$(LIBEXECDIR)|g'
 
+# (override, so these work given on the command line too.)
 ifeq ($(HOOKS),auto)
-  HOOKS := $(strip \
+  override HOOKS := $(strip \
     $(if $(shell command -v dpkg 2>/dev/null),apt) \
     $(if $(shell command -v pacman 2>/dev/null),pacman) \
     $(if $(shell command -v dnf 2>/dev/null),dnf))
 endif
 ifeq ($(HOOKS),none)
-  HOOKS :=
+  override HOOKS :=
 endif
 ifeq ($(SYSTEMD),auto)
-  SYSTEMD := $(if $(wildcard /run/systemd/system),yes,no)
+  override SYSTEMD := $(if $(wildcard /run/systemd/system),yes,no)
 endif
 
 .PHONY: all build test check e2e lint install install-user install-girlrepo install-girlc uninstall uninstall-user clean
@@ -66,8 +69,7 @@ SOURCES := $(shell find cmd internal -name '*.go' -o -name '*.html' -o -name '*.
 girl: $(SOURCES)
 	$(GO) build -trimpath -ldflags '$(LDFLAGS)' -o $@ ./cmd/girl
 
-# girlrepo builds girlpages repositories and websites; it isn't installed
-# by default, as only people publishing a repository need it.
+# girlrepo builds girlpages repositories and websites.
 girlrepo: $(SOURCES)
 	$(GO) build -trimpath -ldflags '$(LDFLAGS)' -o $@ ./cmd/girlrepo
 
@@ -105,7 +107,7 @@ install-girlc: girlc
 	install -Dm755 girlc '$(DESTDIR)$(BINDIR)/girlc'
 	install -Dm644 man/girlc.1 '$(DESTDIR)$(MANDIR)/man1/girlc.1'
 
-install: girl
+install: girl install-girlrepo install-girlc
 	install -Dm755 girl '$(DESTDIR)$(BINDIR)/girl'
 	install -Dm644 man/girl.1 '$(DESTDIR)$(MANDIR)/man1/girl.1'
 	install -dm755 '$(DESTDIR)$(LIBEXECDIR)'
@@ -140,11 +142,15 @@ endif
 	@echo '💖 girlpages installed. Try: girl girl'
 	@echo '   Pick a model in $(SYSCONFDIR)/girlpages/config.toml, then'
 	@echo '   girlify everything with: sudo girl --bulk'
-	@echo '   After that, the$(if $(HOOKS), $(HOOKS)) hooks$(if $(filter yes,$(SYSTEMD)), and daily timer) keep it fresh ✨'
+ifneq ($(HOOKS)$(filter yes,$(SYSTEMD)),)
+	@echo '   After that, the $(strip $(if $(HOOKS),$(HOOKS) hooks)$(if $(HOOKS),$(if $(filter yes,$(SYSTEMD)), and)) $(if $(filter yes,$(SYSTEMD)),daily timer)) will keep it fresh ✨'
+endif
 
-install-user: girl
-	install -Dm755 girl '$(USER_PREFIX)/bin/girl'
-	install -Dm644 man/girl.1 '$(USER_PREFIX)/share/man/man1/girl.1'
+install-user: girl girlrepo girlc
+	for b in girl girlrepo girlc; do \
+		install -Dm755 $$b '$(USER_PREFIX)/bin/'$$b && \
+		install -Dm644 man/$$b.1 '$(USER_PREFIX)/share/man/man1/'$$b.1 || exit 1; \
+	done
 	@if [ ! -e '$(USER_CONFIG_DIR)/girlpages/config.toml' ]; then \
 		install -Dm644 dist/config.toml '$(USER_CONFIG_DIR)/girlpages/config.toml'; \
 	else echo 'keeping existing $(USER_CONFIG_DIR)/girlpages/config.toml'; fi
@@ -157,7 +163,7 @@ endif
 	@echo
 	@echo '💖 girlpages installed in $(USER_PREFIX). Try: girl girl'
 	@case ":$$PATH:" in *':$(USER_PREFIX)/bin:'*) ;; *) echo '   (add $(USER_PREFIX)/bin to your PATH first)';; esac
-	@if [ -n "$$MANPATH" ]; then echo '   $$MANPATH is set, so add $(USER_PREFIX)/share/man to it for girl(1)'; fi
+	@if [ -n "$$MANPATH" ]; then echo '   $$MANPATH is set, so add $(USER_PREFIX)/share/man to it for girl(1), girlrepo(1) and girlc(1)'; fi
 	@echo '   Girlify all your man pages with: girl --bulk'
 
 uninstall:
@@ -177,6 +183,8 @@ uninstall:
 uninstall-user:
 	-systemctl --user disable --now girlpages-update.timer
 	rm -f '$(USER_PREFIX)/bin/girl' '$(USER_PREFIX)/share/man/man1/girl.1' \
+		'$(USER_PREFIX)/bin/girlrepo' '$(USER_PREFIX)/share/man/man1/girlrepo.1' \
+		'$(USER_PREFIX)/bin/girlc' '$(USER_PREFIX)/share/man/man1/girlc.1' \
 		'$(USER_CONFIG_DIR)/systemd/user/girlpages-update.service' \
 		'$(USER_CONFIG_DIR)/systemd/user/girlpages-update.timer'
 	@echo 'Left $(USER_CONFIG_DIR)/girlpages and your cache in place.'

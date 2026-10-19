@@ -53,8 +53,8 @@ OpenAI-compatible endpoint.
 make install-user
 ```
 
-This puts `girl` in `~/.local/bin`, its man page in `~/.local/share/man`, a
-config file in `~/.config/girlpages/config.toml`, and (with systemd) a daily
+This puts `girl`, `girlrepo` and `girlc` in `~/.local/bin`, their man pages
+in `~/.local/share/man`, a config file in `~/.config/girlpages/config.toml`, and (with systemd) a daily
 user timer that refreshes pages you've converted. Pages are cached in
 `~/.cache/girlpages`.
 
@@ -67,7 +67,8 @@ make
 sudo make install
 ```
 
-This installs to `/usr/local` (change with `PREFIX=`), with the config in
+This installs `girl`, `girlrepo` and `girlc` to `/usr/local` (change with
+`PREFIX=`), with the config in
 `/etc/girlpages/config.toml` and a shared cache in `/var/cache/girlpages`
 that every user reads from. It also installs:
 
@@ -155,7 +156,8 @@ have none. So it's a light way to keep the manual in containers that leave
 man pages out for their size: copy it into any image, even `scratch`, and
 point it at a repo with `GIRLC_REPO` or `--repo`. Packagers can build in a
 default with `make girlc GIRLC_REPO=https://…/repo`. It takes the same
-options as `girl -r` (`make girlc && sudo make install-girlc`, documented in
+options as `girl -r` (`make install` and `make install-user` put it in too,
+or `make girlc && sudo make install-girlc` installs just it; documented in
 `girlc(1)`).
 
 ```dockerfile
@@ -172,7 +174,7 @@ girlc rfc 9110          # an RFC
 
 ### Running one
 
-`girlrepo` (`make girlrepo`, documented in `girlrepo(1)`) builds them:
+`girlrepo` (installed with `girl`, documented in `girlrepo(1)`) builds them:
 
 ```sh
 girlrepo ingest --distro debian --release trixie pool/*.deb   # or .pkg.tar.zst, .rpm, dirs
