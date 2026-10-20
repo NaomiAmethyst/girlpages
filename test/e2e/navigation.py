@@ -448,6 +448,17 @@ async def main():
             check(got == "PART05", f"and in the app: {got}")
             await ctx.close()
 
+            print("a link in another case than its page's")
+            ctx, page = await fresh("/man/8/admin001/", width=1200)
+            for want, href in [("admin002", "/man/8/ADMIN002/"), ("SSL_thing001", "/man/1ssl/ssl_thing001/")]:
+                await tap(page, base + href)
+                s = await shown(page)
+                check(s[0] == "app" and want.upper() in s[1].upper() and page.url.endswith(f"/{want}/"),
+                      f"{href} shows {want}: {s} at {page.url}")
+            await ctx.close()
+            # Looking the name up as written first is a 404, which is expected.
+            errors[:] = [e for e in errors if not ("404" in e and ("/ADMIN002/" in e or "/ssl_thing001/" in e))]
+
             print("no script errors")
             for e in errors:
                 check(False, e)

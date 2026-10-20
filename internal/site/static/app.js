@@ -48,7 +48,7 @@ function createApp(el) {
   const listings = createListings({ cache, manifest, browse, staticPage, router: { followStatic: (from, to) => router.followStatic(from, to) } });
   const views = createViews({ el, base, cache, manifest, browse, listingURL, listings });
   const { sourceHome, sourceSection, searchView, oops } = views;
-  const { loadPage, pageView } = createPageView({ el, base, listing, variant, browse, staticPage, listingURL, oops });
+  const { loadPage, pageView } = createPageView({ el, base, listing, findName: listings.findName, variant, browse, staticPage, listingURL, oops });
 
   // route shows the view for nav's address.
   async function route(nav) {

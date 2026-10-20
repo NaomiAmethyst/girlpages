@@ -111,6 +111,7 @@ type builder struct {
 	m       *repo.Manifest
 	written map[string]bool
 	byName  map[string][]string // name → sections
+	byLower map[string][]string // lower-cased name → names
 }
 
 // Build writes the site.
@@ -131,8 +132,12 @@ func Build(s *repo.Store, pages []repo.PageRef, m *repo.Manifest, o Options) (St
 	if o.Jobs <= 0 {
 		o.Jobs = runtime.NumCPU()
 	}
-	b := &builder{o: o, s: s, m: m, written: map[string]bool{}, byName: map[string][]string{}}
+	b := &builder{o: o, s: s, m: m, written: map[string]bool{}, byName: map[string][]string{}, byLower: map[string][]string{}}
 	for _, p := range pages {
+		if _, ok := b.byName[p.Pointer.Name]; !ok {
+			low := strings.ToLower(p.Pointer.Name)
+			b.byLower[low] = append(b.byLower[low], p.Pointer.Name)
+		}
 		b.byName[p.Pointer.Name] = append(b.byName[p.Pointer.Name], p.Pointer.Section)
 	}
 	steps := []func() error{
@@ -845,8 +850,30 @@ func pager(u string, n, total int) []pagerLink {
 }
 
 // link is the URL for a reference like printf(3), or "" if there's no such
-// page. A bare section number finds subsections too (3 → 3ssl).
+// page. A bare section number finds subsections too (3 → 3ssl). A name in
+// the wrong case, as pages write their own (PCRE(3) for pcre(3)), finds the
+// lower-cased page, or failing that one in any case.
 func (b *builder) link(name, sec string) string {
+	if u := b.linkExact(name, sec); u != "" {
+		return u
+	}
+	low := strings.ToLower(name)
+	if low != name {
+		if u := b.linkExact(low, sec); u != "" {
+			return u
+		}
+	}
+	for _, n := range b.byLower[low] {
+		if n != name && n != low {
+			if u := b.linkExact(n, sec); u != "" {
+				return u
+			}
+		}
+	}
+	return ""
+}
+
+func (b *builder) linkExact(name, sec string) string {
 	secs := b.byName[name]
 	for _, s := range secs {
 		if s == sec {

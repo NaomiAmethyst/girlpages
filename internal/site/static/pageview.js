@@ -8,13 +8,14 @@ import { renderHTML, renderOriginalHTML } from "./render.js";
 import { errorKind } from "./cache.js";
 import { Drawer } from "./draw.js";
 import { Spy } from "./spy.js";
+import { pathEscape, segmentName } from "./urls.js";
 import { chapter, isSeries, sectionLabel, sourceLabel } from "./manual.js";
 
 // createPageView makes the page view for an app: ctx has its element (el),
 // the site's base, listing(name, sec) and variant(source, which, sha) to
 // read the repository, link makers (browse, staticPage, listingURL), and
 // oops(nav, message) for errors.
-export function createPageView({ el: app, base, listing, variant, browse, staticPage, listingURL, oops }) {
+export function createPageView({ el: app, base, listing, findName, variant, browse, staticPage, listingURL, oops }) {
   // How variants are offered. Others (made with other prompts) get their name.
   function variantLabel(v) {
     return v === "girl" ? "💅 girly" : v === "man" ? "📜 original" : "✨ " + v;
@@ -89,6 +90,9 @@ export function createPageView({ el: app, base, listing, variant, browse, static
     } catch (e) {
       if (errorKind(e) === "offline") return { error: `you're offline, and ${name}(${sec}) isn't saved 📵` };
       if (errorKind(e) !== "missing") throw e;
+      // A reference in another case than the page's (PCRE(3) for pcre(3)).
+      const other = await findName(name, sec).catch(() => "");
+      if (other) return { moved: other };
       return { error: `there's no ${name}(${sec}) here 😭` };
     }
     rest = [...rest];
@@ -128,6 +132,13 @@ export function createPageView({ el: app, base, listing, variant, browse, static
   // pageView shows a page.
   async function pageView(nav, name, sec, rest, src) {
     const d = await loadPage(name, sec, rest, src);
+    if ("moved" in d) {
+      const u = new URL(location.href);
+      const seg = (n) => `/${pathEscape(segmentName(n))}/`;
+      u.pathname = u.pathname.replace(seg(name), seg(d.moved));
+      u.searchParams.forEach((v, k) => { if (v === name) u.searchParams.set(k, d.moved); });
+      return nav.redirect(u.href);
+    }
     if ("error" in d) return oops(nav, d.error);
     const { l, ver, which, variants, versions, slug, doc, at, mono } = d;
     const title = ver.title || `${name.toUpperCase()}(${sec})`;

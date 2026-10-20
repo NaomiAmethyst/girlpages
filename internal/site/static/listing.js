@@ -128,7 +128,20 @@ export function createListings({ cache, manifest, browse, staticPage, router }) 
     return listing;
   }
 
-  return { chapterPlan, attachListing };
+  // findName is the name of the page in section sec called name in some
+  // other case (pcre for PCRE), the lower-cased name first, or "" for none.
+  async function findName(name, sec) {
+    const plan = await chapterPlan(await manifest(), sec, "", "");
+    if (!plan.count) return "";
+    const low = name.toLowerCase(), n = plan.chunkOf(name);
+    const near = [];
+    for (const k of [n, n - 1, n + 1]) if (k >= 1 && k <= plan.count) near.push(...await plan.load(k));
+    const hits = near.filter(p => p.name.toLowerCase() === low && p.name !== name && (p.sec === sec || p.sec.startsWith(sec)));
+    hits.sort((a, b) => Number(a.name !== low) - Number(b.name !== low) || Number(a.sec !== sec) - Number(b.sec !== sec));
+    return hits.length ? hits[0].name : "";
+  }
+
+  return { chapterPlan, attachListing, findName };
 }
 
 // chunkMaker renders a plan's chunks: its items, under letters (or
