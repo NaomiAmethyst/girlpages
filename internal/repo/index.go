@@ -6,6 +6,7 @@ package repo
 import (
 	"hash/maphash"
 	"math"
+	"regexp"
 	"runtime"
 	"slices"
 	"sort"
@@ -31,7 +32,24 @@ const (
 	scoreNamePart = 100  // a word in the name
 	scoreDesc     = 60   // a word in the description
 	scoreBodyMax  = 20   // a word in the page, by how often
+	// scoreVersioned is a name that's a word and a version number
+	// (icecast2, python3), as that word: it's that program, so it's
+	// worth more than any mention, but less than a page called it.
+	scoreVersioned = scoreName / 2
 )
+
+// versioned matches a word with a version number stuck on (icecast2,
+// python3): the word, of two letters or more, ending in a letter (so not
+// x86_64 or x11), then digits.
+var versioned = regexp.MustCompile(`^(\pL[\pL\pN_]*\pL)[0-9]+$`)
+
+// versionStem is the word in a name with a version number stuck on, or "".
+func versionStem(w string) string {
+	if m := versioned.FindStringSubmatch(w); m != nil {
+		return m[1]
+	}
+	return ""
+}
 
 const (
 	minTokenRunes = 2
@@ -196,7 +214,18 @@ func BuildIndex(docs []IndexDoc) *BuiltIndex {
 			scores[strings.ToLower(d.Section)+name] += scoreName
 			flags[strings.ToLower(d.Section+d.Name)] |= inVocab
 		}
+		// A program with its version in its name (icecast2, python3) is
+		// found by the program's name; so is a part of a name (libssl3
+		// in libssl3-dev), as a word of it.
+		if stem := versionStem(name); stem != "" {
+			scores[stem] += scoreVersioned
+			flags[stem] |= inVocab
+		}
 		for _, t := range Tokens(d.Name) {
+			if stem := versionStem(t); stem != "" && t != name {
+				scores[stem] += scoreNamePart
+				flags[stem] |= inVocab
+			}
 			if t != name {
 				scores[t] += scoreNamePart
 			}

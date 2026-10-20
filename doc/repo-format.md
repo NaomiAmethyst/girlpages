@@ -615,7 +615,9 @@ lower-cased, of 2 to 40 characters. A page's score for a word adds up:
 | Where | Score |
 |---|---|
 | The page's whole name, lower-cased (even if it isn't a token, like `git-commit` or `[`) | 1000, plus 25 × (13 − the section's place in man's order, `1 n l 8 3 0 2 5 4 9 6 7`, counting from 0, by the section's start; 12 for anything else) |
+| The whole name without a version number stuck on its end (`icecast` for `icecast2`, `python` for `python3`: a word of two letters or more, ending in a letter, then digits) | 500 |
 | A token of the name | 100 |
+| A token of the name without a version number stuck on its end (`libssl` for `libssl3` in `libssl3-dev`), as above | 100 |
 | A token of the description (not a stopword) | 60 |
 | A token of the text (not a stopword) | 1 + 4 × log₂(times it appears), at most 20 |
 

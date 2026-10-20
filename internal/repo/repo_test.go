@@ -149,6 +149,12 @@ func testStore(t *testing.T) *Store {
 	add("printf", "3", "formatted output conversion", "The printf family produces output according to a format.", true)
 	add("[", "1", "check file types and compare values", "Exit with the status determined by the expression.", false)
 	add("dir", "1", "list directory contents", "List information about the files in a directory.", false)
+	// A program with its version in its name, and pages that mention it.
+	add("icecast2", "1", "an MP3/Ogg Vorbis broadcast streaming media server", "Streams audio to listeners.", false)
+	add("ezstream", "1", "source client for Icecast with external de-/encoder support", "Sends audio to an Icecast server.", false)
+	add("icecast_selinux", "8", "Security Enhanced Linux Policy for the icecast processes", "Confines the icecast server.", false)
+	add("python3", "1", "an interpreted, interactive, object-oriented programming language", "Runs scripts.", false)
+	add("python", "1", "an interpreted, interactive, object-oriented programming language", "Runs scripts.", false)
 	for i := 0; i < 30; i++ {
 		add(fmt.Sprintf("filler%02d", i), "3", "a filler page", "nothing to see here", false)
 	}
@@ -168,7 +174,7 @@ func TestPublishAndGC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.Pages != 37 || m.Variants["girl"] != 3 || len(m.Sections) != 2 || len(m.Chapters) != 2 || m.Sections[1].Variants["girl"] != 1 {
+	if m.Pages != 42 || m.Variants["girl"] != 3 || len(m.Sections) != 3 || len(m.Chapters) != 3 || m.Sections[1].Variants["girl"] != 1 {
 		t.Fatalf("manifest: %+v", m)
 	}
 	var p Pointer
@@ -179,7 +185,7 @@ func TestPublishAndGC(t *testing.T) {
 	if err := s.Read(SectionIndexPath("1", p.SHA256), &si); err != nil {
 		t.Fatal(err)
 	}
-	if len(si.Pages) != 6 || si.Pages[0].Name != "[" || fmt.Sprint(si.Pages[3].Variants) != "[girl man]" {
+	if len(si.Pages) != 10 || si.Pages[0].Name != "[" || fmt.Sprint(si.Pages[4].Variants) != "[girl man]" {
 		t.Errorf("chapter 1: %+v", si.Pages)
 	}
 	// Content-addressed files really are named after their contents.
@@ -208,7 +214,7 @@ func TestPublishAndGC(t *testing.T) {
 		t.Errorf("GC removed %d files", st.Files)
 	}
 	pages2, err := s.AllPages()
-	if err != nil || len(pages2) != 37 {
+	if err != nil || len(pages2) != 42 {
 		t.Fatalf("after GC: %d pages, %v", len(pages2), err)
 	}
 	for _, p := range pages2 {
@@ -260,6 +266,11 @@ func TestSearch(t *testing.T) {
 		{"patt", "grep(1)"}, // a prefix
 		{"[", "[(1)"},       // a name that's no word at all
 		{"repository", "git-commit(1)"},
+		// A versioned name is the program, before pages mentioning it; a
+		// page called just that is better still.
+		{"icecast", "icecast2(1)"},
+		{"python", "python(1)"},
+		{"python3", "python3(1)"},
 	}
 	for _, c := range cases {
 		got := names(c.q)
@@ -324,7 +335,7 @@ func TestVariantIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fmt.Sprint(m.Variants) != "map[girl:3 man:37 pirate:1]" || len(m.Index.Variants) != 3 {
+	if fmt.Sprint(m.Variants) != "map[girl:3 man:42 pirate:1]" || len(m.Index.Variants) != 3 {
 		t.Fatalf("variants: %v %v", m.Variants, m.Index.Variants)
 	}
 	c := NewClient(s.Dir, time.Second)
@@ -350,7 +361,7 @@ func TestVariantIndex(t *testing.T) {
 			}
 		}
 	}
-	if counts["girl"] != 3 || counts["man"] != 37 || counts["pirate"] != 1 {
+	if counts["girl"] != 3 || counts["man"] != 42 || counts["pirate"] != 1 {
 		t.Errorf("counts: %v", counts)
 	}
 	if has, err := idx["girl"].Has(ctx, strings.Repeat("f", 64)); has || err != nil {
@@ -466,7 +477,7 @@ func TestClientEncodings(t *testing.T) {
 				w.Write(data)
 			}))
 			defer srv.Close()
-			if m, err := NewClient(srv.URL, time.Second).Manifest(context.Background()); err != nil || m.Pages != 37 {
+			if m, err := NewClient(srv.URL, time.Second).Manifest(context.Background()); err != nil || m.Pages != 42 {
 				t.Errorf("%+v, %v", m, err)
 			}
 		})
