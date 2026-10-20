@@ -63,6 +63,9 @@ func TestVariantPrompts(t *testing.T) {
 			if kind == KindRFC && strings.Contains(s, "Unix manual pages") {
 				t.Errorf("%s: RFC prompt is about man pages", v.Name)
 			}
+			if mention := strings.Contains(s, "Never mention parts"); mention == (v.Name == VariantGirl) {
+				t.Errorf("%s %q: every-voice rules wrong (have them: %v)", v.Name, kind, mention)
+			}
 			u := UserPromptVariant(kind, v.Name, "X(1)", 1, 1, nil, "x")
 			if kind == KindMan && !strings.Contains(u, "sign-off") && !strings.Contains(u, "farewell") && !strings.Contains(u, "blessing") {
 				t.Errorf("%s: no sign-off asked for: %s", v.Name, u)
