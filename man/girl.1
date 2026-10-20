@@ -526,8 +526,16 @@ when listening anywhere else.
 A girlpages repository is a set of pages someone else has already girlified,
 published as static files by
 .BR girlrepo (1).
-With one configured, a page that isn't cached is looked for there before the
-model is asked, and cached like any other.
+The official one is girlpages.dev's,
+.BR https://girlpages.dev/repo ,
+which
+.B girl
+uses unless
+.B [repo] url
+says another (or
+.BR none ).
+A page that isn't cached is looked for there before the model is asked, and
+cached like any other.
 Pages are found by the SHA-256 of their roff source (decompressed, with
 .B .so
 requests followed), so only a conversion of exactly the version installed
@@ -542,8 +550,15 @@ or when
 .B extra_instructions
 is set, since those ask for a page made just for you.
 .B \-\-bulk
-works without a model when a repository is configured, caching what the
+works without a model when there's a repository, caching what the
 repository has.
+To use no repository at all (so nothing is asked of any but the model),
+set
+.B url = \(dqnone\(dq
+in
+.BR [repo] ,
+or
+.BR GIRLPAGES_REPO=none .
 .PP
 .B girl \-r
 reads any page in the repository, installed here or not, in any version
@@ -604,7 +619,7 @@ batch_url = "https://api.anthropic.com/v1/messages/batches"
 timeout = "10m"
 
 [repo]
-url = ""                 # a girlpages repository, e.g. https://…/repo
+url = "https://girlpages.dev/repo"   # a girlpages repository, or "none"
 timeout = "20s"
 .fi
 .RE
@@ -815,7 +830,7 @@ Search the repository for pages about anything with
 .B dir
 in it.
 .TP
-.B girl \-\-repo https://example.org/repo \-\-bulk
+.B girl \-\-repo https://mirror.example/repo \-\-bulk
 Fill the cache with every page the repository has girlified, converting the
 rest.
 .SH BUGS

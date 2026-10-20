@@ -29,9 +29,9 @@ import (
 // version is set by the Makefile.
 var version = ""
 
-// defaultRepo is the repository read if none is given (set by the
-// Makefile, from GIRLC_REPO).
-var defaultRepo = ""
+// defaultRepo is the repository read if none is given: the official one,
+// at girlpages.dev, unless the Makefile's GIRLC_REPO says otherwise.
+var defaultRepo = "https://girlpages.dev/repo"
 
 // timeout is how long a request to the repository can take.
 const timeout = 20 * time.Second

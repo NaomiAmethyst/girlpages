@@ -210,12 +210,16 @@ func (c *Config) AnthropicKey() (string, error) {
 
 type RepoConfig struct {
 	// URL is where the repository is: an http(s) URL, a file:// URL or a
-	// directory. Empty means don't use one.
+	// directory (DefaultRepoURL unless it's set). "none" (or empty) means
+	// don't use one.
 	URL     string   `toml:"url"`
 	Timeout Duration `toml:"timeout"`
 }
 
 const DefaultOpenAIBaseURL = "https://api.openai.com/v1"
+
+// DefaultRepoURL is the official girlpages repository, at girlpages.dev.
+const DefaultRepoURL = "https://girlpages.dev/repo"
 
 func Defaults() Config {
 	return Config{
@@ -240,7 +244,7 @@ func Defaults() Config {
 			BatchURL:  DefaultAnthropicBatchURL,
 			Timeout:   Duration{10 * time.Minute},
 		},
-		Repo: RepoConfig{Timeout: Duration{20 * time.Second}},
+		Repo: RepoConfig{URL: DefaultRepoURL, Timeout: Duration{20 * time.Second}},
 	}
 }
 

@@ -5,9 +5,10 @@
 # brings its own root certificates. Built from the top of the source:
 #
 #   docker build -f dist/docker/girlc.Dockerfile --build-arg VERSION=$(dist/version.sh) .
-#   docker run --rm -e GIRLC_REPO=https://example.org/repo girlc ls
+#   docker run --rm girlc ls
 #
-# GIRLC_REPO as a build argument builds a default repository in.
+# It reads girlpages.dev's repository, unless GIRLC_REPO (at run time, or
+# as a build argument, to build another in) says another.
 
 FROM --platform=$BUILDPLATFORM golang:1.25 AS build
 ARG TARGETOS TARGETARCH VERSION=dev GIRLC_REPO=

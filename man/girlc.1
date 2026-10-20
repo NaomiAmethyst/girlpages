@@ -154,7 +154,9 @@ The default is
 .BR $GIRLC_REPO ,
 else the one
 .B girlc
-was built with (see
+was built with: girlpages.dev's,
+.BR https://girlpages.dev/repo ,
+unless it was built with another (see
 .BR \-\-help ;
 packagers set it with
 .BR "make girlc GIRLC_REPO=" \fIurl\fR).
@@ -173,7 +175,6 @@ image, even one built from
 .RS
 .nf
 COPY girlc /usr/local/bin/girlc
-ENV GIRLC_REPO=https://example.org/repo
 .fi
 .RE
 .PP
@@ -245,7 +246,7 @@ See which versions of
 .BR ls (1)
 the repository has, then read the original of Debian bookworm's.
 .TP
-.B girlc \-\-repo https://example.org rfc 9110
+.B girlc \-\-repo https://mirror.example rfc 9110
 Read RFC 9110 from another repository.
 .SH AUTHOR
 Naomi Persephone Amethyst <naomi@amethyst.name>

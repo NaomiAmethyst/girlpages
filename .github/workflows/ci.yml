@@ -5,8 +5,8 @@ permissions:
 env:
   NFPM_VERSION: 2.48.0
   NFPM_SHA256: 6d7f9a28b2f397934403950fcbba83f598b08d02edbe79a0815b3b4897341750
-  # A repository variable, once there's a public repository, makes it
-  # girlc's default (in its packages and image).
+  # A repository variable makes another repository girlc's default (in its
+  # packages and image), rather than girlpages.dev's.
   GIRLC_REPO: ${{ vars.GIRLC_REPO }}
 jobs:
   test:

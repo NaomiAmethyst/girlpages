@@ -28,7 +28,7 @@ HOOKS   ?= auto
 # Install systemd units: auto (if systemd is running), yes or no.
 SYSTEMD ?= auto
 
-# The repository girlc reads if none is configured.
+# The repository girlc reads if none is given (empty: girlpages.dev's).
 GIRLC_REPO ?=
 
 USER_PREFIX     ?= $(HOME)/.local
@@ -77,7 +77,7 @@ girlrepo: $(SOURCES)
 # machines (containers, say) that don't need girl itself, or man pages. It's
 # static, with no cgo, so it runs anywhere (musl, distroless, scratch).
 girlc: $(SOURCES)
-	CGO_ENABLED=0 $(GO) build -trimpath -ldflags '$(LDFLAGS) -X main.defaultRepo=$(GIRLC_REPO)' -o $@ ./cmd/girlc
+	CGO_ENABLED=0 $(GO) build -trimpath -ldflags '$(LDFLAGS)$(if $(GIRLC_REPO), -X main.defaultRepo=$(GIRLC_REPO))' -o $@ ./cmd/girlc
 
 test:
 	$(GO) test ./...

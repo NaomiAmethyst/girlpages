@@ -28,6 +28,18 @@ ls(1)                         ✨ girl manual ✨                         ls(1)
 
 (Picture that in pink, purple and mint.)
 
+## girlpages.dev
+
+Every page, girlified, on the web: **[girlpages.dev](https://girlpages.dev)**.
+Browse by section, read any version from Debian, Ubuntu, Fedora, Arch or
+upstream (and RFCs, too), and search across all of them, typos and all. It
+installs as an app and works offline.
+
+It's also the official girlpages repository, at
+[girlpages.dev/repo](https://girlpages.dev/repo): `girl` looks there for a
+page before asking a model, `girlc` reads from it, and `girlrepo import`
+can mirror it, in a few big packs. See [Repositories](#repositories).
+
 ## How it works
 
 1. `girl` finds the page with `man -w`, so names, sections and search order
@@ -106,7 +118,7 @@ dependencies. There are images too, `ghcr.io/naomiamethyst/girlpages`
 own, from scratch):
 
 ```sh
-docker run --rm -e GIRLC_REPO=https://example.org/repo ghcr.io/naomiamethyst/girlc ls
+docker run --rm ghcr.io/naomiamethyst/girlc ls
 ```
 
 `make packages` builds the packages here (it needs
@@ -136,13 +148,17 @@ already converted (`sudo girl --bulk` first, say).
 ## Repositories
 
 Someone already girlified the page you want? A girlpages repository is a pile
-of ready-made pages on a static web host, and `girl` can read from one before
-bothering a model:
+of ready-made pages on a static web host, and `girl` reads from one before
+bothering a model: girlpages.dev's, unless you say otherwise.
 
 ```toml
 [repo]
-url = "https://example.org/repo"
+url = "https://girlpages.dev/repo"   # the default; another, or "none" for none
 ```
+
+Only the hash of a page's source is sent (to fetch its conversion), so the
+repo learns which pages you read, and nothing else; `url = "none"` (or
+`GIRLPAGES_REPO=none`) asks nothing of anyone but your model.
 
 Pages are matched by the hash of their roff source, so you only ever get a
 conversion of exactly the version you have installed; anything else is
@@ -170,15 +186,14 @@ only reads from a repo. It's one static binary (about 7 MB) with no config
 file and no libraries, and brings its own root certificates for systems that
 have none. So it's a light way to keep the manual in containers that leave
 man pages out for their size: copy it into any image, even `scratch`, and
-point it at a repo with `GIRLC_REPO` or `--repo`. Packagers can build in a
-default with `make girlc GIRLC_REPO=https://…/repo`. It takes the same
+it reads from girlpages.dev (or another repo, with `GIRLC_REPO` or `--repo`;
+packagers can build in another with `make girlc GIRLC_REPO=https://…/repo`). It takes the same
 options as `girl -r` (`make install` and `make install-user` put it in too,
 or `make girlc && sudo make install-girlc` installs just it; documented in
 `girlc(1)`).
 
 ```dockerfile
 COPY girlc /usr/local/bin/girlc
-ENV GIRLC_REPO=https://example.org/repo
 ```
 
 ```sh
@@ -200,7 +215,7 @@ girlrepo crawl apt https://deb.debian.org/debian trixie        # or a whole pack
 girlrepo crawl rpm https://dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os
 girlrepo crawl pacman https://geo.mirror.pkgbuild.com/core/os/x86_64
 girlrepo girlify -n --price 0.10/0.50                         # what would it cost?
-girlrepo import https://example.org/repo                       # merge in someone else's repo (by its packs)
+girlrepo import https://girlpages.dev                          # merge in another repo (by its packs)
 girlrepo export /srv/packs                                    # or write yours as just packs, for mirroring
 girlrepo girlify -j 8                                         # convert what isn't yet
 girlrepo publish --url https://example.org --gc               # index it and build the site
