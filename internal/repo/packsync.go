@@ -122,8 +122,10 @@ func (s *Store) syncPacks(ctx context.Context, listed []PackEntry, fetch fetchPa
 	// What's to merge: what wasn't, last time (if merging stopped part of
 	// the way), and what the packs applied now change; everything, for
 	// a copy that's new.
-	all, pending := readPending(root)
-	if len(log.Packs) == 0 {
+	all, pending, known := readPending(root)
+	if len(log.Packs) == 0 || !known {
+		// New, or synced by a girlrepo that didn't keep track (before
+		// 0.0.4), which may have stopped merging part of the way.
 		all = true
 	}
 	log.Packs = log.Packs[:common]
@@ -248,24 +250,25 @@ func (s *Store) restartSync(ctx context.Context, root string, listed []PackEntry
 
 // What a copy of a log has applied but not yet merged into the
 // repository is kept in its pending file: "all", or the pointer files the
-// packs put, a line each. Merging clears it (Merged), so merging that
-// stops part of the way is done again next time.
+// packs put, a line each. Merging empties it (Merged), so merging that
+// stops part of the way is done again next time. A copy with no pending
+// file at all isn't known to be merged.
 
-func readPending(root string) (all bool, pending map[string]bool) {
+func readPending(root string) (all bool, pending map[string]bool, known bool) {
 	pending = map[string]bool{}
 	b, err := os.ReadFile(filepath.Join(root, "pending"))
 	if err != nil {
-		return false, pending
+		return false, pending, false
 	}
 	for _, line := range strings.Split(string(b), "\n") {
 		switch {
 		case line == "all":
-			return true, pending
+			return true, pending, true
 		case line != "":
 			pending[line] = true
 		}
 	}
-	return false, pending
+	return false, pending, true
 }
 
 func writePending(root string, all bool, pending map[string]bool) error {
@@ -288,10 +291,7 @@ func writePending(root string, all bool, pending map[string]bool) error {
 // Merged records that what a sync applied has been merged into the
 // repository, so the next sync merges just what it changes.
 func (s *Store) Merged(st SyncStats) error {
-	if err := os.Remove(filepath.Join(st.Dir, "pending")); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
-	}
-	return nil
+	return writePending(st.Dir, false, nil)
 }
 
 // writeSyncLog records what's applied, and lists it in the copy's

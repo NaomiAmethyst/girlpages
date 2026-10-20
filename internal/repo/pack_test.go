@@ -422,3 +422,38 @@ func TestSyncInterrupted(t *testing.T) {
 		t.Errorf("merged %d new pages, want 1", is.New)
 	}
 }
+
+// TestSyncFromOldCopy: a copy synced by a girlrepo that didn't keep track
+// of what was merged (no pending file) merges everything, once.
+func TestSyncFromOldCopy(t *testing.T) {
+	ctx := context.Background()
+	a := packedStore(t, 6)
+	appendPacks(t, a.Dir, a.Dir, 1<<20)
+	publish(t, a)
+	c := NewClient(a.Dir, 0)
+	b, _ := Open(t.TempDir())
+	b.SyncRoot = t.TempDir()
+	addVersion(t, b, "own", "1", "its own", "", Package{Distro: "local"}, 1)
+	m, _ := c.Manifest(ctx)
+	st, err := b.SyncFrom(ctx, c, m, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// As the old girlrepo left it: applied, part merged, no pending file.
+	if _, err := b.ImportFrom(ctx, filepath.Join(st.Dir, "tree"), map[string]bool{NamePath("tool000", "1"): true}, ImportOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	os.Remove(filepath.Join(st.Dir, "pending"))
+	st, err = b.SyncFrom(ctx, c, m, nil)
+	if err != nil || st.Changed != nil {
+		t.Fatalf("an old copy: changed %v, %v", st.Changed, err)
+	}
+	is, err := b.ImportFrom(ctx, filepath.Join(st.Dir, "tree"), st.Changed, ImportOptions{})
+	if err != nil || is.New != 5 || is.Same != 1 {
+		t.Errorf("merging it: %+v, %v", is, err)
+	}
+	b.Merged(st)
+	if st, _ := b.SyncFrom(ctx, c, m, nil); st.Changed == nil || len(st.Changed) != 0 {
+		t.Errorf("once merged: changed %v", st.Changed)
+	}
+}
