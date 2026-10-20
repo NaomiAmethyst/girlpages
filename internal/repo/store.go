@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -35,8 +36,23 @@ type Store struct {
 	// (see SyncDir).
 	SyncRoot string
 
-	mu  sync.Mutex // serialises listing updates within this process
-	vmu sync.Mutex // and variants.json updates
+	// Listing updates (by page) and variants.json updates (by version)
+	// are one at a time, within this process; different pages' and
+	// versions' go on at once (which matters on a network file system,
+	// where each is mostly waiting).
+	listingLocks, contentsLocks stripes
+}
+
+// stripes are locks for keys: a key's is one of a fixed number, picked by
+// its hash, so different keys mostly don't wait for each other.
+type stripes [1024]sync.Mutex
+
+func (st *stripes) lock(key string) func() {
+	h := fnv.New32a()
+	h.Write([]byte(key))
+	m := &st[h.Sum32()%uint32(len(st))]
+	m.Lock()
+	return m.Unlock
 }
 
 // Open opens (creating if needed) a repository directory.
@@ -197,8 +213,7 @@ func (s *Store) ListingByHash(sha string) (*Listing, error) {
 // UpdateListing changes a page's listing (creating it if need be) and
 // repoints the page at the result. The caller must hold Lock.
 func (s *Store) UpdateListing(name, section string, fn func(*Listing) error) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.listingLocks.lock(section + "\x00" + name)()
 	l, _, err := s.Listing(name, section)
 	if err != nil {
 		return err
@@ -446,8 +461,7 @@ func (s *Store) putVariant(source, variant string, b []byte) (VariantInfo, error
 			return VariantInfo{}, err
 		}
 	}
-	s.vmu.Lock()
-	defer s.vmu.Unlock()
+	defer s.contentsLocks.lock(source)()
 	c, err := s.Contents(source)
 	if err != nil {
 		return VariantInfo{}, err
