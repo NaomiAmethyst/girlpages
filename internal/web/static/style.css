@@ -175,8 +175,10 @@ h1, h2, h3, h4 { font-family: ui-rounded, "Nunito", "Quicksand", system-ui, sans
 
 /* home */
 .hero { text-align: center; padding: 2rem 1rem 1.5rem; }
+/* A gradient's clipped to the box, which descenders (g, p) hang below:
+   padding makes room for them, a margin takes it back. */
 .hero h1 {
-  font-size: clamp(2.2rem, 6vw, 3.6rem); margin: 0;
+  font-size: clamp(2.2rem, 6vw, 3.6rem); margin: 0 0 -0.15em; padding-bottom: 0.15em;
   background: var(--heading-grad); -webkit-background-clip: text; background-clip: text; color: transparent;
 }
 .hero p { color: var(--muted); margin: 0.4rem 0 1.4rem; font-size: 1.1rem; }
@@ -251,7 +253,7 @@ ul.pages .done { flex: none; }
 
 .manpage { max-width: 50rem; }
 .manpage > h1 {
-  margin: 0 0 0.25rem; font-size: clamp(1.8rem, 4vw, 2.5rem);
+  margin: 0 0 calc(0.25rem - 0.15em); padding-bottom: 0.15em; font-size: clamp(1.8rem, 4vw, 2.5rem);
   background: var(--heading-grad); -webkit-background-clip: text; background-clip: text; color: transparent;
 }
 .meta { color: var(--muted); font-size: 0.9rem; display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: center; margin-bottom: 1rem; }
