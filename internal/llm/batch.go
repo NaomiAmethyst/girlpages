@@ -304,6 +304,8 @@ type BatchJob struct {
 	Text  string
 	// Kind is the kind of document (KindMan, KindRFC).
 	Kind string
+	// Variant is the voice it's rewritten in ("" for girl).
+	Variant string
 	// Meta is anything else the caller wants back with the result. It's
 	// saved with the batch; the text isn't.
 	Meta json.RawMessage
@@ -315,10 +317,21 @@ type SavedJob struct {
 	Title string          `json:"title"`
 	Parts int             `json:"parts"`
 	Meta  json.RawMessage `json:"meta,omitempty"`
-	// Kind and PromptVersion, for documents other than man pages, are
-	// what it is and the prompt it was sent with.
+	// Kind and PromptVersion, for documents other than man pages or
+	// variants other than girl, are what it is and the prompt it was sent
+	// with; Variant is the variant ("" for girl).
 	Kind          string `json:"kind,omitempty"`
+	Variant       string `json:"variant,omitempty"`
 	PromptVersion int    `json:"prompt_version,omitempty"`
+}
+
+// PendingKey is how Pending names a job: by its key, and its variant if
+// it isn't girl.
+func PendingKey(key, variant string) string {
+	if variant == "" || variant == VariantGirl {
+		return key
+	}
+	return key + " " + variant
 }
 
 type batchState struct {
@@ -411,7 +424,7 @@ func (b *Batcher) Pending() (map[string]bool, error) {
 	keys := map[string]bool{}
 	for _, st := range states {
 		for _, j := range st.Jobs {
-			keys[j.Key] = true
+			keys[PendingKey(j.Key, j.Variant)] = true
 		}
 	}
 	return keys, nil
@@ -506,7 +519,7 @@ func (b *Batcher) submit(ctx context.Context, jobs []BatchJob, maxBytes, maxReqs
 	}
 	for i, j := range jobs {
 		jo := b.Options
-		jo.Kind = j.Kind
+		jo.Kind, jo.Variant = j.Kind, j.Variant
 		parts := Plan(j.Title, j.Text, jo)
 		n := 0
 		for pi, p := range parts {
@@ -525,8 +538,11 @@ func (b *Batcher) submit(ctx context.Context, jobs []BatchJob, maxBytes, maxReqs
 		}
 		ji := len(st.Jobs)
 		sj := SavedJob{Key: j.Key, Title: j.Title, Parts: len(parts), Meta: j.Meta, Kind: j.Kind}
-		if j.Kind != KindMan {
-			sj.PromptVersion = PromptVersionFor(j.Kind)
+		if j.Variant != "" && j.Variant != VariantGirl {
+			sj.Variant = j.Variant
+		}
+		if j.Kind != KindMan || sj.Variant != "" {
+			sj.PromptVersion = PromptVersionVariant(j.Kind, j.Variant)
 		}
 		st.Jobs = append(st.Jobs, sj)
 		for pi, p := range parts {
@@ -645,7 +661,7 @@ func (b *Batcher) finish(ctx context.Context, st *batchState, batch *Batch, text
 			var parts []Part
 			if ok {
 				jo := opts
-				jo.Kind = j.Kind
+				jo.Kind, jo.Variant = j.Kind, j.Variant
 				parts = Plan(j.Title, t, jo)
 			}
 			if !ok || len(parts) != j.Parts {

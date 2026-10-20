@@ -11,6 +11,12 @@ import { Spy } from "./spy.js";
 import { pathEscape, segmentName } from "./urls.js";
 import { chapter, isSeries, sectionLabel, sourceLabel } from "./manual.js";
 
+// How the variants girlrepo has prompts for are offered (llm.Variants).
+const VARIANT_LABELS = {
+  girl: "💅 girly", man: "📜 original", boy: "🎮 boy", femboy: "🥺 femboy", lolcat: "😺 lolcat", pirate: "🏴‍☠️ pirate",
+  eli5: "🧸 eli5", woman: "☕ woman", witch: "🔮 witch", bofh: "🔥 bofh",
+};
+
 // createPageView makes the page view for an app: ctx has its element (el),
 // the site's base, listing(name, sec) and variant(source, which, sha) to
 // read the repository, link makers (browse, staticPage, listingURL), and
@@ -18,7 +24,7 @@ import { chapter, isSeries, sectionLabel, sourceLabel } from "./manual.js";
 export function createPageView({ el: app, base, listing, findName, variant, browse, staticPage, listingURL, oops }) {
   // How variants are offered. Others (made with other prompts) get their name.
   function variantLabel(v) {
-    return v === "girl" ? "💅 girly" : v === "man" ? "📜 original" : "✨ " + v;
+    return VARIANT_LABELS[v] || "✨ " + v;
   }
 
   // Girly first, the original last, anything else between.

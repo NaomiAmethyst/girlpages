@@ -677,3 +677,122 @@ func TestScanSkipsOtherFiles(t *testing.T) {
 		t.Errorf("scan found %v", got)
 	}
 }
+
+// sysFake records the system prompts it's sent.
+type sysFake struct {
+	fake
+	mu      sync.Mutex
+	systems []string
+}
+
+func (f *sysFake) Complete(ctx context.Context, system, user string) (string, error) {
+	f.mu.Lock()
+	f.systems = append(f.systems, system)
+	f.mu.Unlock()
+	return f.fake.Complete(ctx, system, user)
+}
+
+// Other variants are made alongside girl's, with their own prompts, and
+// never from girl's cache.
+func TestGirlifyVariant(t *testing.T) {
+	needTools(t)
+	root := filepath.Join(t.TempDir(), "man")
+	write(t, filepath.Join(root, "man1", "foo.1"), []byte(roff("foo", "1", "does foo")))
+	s, _ := repo.Open(t.TempDir())
+	ctx := context.Background()
+	if _, err := Paths(ctx, s, []string{root}, Options{Quiet: true, Log: io.Discard}); err != nil {
+		t.Fatal(err)
+	}
+	b := &sysFake{}
+	if _, err := Girlify(ctx, s, GirlifyOptions{Backend: b, Quiet: true, Log: io.Discard}); err != nil {
+		t.Fatal(err)
+	}
+	girls := len(b.systems)
+	// Girl's cache has foo, which a pirate mustn't take.
+	l, _, _ := s.Listing("foo", "1")
+	man, _ := s.Variant(l.Current, repo.VariantMan)
+	dir := cache.Dir(t.TempDir())
+	if err := dir.PutObject(cache.Hash(man.Text()), "# NAME\n\ngirl's cached one\n"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := (GirlifyOptions{Cache: cache.Set{dir}}).cached(man.Text()); !ok {
+		t.Fatal("girl doesn't see its own cache")
+	}
+	o := GirlifyOptions{Backend: b, Quiet: true, Log: io.Discard, Cache: cache.Set{dir}, LLM: llm.Options{Variant: "pirate"}}
+	st, err := Girlify(ctx, s, o)
+	if err != nil || st.Converted != 1 || st.FromCache != 0 {
+		t.Fatalf("pirate: %+v, %v", st, err)
+	}
+	if len(b.systems) != girls+1 || !strings.Contains(b.systems[girls], "pirate captain") || strings.Contains(b.systems[girls], "teenage girl") {
+		t.Fatalf("pirate prompt: %q", b.systems[girls:])
+	}
+	l, _, _ = s.Listing("foo", "1")
+	v := l.CurrentVersion()
+	if _, ok := v.Variants[repo.VariantGirl]; !ok {
+		t.Error("girl's variant went")
+	}
+	info, ok := v.Variants["pirate"]
+	if !ok || info.PromptVersion != llm.PromptVersionVariant(llm.KindMan, "pirate") {
+		t.Fatalf("pirate's listing entry: %+v, %v", info, ok)
+	}
+	p, err := s.Variant(l.Current, "pirate")
+	if err != nil || p.Variant != "pirate" || p.Syntax != repo.SyntaxMarkup || !strings.Contains(p.Text(), "slay") {
+		t.Fatalf("pirate variant: %+v, %v", p, err)
+	}
+	if st, _ := Girlify(ctx, s, o); st.Converted != 0 {
+		t.Errorf("made again: %+v", st)
+	}
+	if _, err := Girlify(ctx, s, GirlifyOptions{Backend: b, Quiet: true, Log: io.Discard, LLM: llm.Options{Variant: "nope"}}); err == nil {
+		t.Error("made a nope variant")
+	}
+}
+
+// Batches remember their variant: a girl batch still running doesn't hold
+// up a pirate one, and each comes back as its own variant.
+func TestGirlifyBatchVariant(t *testing.T) {
+	needTools(t)
+	srv := llmtest.NewBatchServer()
+	defer srv.Close()
+	srv.Reply = llmtest.EchoOptions("batched")
+	root := filepath.Join(t.TempDir(), "man")
+	write(t, filepath.Join(root, "man1", "foo.1"), []byte(roff("foo", "1", "does foo")))
+	s, _ := repo.Open(t.TempDir())
+	ctx := context.Background()
+	if _, err := Paths(ctx, s, []string{root}, Options{Quiet: true, Log: io.Discard}); err != nil {
+		t.Fatal(err)
+	}
+	batch := &llm.Batcher{Client: &llm.OpenRouterBatch{URL: srv.BatchURL(), Model: "cheap-model"}, Dir: t.TempDir(), Poll: 10 * time.Millisecond}
+	girl := GirlifyOptions{Quiet: true, Log: io.Discard, NoWait: true, Batch: batch}
+	pirate := girl
+	pirate.LLM.Variant = "pirate"
+	if st, err := Girlify(ctx, s, girl); err != nil || st.Batched != 1 {
+		t.Fatalf("girl: %+v, %v", st, err)
+	}
+	// The girl batch is still running (the test server finishes a batch
+	// on its second poll), so this collects nothing and sends a new one.
+	if st, err := Girlify(ctx, s, pirate); err != nil || st.Batched != 1 || srv.Batches() != 2 {
+		t.Fatalf("pirate: %+v, %v (%d batches)", st, err, srv.Batches())
+	}
+	if len(srv.Submitted) != 2 || !strings.Contains(srv.Submitted[0], "teenage girl") || !strings.Contains(srv.Submitted[1], "pirate captain") {
+		t.Fatal("the batches weren't sent with their variants' prompts")
+	}
+	for i := 0; i < 3; i++ {
+		if _, err := Girlify(ctx, s, girl); err != nil {
+			t.Fatal(err)
+		}
+	}
+	l, _, _ := s.Listing("foo", "1")
+	for _, variant := range []string{repo.VariantGirl, "pirate"} {
+		info, ok := l.CurrentVersion().Variants[variant]
+		if !ok || info.PromptVersion != llm.PromptVersionVariant(llm.KindMan, variant) {
+			t.Fatalf("%s: %+v, %v (%v)", variant, info, ok, l.CurrentVersion().Variants)
+		}
+		v, err := s.Variant(l.Current, variant)
+		if err != nil || v.Variant != variant || !strings.Contains(v.Text(), "batched") {
+			t.Fatalf("%s: %+v, %v", variant, v, err)
+		}
+	}
+	if srv.Batches() != 2 {
+		t.Errorf("%d batches", srv.Batches())
+	}
+}

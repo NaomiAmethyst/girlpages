@@ -55,7 +55,7 @@ commands:
                      into this repository
   export DIR         write the repository as packs, into a pack-only
                      repository in DIR (adding to it, if it's there)
-  girlify [NAME...]  girlify pages that aren't yet
+  girlify [NAME...]  girlify pages that aren't yet (or --variant: other voices)
   publish            write the section lists, search index, manifest and
                      website
   gc                 delete files nothing refers to any more
@@ -670,7 +670,18 @@ func (a *app) girlify(ctx context.Context, args []string) error {
 	batchRequests := fs.Int("batch-requests", 0, "requests in a batch, at most (default from the config, or as many as the API takes)")
 	noWait := fs.Bool("no-wait", false, "send batches off and return; the next girlify collects them")
 	quiet := fs.BoolP("quiet", "q", false, "only report problems")
+	variant := fs.String("variant", llm.VariantGirl, "the voice to rewrite pages in (see --list-variants)")
+	list := fs.Bool("list-variants", false, "list the variants there are prompts for")
 	if err := parse(fs, args); err != nil {
+		return err
+	}
+	if *list {
+		for _, v := range llm.Variants() {
+			fmt.Printf("%-8s %-9s %s\n", v.Name, v.Family, v.Summary)
+		}
+		return nil
+	}
+	if _, err := llm.LookupVariant(*variant); err != nil {
 		return err
 	}
 	if *backend != "" {
@@ -687,12 +698,12 @@ func (a *app) girlify(ctx context.Context, args []string) error {
 		return err
 	}
 	o := ingest.GirlifyOptions{
-		LLM:  llm.Options{ChunkSize: a.cfg.ChunkSize, ExtraInstructions: a.cfg.ExtraInstructions},
+		LLM:  llm.Options{ChunkSize: a.cfg.ChunkSize, ExtraInstructions: a.cfg.ExtraInstructions, Variant: *variant},
 		Jobs: *jobs, Limit: *limit, Sections: splitSections(*sections), Names: fs.Args(),
 		AllVersions: *all, Force: *force, Reprompt: *reprompt, DryRun: *dry, Quiet: *quiet, Log: os.Stderr,
 		PartsDir: filepath.Join(config.UserCacheDir(), "girlrepo-parts"),
 	}
-	if !*noCache && !*force {
+	if !*noCache && !*force && *variant == llm.VariantGirl {
 		o.Cache = core.CacheSet(a.cfg)
 	}
 	if *noBatch {
@@ -740,7 +751,11 @@ func (a *app) girlify(ctx context.Context, args []string) error {
 			return err // (an estimate of part of it would mislead)
 		}
 		e := st.Estimate
-		fmt.Fprintf(os.Stderr, "✨ %d pages to girlify", e.Pages)
+		if *variant == llm.VariantGirl {
+			fmt.Fprintf(os.Stderr, "✨ %d pages to girlify", e.Pages)
+		} else {
+			fmt.Fprintf(os.Stderr, "✨ %d pages to make the %s variant of", e.Pages, *variant)
+		}
 		if e.Cached > 0 {
 			fmt.Fprintf(os.Stderr, " (and %d already in girl's cache, for free)", e.Cached)
 		}
@@ -756,7 +771,11 @@ func (a *app) girlify(ctx context.Context, args []string) error {
 		}
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "💅 girlified %d pages, %d from the local cache, %d failed", st.Converted, st.FromCache, st.Failed)
+	if *variant == llm.VariantGirl {
+		fmt.Fprintf(os.Stderr, "💅 girlified %d pages, %d from the local cache, %d failed", st.Converted, st.FromCache, st.Failed)
+	} else {
+		fmt.Fprintf(os.Stderr, "💅 made the %s variant of %d pages, %d failed", *variant, st.Converted, st.Failed)
+	}
 	if n := st.Batched + st.Pending; n > 0 {
 		fmt.Fprintf(os.Stderr, ", %d in batches still running", n)
 	}

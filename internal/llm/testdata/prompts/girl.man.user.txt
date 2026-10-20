@@ -1,0 +1,22 @@
+Rewrite the manual page LS(1).
+
+The first line of the page is its header (title, manual name); fold the manual name in near the top instead of copying the line.
+The last line of the page is its footer (source/version and date); mention those in a cute sign-off at the very end instead of copying the line.
+
+Here is the original:
+
+<<<MANPAGE
+text
+MANPAGE>>>
+
+----
+Rewrite the manual page LS(1).
+
+This page is long, so it comes in 3 parts and this is part 2. Continue seamlessly from the previous part: no greeting, no re-introducing the page, and if this part starts in the middle of a section, just carry on without repeating its heading. Sections already covered: NAME. More parts follow, so don't sign off at the end.
+
+
+Here is the original:
+
+<<<MANPAGE
+text
+MANPAGE>>>

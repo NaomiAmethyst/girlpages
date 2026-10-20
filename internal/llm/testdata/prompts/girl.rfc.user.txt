@@ -1,0 +1,11 @@
+Rewrite RFC 1.
+
+This document is long, so it comes in 2 parts and this is part 1. More parts follow, so don't sign off at the end.
+
+It starts with its title block (who wrote it, its category, date, and what it obsoletes and updates); work all of that in near the top instead of copying the columns.
+
+Here is the original:
+
+<<<RFC
+text
+RFC>>>

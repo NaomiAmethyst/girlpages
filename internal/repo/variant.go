@@ -31,7 +31,13 @@ func ManVariant(source, text string) *Variant {
 // GirlVariant splits girlpages markup into a girl Variant, one section per
 // top-level heading. Text() gives back exactly the same markup.
 func GirlVariant(source, title, markup string, g *Generator) *Variant {
-	v := &Variant{Format: Format, Variant: VariantGirl, Source: source, Syntax: SyntaxMarkup,
+	return MarkupVariant(VariantGirl, source, title, markup, g)
+}
+
+// MarkupVariant is GirlVariant for any variant in girlpages markup (boy,
+// pirate, witch…).
+func MarkupVariant(variant, source, title, markup string, g *Generator) *Variant {
+	v := &Variant{Format: Format, Variant: variant, Source: source, Syntax: SyntaxMarkup,
 		Title: title, Generator: g}
 	fence := false
 	v.Sections = splitSections(splitLines(markup), func(l string) (string, bool) {

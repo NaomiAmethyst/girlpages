@@ -218,6 +218,7 @@ girlrepo girlify -n --price 0.10/0.50                         # what would it co
 girlrepo import https://girlpages.dev                          # merge in another repo (by its packs)
 girlrepo export /srv/packs                                    # or write yours as just packs, for mirroring
 girlrepo girlify -j 8                                         # convert what isn't yet
+girlrepo girlify --variant pirate fork                        # or in another voice (--list-variants)
 girlrepo publish --url https://example.org --gc               # index it and build the site
 girlrepo serve                                                # preview at localhost:1990
 ```

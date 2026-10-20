@@ -1,7 +1,7 @@
 # The girlpages repository format
 
 A girlpages repository holds man pages: their original text and rewritten
-versions of them (*variants*: the girly one, and in future others), for
+versions of them (*variants*: the girly one, and others in other voices), for
 many versions of each page from many distributions. It's a tree of JSON
 files, made to be served by any static web server and read by anything
 that can fetch a URL: `girl`, the girlpages website, or your own tools.
@@ -195,8 +195,22 @@ word matching `^[a-z][a-z0-9-]{0,31}$`:
 * **`man`**: the original, as `man` renders it. Every version has one.
 * **`girl`**: rewritten in the voice of a Gen Z girl, every detail kept.
 
-There may be others (made with other prompts); readers must cope with
-names they don't know, and may ignore them.
+`girlrepo girlify --variant` makes others, each in its own voice and in
+girlpages markup, like `girl`. They come in families, which keep to the
+original as closely as each other:
+
+| Family | Variants | What it keeps |
+| --- | --- | --- |
+| The matched set | `girl`, `boy` (a Gen Z boy), `femboy` | Every detail, in a character's voice. |
+| Dialects | `lolcat`, `pirate` | Every detail, in a joke dialect that never touches anything literal. |
+| Explainers | `eli5` (for a beginner), `woman` (a veteran engineer) | Every detail, plus explanations of general ideas (`eli5`) or invented stories (`woman`) that carry no new facts. |
+| Elders | `witch` (an elder tech witch), `bofh` (the Bastard Operator From Hell) | Every literal (commands, options, values, code) and warning, but perhaps only the gist of the rest, with invented lore. |
+
+Every family keeps commands, options and code exact and warnings
+intact, and makes up nothing about how a program behaves.
+
+There may be others still (made with other prompts); readers must cope
+with names they don't know, and may ignore them.
 
 Each variant of a version may be made more than once: each time is a
 *generation*, numbered from 1. The latest generation is the one with the

@@ -337,16 +337,16 @@ func (m makers) current(hash string) bool {
 	return e != nil && e.PromptVersion >= llm.PromptVersion
 }
 
-// outdated reports whether a girl variant was made with an older prompt,
+// outdated reports whether a variant was made with an older prompt,
 // reading it if its listing doesn't say (one written before listings
 // recorded prompt versions, or a variant whose maker didn't say).
-func outdated(s *repo.Store, source, section string, info repo.VariantInfo) bool {
+func outdated(s *repo.Store, variant, source, section string, info repo.VariantInfo) bool {
 	if info.PromptVersion == 0 {
-		if v, err := s.Variant(source, repo.VariantGirl); err == nil && v.Generator != nil {
+		if v, err := s.Variant(source, variant); err == nil && v.Generator != nil {
 			info.PromptVersion = v.Generator.PromptVersion
 		}
 	}
-	return info.PromptVersion < llm.PromptVersionFor(llm.KindOf(section))
+	return info.PromptVersion < llm.PromptVersionVariant(llm.KindOf(section), variant)
 }
 
 func (m makers) generator(hash string, fallback time.Time) *repo.Generator {
@@ -561,19 +561,21 @@ type GirlifyOptions struct {
 	Names []string
 	// AllVersions converts every version, not just current ones.
 	AllVersions bool
-	// Force converts again even if there's a girl variant already.
+	// Force converts again even if there's a variant already.
 	Force bool
-	// Reprompt converts again versions whose girl variant was made with an
-	// older prompt (llm.PromptVersion), and won't take such conversions
-	// from the cache.
+	// Reprompt converts again versions whose variant was made with an
+	// older prompt (llm.PromptVersionVariant), and won't take such
+	// conversions from the cache.
 	Reprompt bool
 	// OutputRatio, for dry runs, is how long output is reckoned to be next
 	// to the original; zero means the package's OutputRatio.
 	OutputRatio float64
-	Cache       cache.Set
-	DryRun      bool
-	Quiet       bool
-	Log         io.Writer
+	// Cache is girl's conversions, by the original's text: only the girl
+	// variant (LLM.Variant "") uses it.
+	Cache  cache.Set
+	DryRun bool
+	Quiet  bool
+	Log    io.Writer
 	// Batch, if set, sends pages off in batches instead of one at a time,
 	// first collecting any that earlier runs sent.
 	Batch *llm.Batcher
@@ -630,9 +632,30 @@ func EstimateTokens(text string) int64 {
 	return int64((n + 3) / 4)
 }
 
-// Girlify adds girl variants to versions that don't have one.
+// variant is the variant being made.
+func (o GirlifyOptions) variant() string {
+	if o.LLM.Variant == "" {
+		return repo.VariantGirl
+	}
+	return o.LLM.Variant
+}
+
+// cached is girl's cached conversion of text, for the girl variant.
+func (o GirlifyOptions) cached(text string) (string, bool) {
+	if o.variant() != repo.VariantGirl {
+		return "", false
+	}
+	return o.Cache.Object(cache.Hash(text))
+}
+
+// Girlify adds variants (girl, or o.LLM.Variant) to versions that don't
+// have one.
 func Girlify(ctx context.Context, s *repo.Store, o GirlifyOptions) (GirlifyStats, error) {
 	var st GirlifyStats
+	if _, err := llm.LookupVariant(o.LLM.Variant); err != nil {
+		return st, err
+	}
+	variant := o.variant()
 	if o.Log == nil {
 		o.Log = io.Discard
 	}
@@ -682,10 +705,10 @@ func Girlify(ctx context.Context, s *repo.Store, o GirlifyOptions) (GirlifyStats
 			vs = []repo.Version{*p.Current()}
 		}
 		for _, v := range vs {
-			if info, ok := v.Variants[repo.VariantGirl]; ok && !o.Force && !(o.Reprompt && outdated(s, v.Source, p.Pointer.Section, info)) {
+			if info, ok := v.Variants[variant]; ok && !o.Force && !(o.Reprompt && outdated(s, variant, v.Source, p.Pointer.Section, info)) {
 				continue
 			}
-			if pending[v.Source] && !o.Force {
+			if pending[llm.PendingKey(v.Source, variant)] && !o.Force {
 				if !counted[v.Source] {
 					counted[v.Source] = true
 					st.Pending++
@@ -746,7 +769,7 @@ func Girlify(ctx context.Context, s *repo.Store, o GirlifyOptions) (GirlifyStats
 				return st, err
 			}
 			text := man.Text()
-			if _, ok := o.Cache.Object(cache.Hash(text)); ok && !o.Force {
+			if _, ok := o.cached(text); ok && !o.Force {
 				e.Cached++
 				logf("💾 %s (in the local cache)\n", w.title)
 				continue
@@ -763,7 +786,7 @@ func Girlify(ctx context.Context, s *repo.Store, o GirlifyOptions) (GirlifyStats
 			e.Requests += len(parts)
 			e.InputTokens += in
 			e.OutputTokens += out
-			logf("✨ would girlify %s: %d requests, ~%d tokens in, ~%d out\n", w.title, len(parts), in, out)
+			logf("✨ would %s %s: %d requests, ~%d tokens in, ~%d out\n", verb(variant), w.title, len(parts), in, out)
 		}
 		st.Remaining += len(order)
 		return st, nil
@@ -784,9 +807,9 @@ func Girlify(ctx context.Context, s *repo.Store, o GirlifyOptions) (GirlifyStats
 				return st, err
 			}
 			text := man.Text()
-			if markup, ok := o.Cache.Object(cache.Hash(text)); ok && !o.Force && (!o.Reprompt || made.current(cache.Hash(text))) {
+			if markup, ok := o.cached(text); ok && !o.Force && (!o.Reprompt || made.current(cache.Hash(text))) {
 				g := made.generator(cache.Hash(text), time.Now().UTC().Truncate(time.Second))
-				if err := putGirl(s, src, man.Title, markup, g, w.pages); err != nil {
+				if err := putVariant(s, variant, src, man.Title, markup, g, w.pages); err != nil {
 					return st, err
 				}
 				st.FromCache++
@@ -796,7 +819,7 @@ func Girlify(ctx context.Context, s *repo.Store, o GirlifyOptions) (GirlifyStats
 			if err != nil {
 				return st, err
 			}
-			jobs = append(jobs, llm.BatchJob{Key: src, Title: w.title, Text: text, Meta: meta, Kind: llm.KindOf(w.pages[0].Section)})
+			jobs = append(jobs, llm.BatchJob{Key: src, Title: w.title, Text: text, Meta: meta, Kind: llm.KindOf(w.pages[0].Section), Variant: o.LLM.Variant})
 		}
 		if len(jobs) == 0 {
 			return st, nil
@@ -816,7 +839,7 @@ func Girlify(ctx context.Context, s *repo.Store, o GirlifyOptions) (GirlifyStats
 	if o.Backend == nil {
 		return st, errors.New("no model to girlify with")
 	}
-	logf("💅 girlifying %d pages with %s, %d at a time\n", len(order), o.Backend.Name(), max(o.Jobs, 1))
+	logf("💅 %s %d pages with %s, %d at a time\n", verbing(variant), len(order), o.Backend.Name(), max(o.Jobs, 1))
 	made := cacheMakers(o.Cache)
 	// Every request shares Jobs slots, so when only a few long pages are
 	// left their parts use the rest.
@@ -850,7 +873,7 @@ func Girlify(ctx context.Context, s *repo.Store, o GirlifyOptions) (GirlifyStats
 				}
 				lo.LLM.Kind = llm.KindOf(w.pages[0].Section)
 				fromCache, err := girlifyOne(ctx, s, lo, made, w.source, w.title, func(info repo.VariantInfo) error {
-					return recordGirl(s, w.source, w.pages, info)
+					return recordVariant(s, variant, w.source, w.pages, info)
 				})
 				n := done.Add(1)
 				mu.Lock()
@@ -895,7 +918,7 @@ func girlifyOne(ctx context.Context, s *repo.Store, o GirlifyOptions, made maker
 	markup, fromCache := "", false
 	if !o.Force {
 		if !o.Reprompt || made.current(cache.Hash(text)) {
-			markup, fromCache = o.Cache.Object(cache.Hash(text))
+			markup, fromCache = o.cached(text)
 		}
 	}
 	if !fromCache {
@@ -913,19 +936,19 @@ func girlifyOne(ctx context.Context, s *repo.Store, o GirlifyOptions, made maker
 				}
 			}()
 		}
-		g = &repo.Generator{Backend: o.Backend.Name(), Model: o.Backend.Model(), PromptVersion: llm.PromptVersionFor(o.LLM.Kind),
+		g = &repo.Generator{Backend: o.Backend.Name(), Model: o.Backend.Model(), PromptVersion: llm.PromptVersionVariant(o.LLM.Kind, o.variant()),
 			Generated: time.Now().UTC().Truncate(time.Second)}
 	}
-	info, err := s.PutVariant(repo.GirlVariant(source, man.Title, markup, g))
+	info, err := s.PutVariant(repo.MarkupVariant(o.variant(), source, man.Title, markup, g))
 	if err != nil {
 		return fromCache, err
 	}
 	return fromCache, record(info)
 }
 
-// recordGirl notes a version's new girl variant in the listings of every
+// recordVariant notes a version's new variant in the listings of every
 // page that has it.
-func recordGirl(s *repo.Store, source string, pages []repo.Pointer, info repo.VariantInfo) error {
+func recordVariant(s *repo.Store, variant, source string, pages []repo.Pointer, info repo.VariantInfo) error {
 	unlock, err := s.Lock()
 	if err != nil {
 		return err
@@ -934,7 +957,7 @@ func recordGirl(s *repo.Store, source string, pages []repo.Pointer, info repo.Va
 	for _, p := range pages {
 		err := s.UpdateListing(p.Name, p.Section, func(l *repo.Listing) error {
 			if v := l.Find(source); v != nil {
-				v.Variants[repo.VariantGirl] = info
+				v.Variants[variant] = info
 			}
 			return nil
 		})
@@ -945,13 +968,29 @@ func recordGirl(s *repo.Store, source string, pages []repo.Pointer, info repo.Va
 	return nil
 }
 
-// putGirl stores a girl variant and records it.
-func putGirl(s *repo.Store, source, title, markup string, g *repo.Generator, pages []repo.Pointer) error {
-	info, err := s.PutVariant(repo.GirlVariant(source, title, markup, g))
+// putVariant stores a variant and records it.
+func putVariant(s *repo.Store, variant, source, title, markup string, g *repo.Generator, pages []repo.Pointer) error {
+	info, err := s.PutVariant(repo.MarkupVariant(variant, source, title, markup, g))
 	if err != nil {
 		return err
 	}
-	return recordGirl(s, source, pages, info)
+	return recordVariant(s, variant, source, pages, info)
+}
+
+// verb and verbing say what making a variant is called: girlify for girl,
+// "make the pirate variant of" for the rest.
+func verb(variant string) string {
+	if variant == repo.VariantGirl {
+		return "girlify"
+	}
+	return "make the " + variant + " variant of"
+}
+
+func verbing(variant string) string {
+	if variant == repo.VariantGirl {
+		return "girlifying"
+	}
+	return "making the " + variant + " variant of"
 }
 
 // collectGirl stores what finished batches sent back.
@@ -972,7 +1011,11 @@ func collectGirl(ctx context.Context, s *repo.Store, o GirlifyOptions, wait bool
 			if man, err = s.Variant(r.Job.Key, repo.VariantMan); err == nil {
 				g := &repo.Generator{Backend: "openai", Model: r.Model, PromptVersion: r.PromptVersion,
 					Generated: time.Now().UTC().Truncate(time.Second)}
-				err = putGirl(s, r.Job.Key, man.Title, r.Markup, g, pages)
+				variant := r.Job.Variant
+				if variant == "" {
+					variant = repo.VariantGirl
+				}
+				err = putVariant(s, variant, r.Job.Key, man.Title, r.Markup, g, pages)
 			}
 		}
 		mu.Lock()

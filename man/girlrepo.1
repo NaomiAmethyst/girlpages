@@ -385,6 +385,37 @@ Aliases sharing a source are converted once.
 Interrupting it is safe: each page is saved as it's done, and the next run
 carries on.
 .TP
+.BR \-\-variant =\fIname\fR
+Make this variant instead of
+.BR girl :
+the pages are rewritten in its voice, and each gets it alongside its
+others.
+.B \-\-list\-variants
+lists them:
+.B boy
+and
+.B femboy
+(who keep every detail, as
+.B girl
+does),
+.B lolcat
+and
+.B pirate
+(every detail, in a dialect),
+.B eli5
+and
+.B woman
+(every detail, plus explanations or stories), and
+.B witch
+and
+.B bofh
+(every literal and warning, but perhaps only the gist of the rest).
+Only
+.B girl
+takes conversions from girl's cache, and each variant has its own prompt
+versions, for
+.BR \-\-reprompt .
+.TP
 .BR \-\-backend =\fIname\fR ", " \-\-model =\fImodel\fR
 Override the configured backend and model.
 .TP
@@ -431,7 +462,7 @@ collects whatever has finished.
 Send batches off and return without waiting.
 .TP
 .B \-\-reprompt
-Convert again versions whose girl variant was made with an older prompt.
+Convert again versions whose variant was made with an older prompt.
 Listings record each variant's prompt version, and
 .B status
 counts them.

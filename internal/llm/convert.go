@@ -30,7 +30,9 @@ type Backend interface {
 type Options struct {
 	// Kind is the kind of document (KindMan, the default, or KindRFC),
 	// which has its own prompt.
-	Kind              string
+	Kind string
+	// Variant is the voice to rewrite in ("" for girl; see Variants).
+	Variant           string
 	ChunkSize         int
 	Parallel          int // chunks converted at once
 	ExtraInstructions string
@@ -76,11 +78,11 @@ type Part struct {
 // its arguments, so a page planned again gives the same parts.
 func Plan(title, text string, o Options) []Part {
 	chunks := Split(text, o.ChunkSize)
-	system := SystemPromptFor(o.Kind, o.ExtraInstructions)
+	system := SystemPromptVariant(o.Kind, o.Variant, o.ExtraInstructions)
 	parts := make([]Part, len(chunks))
 	var prev []string
 	for i, c := range chunks {
-		parts[i] = Part{System: system, User: UserPromptFor(o.Kind, title, i+1, len(chunks), prev, c), Source: c, Kind: o.Kind}
+		parts[i] = Part{System: system, User: UserPromptVariant(o.Kind, o.Variant, title, i+1, len(chunks), prev, c), Source: c, Kind: o.Kind}
 		prev = append(prev, Headings(c)...)
 	}
 	return parts
