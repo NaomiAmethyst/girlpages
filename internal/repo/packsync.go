@@ -119,10 +119,12 @@ func (s *Store) syncPacks(ctx context.Context, listed []PackEntry, fetch fetchPa
 		}
 		stale[e.SHA256] = true
 	}
+	// What's to merge: what wasn't, last time (if merging stopped part of
+	// the way), and what the packs applied now change; everything, for
+	// a copy that's new.
+	all, pending := readPending(root)
 	if len(log.Packs) == 0 {
-		st.Changed = nil
-	} else {
-		st.Changed = map[string]bool{}
+		all = true
 	}
 	log.Packs = log.Packs[:common]
 	for i := common; i < len(listed); i++ {
@@ -171,16 +173,20 @@ func (s *Store) syncPacks(ctx context.Context, listed []PackEntry, fetch fetchPa
 		if err != nil {
 			return st, err
 		}
-		if st.Changed != nil {
+		if !all {
 			for _, p := range put {
 				if strings.HasPrefix(p, "page/name-") {
-					st.Changed[p] = true
+					pending[p] = true
 				}
 			}
 		}
+		// Remember it now, what's to merge first: a sync that's
+		// interrupted goes on from here.
+		if err := writePending(root, all, pending); err != nil {
+			return st, err
+		}
 		st.Applied = append(st.Applied, e)
 		st.Bytes += e.Bytes
-		// Remember it now: a sync that's interrupted goes on from here.
 		log.Packs = append(log.Packs, e)
 		if err := s.writeSyncLog(root, log); err != nil {
 			return st, err
@@ -190,6 +196,11 @@ func (s *Store) syncPacks(ctx context.Context, listed []PackEntry, fetch fetchPa
 		// Applied tail packs that nothing replaced: the log's not what
 		// this copy of it says.
 		return s.restartSync(ctx, root, listed, fetch, progress)
+	}
+	if all {
+		st.Changed = nil
+	} else {
+		st.Changed = pending
 	}
 	// Replaced packs (and any others not in the log) go.
 	ents, _ := os.ReadDir(filepath.Join(root, "packs"))
@@ -227,10 +238,60 @@ func (s *Store) restartSync(ctx context.Context, root string, listed []PackEntry
 	if err := os.RemoveAll(filepath.Join(root, "tree")); err != nil {
 		return SyncStats{}, err
 	}
-	if err := os.Remove(filepath.Join(root, filepath.FromSlash(PackLogPath()))); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return SyncStats{}, err
+	for _, f := range []string{filepath.FromSlash(PackLogPath()), "pending"} {
+		if err := os.Remove(filepath.Join(root, f)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return SyncStats{}, err
+		}
 	}
 	return s.syncPacks(ctx, listed, fetch, progress)
+}
+
+// What a copy of a log has applied but not yet merged into the
+// repository is kept in its pending file: "all", or the pointer files the
+// packs put, a line each. Merging clears it (Merged), so merging that
+// stops part of the way is done again next time.
+
+func readPending(root string) (all bool, pending map[string]bool) {
+	pending = map[string]bool{}
+	b, err := os.ReadFile(filepath.Join(root, "pending"))
+	if err != nil {
+		return false, pending
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		switch {
+		case line == "all":
+			return true, pending
+		case line != "":
+			pending[line] = true
+		}
+	}
+	return false, pending
+}
+
+func writePending(root string, all bool, pending map[string]bool) error {
+	var b strings.Builder
+	if all {
+		b.WriteString("all\n")
+	} else {
+		lines := make([]string, 0, len(pending))
+		for p := range pending {
+			lines = append(lines, p)
+		}
+		sort.Strings(lines)
+		for _, p := range lines {
+			b.WriteString(p + "\n")
+		}
+	}
+	return WriteFile(filepath.Join(root, "pending"), []byte(b.String()))
+}
+
+// Merged records that what a sync applied has been merged into the
+// repository, so the next sync merges just what it changes.
+func (s *Store) Merged(st SyncStats) error {
+	if err := os.Remove(filepath.Join(st.Dir, "pending")); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 // writeSyncLog records what's applied, and lists it in the copy's

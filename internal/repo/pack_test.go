@@ -208,6 +208,9 @@ func TestSyncPacks(t *testing.T) {
 		if _, err := b.ImportFrom(ctx, filepath.Join(st.Dir, "tree"), st.Changed, ImportOptions{Jobs: 4}); err != nil {
 			t.Fatal(err)
 		}
+		if err := b.Merged(st); err != nil {
+			t.Fatal(err)
+		}
 		return st
 	}
 	st := sync()
@@ -349,5 +352,73 @@ func TestUnpackReplaced(t *testing.T) {
 	}
 	if !reflect.DeepEqual(scan(t, filepath.Join(st.Dir, "tree")), scan(t, a.Dir)) {
 		t.Error("unpacking doesn't give the repository")
+	}
+}
+
+// TestSyncInterrupted: merging stops part of the way (here, before it
+// starts), and the next sync, with nothing new, merges what it didn't.
+func TestSyncInterrupted(t *testing.T) {
+	ctx := context.Background()
+	a := packedStore(t, 10)
+	appendPacks(t, a.Dir, a.Dir, 1<<20)
+	publish(t, a)
+	c := NewClient(a.Dir, 0)
+	b, _ := Open(t.TempDir())
+	b.SyncRoot = t.TempDir()
+	// A page of its own, so it isn't empty (which would have it merge
+	// everything regardless).
+	addVersion(t, b, "own", "1", "its own", "", Package{Distro: "local"}, 1)
+	sync := func() SyncStats {
+		t.Helper()
+		m, _ := c.Manifest(ctx)
+		st, err := b.SyncFrom(ctx, c, m, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return st
+	}
+	merge := func(st SyncStats) ImportStats {
+		t.Helper()
+		is, err := b.ImportFrom(ctx, filepath.Join(st.Dir, "tree"), st.Changed, ImportOptions{Jobs: 2})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := b.Merged(st); err != nil {
+			t.Fatal(err)
+		}
+		return is
+	}
+	// The first sync, merged only a page of (as a merge stopped part of
+	// the way would have).
+	st := sync()
+	if st.Changed != nil {
+		t.Fatalf("first sync: changed %v", st.Changed)
+	}
+	if _, err := b.ImportFrom(ctx, filepath.Join(st.Dir, "tree"), map[string]bool{NamePath("tool000", "1"): true}, ImportOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	// Nothing new: still everything to merge.
+	st = sync()
+	if len(st.Applied) != 0 || st.Changed != nil {
+		t.Fatalf("after stopping: applied %d, changed %v", len(st.Applied), st.Changed)
+	}
+	if is := merge(st); is.New != 9 {
+		t.Errorf("merged %d new pages, want the 9 left: %+v", is.New, is)
+	}
+	// Merged: nothing to do.
+	if st := sync(); st.Changed == nil || len(st.Changed) != 0 {
+		t.Errorf("after merging: changed %v", st.Changed)
+	}
+	// A new page, synced but not merged, then synced again.
+	addVersion(t, a, "late", "1", "late", "slay", Package{Distro: "debian"}, 50)
+	appendPacks(t, a.Dir, a.Dir, 1<<20)
+	publish(t, a)
+	sync()
+	st = sync()
+	if !st.Changed[NamePath("late", "1")] || len(st.Changed) != 1 {
+		t.Errorf("the unmerged page isn't still to merge: %v", st.Changed)
+	}
+	if is := merge(st); is.New != 1 {
+		t.Errorf("merged %d new pages, want 1", is.New)
 	}
 }

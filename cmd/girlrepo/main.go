@@ -449,6 +449,9 @@ func (a *app) importRepo(ctx context.Context, args []string) error {
 		pr.say("📦 %s\n", synced(sst))
 		st, err = s.ImportFrom(ctx, filepath.Join(sst.Dir, "tree"), sst.Changed, o)
 		pr.say("")
+		if err == nil && st.Failed == 0 && !*dry {
+			err = s.Merged(sst)
+		}
 		return reportImport(st, err, *dry, *preferRemote, start)
 	}
 	st, err = s.Import(ctx, c, o)
@@ -545,6 +548,9 @@ func (a *app) unpack(ctx context.Context, args []string) error {
 	o.Progress = pr.report
 	st, err := s.ImportFrom(ctx, filepath.Join(sst.Dir, "tree"), sst.Changed, o)
 	pr.say("")
+	if err == nil && st.Failed == 0 && !*dry {
+		err = s.Merged(sst)
+	}
 	return reportImport(st, err, *dry, *preferRemote, start)
 }
 
