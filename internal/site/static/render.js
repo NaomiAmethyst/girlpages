@@ -240,7 +240,7 @@ const plainInline = (s) => parseInline(s).map(g => g.text).join("");
 
 
 const linkRE = new RegExp("(https?://[^\\t\\n\\f\\r <>()\"'`]*[^\\t\\n\\f\\r <>()\"'`.,;:!?])" +
-  "|([A-Za-z_][A-Za-z0-9_.:+-]*)\\(([0-9][a-z0-9]*|n|l)\\)" +
+  "|([A-Za-z0-9_][A-Za-z0-9_.:+-]*)\\(([0-9][a-z0-9]*|n|l)\\)" +
   "|\\bRFC ?0*([1-9][0-9]{0,4})\\b", "g");
 
 function splitRow(row) {

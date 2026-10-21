@@ -71,3 +71,17 @@ func TestHTMLLooseList(t *testing.T) {
 		t.Errorf("got %q, want %q", out, want)
 	}
 }
+
+// A name can start with a digit: 7z(1) is 7z's, not z's.
+func TestLinkNamesWithDigits(t *testing.T) {
+	link := func(name, sec string) string { return "/man/" + sec + "/" + name }
+	got, _ := HTML("see 7z(1), 2048(1) and 0desktop(1).\n", HTMLOptions{Link: link})
+	for _, want := range []string{`<a href="/man/1/7z">7z(1)</a>`, `<a href="/man/1/2048">2048(1)</a>`, `<a href="/man/1/0desktop">0desktop(1)</a>`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("no %s in %s", want, got)
+		}
+	}
+	if strings.Contains(got, `"/man/1/z"`) {
+		t.Errorf("z(1) inside 7z(1): %s", got)
+	}
+}

@@ -366,6 +366,7 @@ func TestRenderJS(t *testing.T) {
 		"# ✨ NAME ✨\n\n`ls` - list stuff\nand more\n\n- **`-a`** — all\n  continued\n  - nested\n1. first\n2) second\n\n```\ncode  here\n  indented\n```\n\n> careful\n> bestie\n\n---\n",
 		"<pink>a <mint>b</mint> c</pink> and <rainbow>rainbow</rainbow> <file> <b> *em* **bold** ***both*** `<pink>`",
 		"see ls(1), printf(3), git-commit(1), x(9z) and https://example.org/a_(b). or <https://x.y/z>, \\*not em\\*",
+		"7z(1) and 7za(1), 2048(1), 0desktop(1), foo-7z(1), 10(1) and v1.2(3)\n",
 		"| a | b |\n|---|:-:|\n| `x` | **y** |\n\n# Same\n\n# Same\n\n## Sub heading ##\n\n### deeper\n",
 		"   ```bash\n   echo \"hi\" & <bye>\n\tindented\n   ```\n\n* star list\n+ plus list\n• bullet\n10. ten\n",
 		"files *.c and 2*3 lone ** stars a*b*c _under_ x_y_z émoji 💅 *italic é* 'quotes' \"dq\" <3 & ok",
