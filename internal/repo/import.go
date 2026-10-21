@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"regexp"
 	"sort"
 	"sync"
@@ -133,6 +134,7 @@ func (s *Store) importPages(ctx context.Context, c *Client, todo []IndexPage, o 
 	// What's here: each page's listing, and which pages share each source
 	// (aliases share variant files, so changing one changes them all).
 	local := map[string]string{}
+	localListings := map[string]*Listing{}
 	bySource := map[string][]Pointer{}
 	pages, err := s.AllPages()
 	if err != nil {
@@ -140,6 +142,7 @@ func (s *Store) importPages(ctx context.Context, c *Client, todo []IndexPage, o 
 	}
 	for _, p := range pages {
 		local[p.Pointer.Name+"\x00"+p.Pointer.Section] = p.Pointer.SHA256
+		localListings[p.Pointer.Name+"\x00"+p.Pointer.Section] = p.Listing
 		for _, v := range p.Listing.Versions {
 			bySource[v.Source] = append(bySource[v.Source], p.Pointer)
 		}
@@ -172,7 +175,11 @@ func (s *Store) importPages(ctx context.Context, c *Client, todo []IndexPage, o 
 				sec := ip.Section
 				key := ip.Name + "\x00" + sec
 				title := ip.Name + "(" + sec + ")"
-				if local[key] == ip.Page {
+				// The same listing is the same page only if what it lists is
+				// all here: a merge that was stopped (or a file system that
+				// lost what it was writing) can leave a listing without its
+				// files, which merging again fetches.
+				if local[key] == ip.Page && s.stored(localListings[key]) {
 					mu.Lock()
 					st.Same++
 					mu.Unlock()
@@ -360,6 +367,29 @@ func (s *Store) fetchListing(ctx context.Context, c *Client, sha string) (*Listi
 	return &l, nil
 }
 
+// stored reports whether every variant a listing names is here: in its
+// version's variants.json, and its file.
+func (s *Store) stored(l *Listing) bool {
+	if l == nil {
+		return false
+	}
+	for _, v := range l.Versions {
+		cs, err := s.Contents(v.Source)
+		if err != nil {
+			return false
+		}
+		for variant, info := range v.Variants {
+			if !cs.has(variant, info.SHA256) {
+				return false
+			}
+			if _, err := os.Stat(s.abs(VariantPath(v.Source, variant, info.SHA256))); err != nil {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // importVariant makes sure this repository has a variant, fetching it if
 // need be (as a new generation here, if this repository has another). It
 // returns what's stored here afterwards, whether it was added, and whether
@@ -370,6 +400,12 @@ func (s *Store) importVariant(ctx context.Context, c *Client, source, variant st
 		return VariantInfo{}, false, false, err
 	}
 	have := cs.Latest(variant)
+	if have != nil {
+		if _, err := os.Stat(s.abs(VariantPath(source, variant, have.SHA256))); err != nil {
+			// Listed but not here: fetch it again, as it was.
+			have = nil
+		}
+	}
 	switch {
 	case have != nil && have.SHA256 == remote.SHA256:
 		return *have, false, false, nil

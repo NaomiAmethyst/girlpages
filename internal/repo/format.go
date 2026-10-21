@@ -174,6 +174,16 @@ func (c *Contents) Latest(variant string) *VariantInfo {
 	return best
 }
 
+// has reports whether a generation of variant with that hash is listed.
+func (c *Contents) has(variant, sha string) bool {
+	for _, g := range c.Variants[variant] {
+		if g.SHA256 == sha {
+			return true
+		}
+	}
+	return false
+}
+
 // InfoFor describes a variant stored as b.
 func InfoFor(b []byte) VariantInfo {
 	info := VariantInfo{SHA256: Hash(b), Size: int64(len(b))}

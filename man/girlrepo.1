@@ -334,6 +334,17 @@ Say what would be imported.
 .TP
 .B \-\-no\-packs
 Fetch its files one by one, even if it has packs.
+.TP
+.B \-\-remerge
+Merge every page in its packs again, not just those that changed since the
+last merge.
+Pages whose listings are the same here are still checked: if any file a
+listing names is missing (a merge stopped part of the way, or a file system
+that lost what it was writing), it's fetched again.
+Any merge does that for the pages it merges; this one merges them all.
+.B publish
+leaves versions whose files are missing out of the search index, and says
+how many there are; this is what puts them back.
 .SS "unpack [\fIpath\fR]"
 Merges packs that are already here into this repository, as
 .B import
@@ -355,6 +366,13 @@ It takes
 .BR import 's
 options, but for
 .BR \-\-no\-packs .
+With
+.BR \-\-remerge ,
+give the packs'
+.IR path ,
+as those moved out of
+.IR dir /repo/packs/
+aren't there any more.
 .SS "export \fIout\fR"
 Writes the repository as packs into
 .IR out ,

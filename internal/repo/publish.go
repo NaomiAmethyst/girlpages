@@ -99,6 +99,10 @@ func (s *Store) PublishContext(ctx context.Context, pages []PageRef) (*Manifest,
 	// as people may be looking for an option only an old one has.
 	docs := make([]IndexDoc, len(pages))
 	errs := make([]error, len(pages))
+	// Versions whose files are missing (a listing ahead of its contents)
+	// are left out of the index, and said, rather than stopping it all.
+	var missingMu sync.Mutex
+	var missing []string
 	c := s.counter("reading pages for the search index", len(pages))
 	parallel(len(pages), func(i int) {
 		defer c.add()
@@ -125,6 +129,12 @@ func (s *Store) PublishContext(ctx context.Context, pages []PageRef) (*Manifest,
 				}
 			}
 			doc, err := s.Variant(v.Source, variant)
+			if errors.Is(err, ErrNotFound) {
+				missingMu.Lock()
+				missing = append(missing, fmt.Sprintf("%s(%s): %v", p.Pointer.Name, p.Pointer.Section, err))
+				missingMu.Unlock()
+				continue
+			}
 			if err != nil {
 				errs[i] = fmt.Errorf("%s(%s): %w", p.Pointer.Name, p.Pointer.Section, err)
 				return
@@ -143,6 +153,16 @@ func (s *Store) PublishContext(ctx context.Context, pages []PageRef) (*Manifest,
 	}
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
+	}
+	if len(missing) > 0 && s.Warn != nil {
+		sort.Strings(missing)
+		shown := missing
+		if len(shown) > 5 {
+			shown = shown[:5]
+		}
+		s.Warn(fmt.Sprintf("%d versions' files are missing, so they're left out of the search index (%s%s); "+
+			"girlrepo unpack --remerge or import --remerge fetches them again, if the packs have them",
+			len(missing), strings.Join(shown, "; "), map[bool]string{true: "; …", false: ""}[len(missing) > 5]))
 	}
 
 	byChapter := map[string][]IndexPage{}

@@ -35,6 +35,8 @@ type Store struct {
 	// SyncRoot, if set, is where it keeps the logs it syncs packs from
 	// (see SyncDir).
 	SyncRoot string
+	// Warn, if set, is told of problems that don't stop what's going on.
+	Warn func(msg string)
 
 	// Listing updates (by page) and variants.json updates (by version)
 	// are one at a time, within this process; different pages' and

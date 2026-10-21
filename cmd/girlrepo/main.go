@@ -149,7 +149,14 @@ type app struct {
 	cleanups []func()
 }
 
-func (a *app) store() (*repo.Store, error) { return repo.Open(filepath.Join(a.dir, "repo")) }
+func (a *app) store() (*repo.Store, error) {
+	s, err := repo.Open(filepath.Join(a.dir, "repo"))
+	if err != nil {
+		return nil, err
+	}
+	s.Warn = func(msg string) { fmt.Fprintf(os.Stderr, "\r\033[K💔 %s\n", msg) }
+	return s, nil
+}
 
 func flags(name, synopsis string) *pflag.FlagSet {
 	fs := pflag.NewFlagSet(name, pflag.ContinueOnError)
@@ -401,6 +408,7 @@ func (a *app) importRepo(ctx context.Context, args []string) error {
 	jobs := fs.IntP("jobs", "j", 8, "pages to fetch at once")
 	dry := fs.BoolP("dry-run", "n", false, "say what would be imported")
 	noPacks := fs.Bool("no-packs", false, "fetch files one by one, even if it has packs")
+	remerge := fs.Bool("remerge", false, "merge every page in its packs again, not just what's changed (and fetch any files missing here)")
 	if err := parse(fs, args); err != nil {
 		return err
 	}
@@ -447,6 +455,9 @@ func (a *app) importRepo(ctx context.Context, args []string) error {
 			return err
 		}
 		pr.say("📦 %s\n", synced(sst))
+		if *remerge {
+			sst.Changed = nil
+		}
 		st, err = s.ImportFrom(ctx, filepath.Join(sst.Dir, "tree"), sst.Changed, o)
 		pr.say("")
 		if err == nil && st.Failed == 0 && !*dry {
@@ -486,6 +497,7 @@ func (a *app) unpack(ctx context.Context, args []string) error {
 	preferRemote := fs.Bool("prefer-remote", false, "when both have a version's variant and they differ, take theirs")
 	jobs := fs.IntP("jobs", "j", 8, "pages to import at once")
 	dry := fs.BoolP("dry-run", "n", false, "say what would be imported")
+	remerge := fs.Bool("remerge", false, "merge every page in the packs again, not just what's changed (and fetch any files missing here)")
 	if err := parse(fs, args); err != nil {
 		return err
 	}
@@ -539,12 +551,18 @@ func (a *app) unpack(ctx context.Context, args []string) error {
 	if errors.Is(err, repo.ErrNoPacks) {
 		// Nothing's come yet (or it's all been unpacked): fine.
 		pr.say("📦 no packs to unpack in %s\n", dir)
+		if *remerge {
+			return fmt.Errorf("--remerge needs the packs: give the directory they're in")
+		}
 		return nil
 	}
 	if err != nil {
 		return err
 	}
 	pr.say("📦 %s\n", synced(sst))
+	if *remerge {
+		sst.Changed = nil
+	}
 	o.Progress = pr.report
 	st, err := s.ImportFrom(ctx, filepath.Join(sst.Dir, "tree"), sst.Changed, o)
 	pr.say("")
