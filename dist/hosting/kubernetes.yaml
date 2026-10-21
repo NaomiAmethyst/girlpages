@@ -1,0 +1,134 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Naomi Persephone Amethyst <naomi@amethyst.name>
+#
+# Serving girlpages from packs dropped into a shared directory:
+#
+#   1. Pack files (girlrepo export, or another repository's) are copied into
+#      /data/packs on a shared volume (CephFS, NFS: anything ReadWriteMany).
+#   2. A CronJob notices new ones, unpacks them on its own local scratch
+#      volume (millions of small files, so not on the shared one), publishes
+#      the site, and adds it to the archive in /data/archive: only what
+#      changed is written there.
+#   3. girlserve serves the archive, and switches to each new version as
+#      it's written.
+#
+# Change the names, the URL, the storage class and the resources to suit.
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: girlpages-data
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: cephfs
+  resources:
+    requests:
+      storage: 100Gi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: girlpages-publish
+spec:
+  schedule: "13 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3000
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: publish
+              image: ghcr.io/naomiamethyst/girlpages:latest
+              env:
+                - name: HOME
+                  value: /scratch
+                - name: XDG_CACHE_HOME
+                  value: /scratch/cache
+              command: [sh, -euc]
+              args:
+                - |
+                  packs=/data/packs archive=/data/archive
+                  # Nothing to publish until packs come; nothing new to
+                  # publish if they're the ones published last time.
+                  ls "$packs"/*.tar.zst >/dev/null 2>&1 || { echo "no packs yet"; exit 0; }
+                  sum=$(ls "$packs" | grep '\.tar\.zst$' | sort | sha256sum | cut -c1-64)
+                  if [ "$sum" = "$(cat "$archive/.published-packs" 2>/dev/null)" ]; then
+                    echo "no new packs"; exit 0
+                  fi
+                  girlrepo -d /scratch/site unpack -j 16 "$packs"
+                  girlrepo -d /scratch/site publish -j 16 --url https://girlpages.dev \
+                    --packs "$packs" --archive "$archive"
+                  echo "$sum" > "$archive/.published-packs"
+              # Compressing at the formats' best takes a lot of CPU and some
+              # memory (brotli's, mostly), but only for what's changed.
+              resources:
+                requests: {cpu: "4", memory: 8Gi}
+                limits: {memory: 16Gi}
+              volumeMounts:
+                - {name: data, mountPath: /data}
+                - {name: scratch, mountPath: /scratch}
+          volumes:
+            - name: data
+              persistentVolumeClaim: {claimName: girlpages-data}
+            # Local disk, for the unpacked repository and the site built
+            # from it; it goes when the job does.
+            - name: scratch
+              emptyDir: {sizeLimit: 60Gi}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: girlserve
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: girlserve}
+  template:
+    metadata:
+      labels: {app: girlserve}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+    spec:
+      # --drain-delay (5s) plus --drain (30s), and a little.
+      terminationGracePeriodSeconds: 45
+      containers:
+        - name: girlserve
+          image: ghcr.io/naomiamethyst/girlserve:latest
+          args: [--archive, /data/archive, --access-log]
+          ports:
+            - {name: http, containerPort: 8080}
+            - {name: admin, containerPort: 9090}
+          readinessProbe:
+            httpGet: {path: /readyz, port: admin}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /healthz, port: admin}
+            periodSeconds: 20
+          resources:
+            # It keeps the index in memory: about 300 bytes a file, so about
+            # 700 MB for girlpages.dev's two million.
+            requests: {cpu: 250m, memory: 1Gi}
+            limits: {memory: 2Gi}
+          securityContext:
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: data, mountPath: /data, readOnly: true}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: girlpages-data, readOnly: true}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: girlserve
+spec:
+  selector: {app: girlserve}
+  ports:
+    - {name: http, port: 80, targetPort: http}

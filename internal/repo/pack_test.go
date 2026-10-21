@@ -457,3 +457,45 @@ func TestSyncFromOldCopy(t *testing.T) {
 		t.Errorf("once merged: changed %v", st.Changed)
 	}
 }
+
+// A repository can list another's packs as its own: linked or copied in,
+// with others there removed.
+func TestAdoptPacks(t *testing.T) {
+	ctx := context.Background()
+	src := testStore(t)
+	packs := t.TempDir()
+	if _, err := AppendPacks(ctx, packs, src.Dir, PackOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	want, err := ReadPackLog(packs)
+	if err != nil || len(want.Packs) == 0 {
+		t.Fatalf("packs: %+v, %v", want, err)
+	}
+	root := t.TempDir()
+	stray := filepath.Join(root, "packs", strings.Repeat("c", 64)+".tar.zst")
+	os.MkdirAll(filepath.Dir(stray), 0o755)
+	os.WriteFile(stray, []byte("an old pack of its own"), 0o644)
+	got, err := AdoptPacks(root, filepath.Join(packs, "packs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	log, err := ReadPackLog(root)
+	if err != nil || len(got) != len(want.Packs) || len(log.Packs) != len(want.Packs) {
+		t.Fatalf("adopted %d, log %+v, %v", len(got), log, err)
+	}
+	for i, e := range log.Packs {
+		if e.SHA256 != want.Packs[i].SHA256 || e.Seq != want.Packs[i].Seq {
+			t.Errorf("pack %d: %+v, want %+v", i, e, want.Packs[i])
+		}
+		if err := checkFile(filepath.Join(root, filepath.FromSlash(e.Path)), e.SHA256, e.Bytes); err != nil {
+			t.Error(err)
+		}
+	}
+	if _, err := os.Stat(stray); err == nil {
+		t.Error("the old pack is still there")
+	}
+	// Again, it's the same.
+	if again, err := AdoptPacks(root, filepath.Join(packs, "packs")); err != nil || len(again) != len(got) {
+		t.Errorf("again: %d, %v", len(again), err)
+	}
+}

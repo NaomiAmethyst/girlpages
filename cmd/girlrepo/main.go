@@ -23,6 +23,7 @@ import (
 
 	"github.com/spf13/pflag"
 
+	"github.com/NaomiAmethyst/girlpages/internal/archive/build"
 	"github.com/NaomiAmethyst/girlpages/internal/config"
 	"github.com/NaomiAmethyst/girlpages/internal/core"
 	"github.com/NaomiAmethyst/girlpages/internal/crawl"
@@ -32,6 +33,7 @@ import (
 	"github.com/NaomiAmethyst/girlpages/internal/precompress"
 	"github.com/NaomiAmethyst/girlpages/internal/repo"
 	"github.com/NaomiAmethyst/girlpages/internal/rfc"
+	"github.com/NaomiAmethyst/girlpages/internal/serve"
 	"github.com/NaomiAmethyst/girlpages/internal/site"
 )
 
@@ -59,8 +61,10 @@ commands:
   publish            write the section lists, search index, manifest and
                      website
   gc                 delete files nothing refers to any more
+  archive ARCHIVE    add the website to an archive, for serve --archive
   search QUERY       search the published index
-  serve              preview the site at http://localhost:1990/
+  serve              serve the site (or an archive of it) at
+                     http://localhost:1990/
   status             summarise the repository
 
 DIR (default .) is the website; the repository lives in DIR/repo.
@@ -111,6 +115,7 @@ func run(args []string) int {
 		"girlify": a.girlify,
 		"publish": a.publish,
 		"gc":      a.gc,
+		"archive": a.archive,
 		"search":  a.search,
 		"serve":   a.serve,
 		"status":  a.status,
@@ -823,8 +828,17 @@ func (a *app) publish(ctx context.Context, args []string) error {
 	compressJobs := fs.Int("compress-jobs", 0, "files to compress at once (default: --jobs, or one per CPU)")
 	jobs := fs.IntP("jobs", "j", 0, "files to write at once (default: one per CPU; more helps on network file systems)")
 	noPacks := fs.Bool("no-packs", false, "don't add to the repository's packs")
+	packsFrom := fs.String("packs", "", "list the packs in this directory as the repository's (one unpacked from just them is a copy of theirs), not its own")
+	toArchive := fs.String("archive", "", "add the website to this archive afterwards (which compresses it: --precompress defaults to none)")
+	archOpts := archiveOptions(fs)
 	if err := parse(fs, args); err != nil {
 		return err
+	}
+	if *toArchive != "" && *noSite {
+		return fmt.Errorf("--archive archives the website, which --no-site doesn't write")
+	}
+	if *toArchive != "" && !fs.Changed("precompress") {
+		*compress = "none"
 	}
 	s, err := a.store()
 	if err != nil {
@@ -884,7 +898,13 @@ func (a *app) publish(ctx context.Context, args []string) error {
 			return err
 		}
 	}
-	if !*noPacks {
+	if *packsFrom != "" {
+		packs, err := repo.AdoptPacks(s.Dir, *packsFrom)
+		if err != nil {
+			return err
+		}
+		pr.say("📦 listing %d packs from %s as the repository's\n", len(packs), *packsFrom)
+	} else if !*noPacks {
 		pst, err := repo.AppendPacks(ctx, s.Dir, s.Dir, repo.PackOptions{Progress: pr.report})
 		if err != nil {
 			return err
@@ -937,6 +957,11 @@ func (a *app) publish(ctx context.Context, args []string) error {
 	if pst.Compressed+pst.Removed > 0 {
 		pr.say("🗜️  compressed %d files (%s smaller), removed %d stale copies\n",
 			pst.Compressed, humanBytes(pst.Saved), pst.Removed)
+	}
+	if *toArchive != "" {
+		if err := a.writeArchive(ctx, *toArchive, archOpts(*jobs, pr), pr); err != nil {
+			return err
+		}
 	}
 	pr.say("✨ done in %s\n", time.Since(start).Round(time.Millisecond))
 	return ctx.Err()
@@ -1006,28 +1031,97 @@ func (a *app) search(ctx context.Context, args []string) error {
 func (a *app) serve(ctx context.Context, args []string) error {
 	fs := flags("serve", "[options]")
 	listen := fs.String("listen", "localhost:1990", "address to listen on")
+	arch := fs.String("archive", "", "serve this archive (as publish --archive writes), not DIR")
+	admin := fs.String("admin-listen", "", "address for /healthz, /readyz and /metrics (default: none)")
+	reload := fs.Duration("reload-interval", 10*time.Second, "how often to check the archive for a new version (0: only on SIGHUP)")
+	accessLog := fs.String("access-log", "", "write a line of JSON per request to this file (- for standard output)")
+	drain := fs.Duration("drain", 30*time.Second, "how long requests in flight get to finish when stopping")
+	drainDelay := fs.Duration("drain-delay", 0, "when stopping, keep serving this long first, with /readyz failing")
 	if err := parse(fs, args); err != nil {
 		return err
+	}
+	o := serve.RunOptions{Listen: *listen, AdminListen: *admin, Archive: *arch, Dir: a.dir,
+		ReloadInterval: *reload, Drain: *drain, DrainDelay: *drainDelay, Log: os.Stderr}
+	if *arch == "" {
+		if _, err := os.Stat(filepath.Join(a.dir, "index.html")); err != nil {
+			return fmt.Errorf("no website in %s yet; run girlrepo publish first", a.dir)
+		}
+	}
+	switch *accessLog {
+	case "":
+	case "-":
+		o.AccessLog = os.Stdout
+	default:
+		f, err := os.OpenFile(*accessLog, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		o.AccessLog = f
+	}
+	o.Ready = func(site, adm net.Addr) {
+		what := a.dir
+		if *arch != "" {
+			what = "the archive in " + *arch
+		}
+		fmt.Fprintf(os.Stderr, "🌸 serving %s at http://%s/", what, site)
+		if adm != nil {
+			fmt.Fprintf(os.Stderr, " (health and metrics at http://%s/)", adm)
+		}
+		fmt.Fprintln(os.Stderr, " (ctrl-c to stop)")
+	}
+	err := serve.Run(ctx, o)
+	if errors.Is(err, http.ErrServerClosed) {
+		return nil
+	}
+	return err
+}
+
+// archiveOptions adds the options for writing an archive to a command's.
+func archiveOptions(fs *pflag.FlagSet) func(jobs int, pr *progress) build.Options {
+	compact := fs.Bool("compact", false, "compact the archive (copy what's in use into new segments) whatever its state")
+	keep := fs.Int("keep", 5, "archive versions to keep, at least, for servers still on an older one")
+	keepFor := fs.Duration("keep-for", time.Hour, "keep archive versions (and their segments) this long after they're replaced, at least")
+	return func(jobs int, pr *progress) build.Options {
+		return build.Options{Jobs: jobs, Compact: *compact, Keep: *keep, KeepFor: *keepFor, Progress: pr.report}
+	}
+}
+
+// writeArchive adds the site in DIR to an archive.
+func (a *app) writeArchive(ctx context.Context, dir string, o build.Options, pr *progress) error {
+	start := time.Now()
+	st, err := build.Write(ctx, a.dir, dir, o)
+	pr.say("")
+	if err != nil {
+		return err
+	}
+	how := ""
+	if st.Compacted {
+		how = ", compacted"
+	}
+	pr.say("🗜️ archived %d files into %s: %d new (%s), %s in use in %d segments%s; version %s (%s)\n",
+		st.Files, dir, st.New, humanBytes(st.NewBytes), humanBytes(st.Live), st.Segments, how, st.Index[:12],
+		time.Since(start).Round(time.Second))
+	return nil
+}
+
+// archive adds the website in DIR to an archive.
+func (a *app) archive(ctx context.Context, args []string) error {
+	fs := flags("archive", "[options] ARCHIVE")
+	jobs := fs.IntP("jobs", "j", 0, "files to compress at once (default: one per CPU)")
+	opts := archiveOptions(fs)
+	if err := parse(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		fs.Usage()
+		return errUsage
 	}
 	if _, err := os.Stat(filepath.Join(a.dir, "index.html")); err != nil {
 		return fmt.Errorf("no website in %s yet; run girlrepo publish first", a.dir)
 	}
-	ln, err := net.Listen("tcp", *listen)
-	if err != nil {
-		return err
-	}
-	srv := &http.Server{Handler: site.Handler(a.dir), ReadHeaderTimeout: 10 * time.Second}
-	go func() {
-		<-ctx.Done()
-		sctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(sctx)
-	}()
-	fmt.Fprintf(os.Stderr, "🌸 previewing %s at http://%s/ (ctrl-c to stop)\n", a.dir, ln.Addr())
-	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return err
-	}
-	return nil
+	pr := newProgress(os.Stderr)
+	return a.writeArchive(ctx, fs.Arg(0), opts(*jobs, pr), pr)
 }
 
 func (a *app) status(_ context.Context, args []string) error {

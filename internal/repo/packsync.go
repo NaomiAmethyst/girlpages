@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -322,74 +323,9 @@ var ErrNoPacks = errors.New("no packs to unpack")
 // the sync directory: moved, if move is set (so they're not unpacked
 // again), or else linked or copied (leaving a mirror as it was).
 func (s *Store) UnpackDir(ctx context.Context, dir string, own map[string]bool, move bool, progress Progress) (SyncStats, error) {
-	ents, err := os.ReadDir(dir)
-	if errors.Is(err, fs.ErrNotExist) {
-		return SyncStats{}, fmt.Errorf("%s: %w", dir, ErrNoPacks)
-	}
+	chain, err := packChain(dir, own)
 	if err != nil {
 		return SyncStats{}, err
-	}
-	type found struct {
-		entry    PackEntry
-		prev     string
-		file     string
-		replaces []string
-	}
-	var all []found
-	for _, d := range ents {
-		sha, ok := strings.CutSuffix(d.Name(), ".tar.zst")
-		if !ok || !ValidHash(sha) || own[sha] {
-			continue
-		}
-		file := filepath.Join(dir, d.Name())
-		h, err := ReadPackHeader(file)
-		if err != nil {
-			return SyncStats{}, err
-		}
-		fi, err := d.Info()
-		if err != nil {
-			return SyncStats{}, err
-		}
-		all = append(all, found{PackEntry{Path: PackPath(sha), SHA256: sha, Bytes: fi.Size(), Seq: h.Seq, Tail: h.Tail}, h.Prev, file, h.Replaces})
-	}
-	if len(all) == 0 {
-		return SyncStats{}, fmt.Errorf("%s: %w", dir, ErrNoPacks)
-	}
-	replaced := map[string]bool{}
-	for _, f := range all {
-		for _, r := range f.replaces {
-			replaced[r] = true
-		}
-	}
-	bySeq := map[int][]found{}
-	for _, f := range all {
-		if !replaced[f.entry.SHA256] {
-			bySeq[f.entry.Seq] = append(bySeq[f.entry.Seq], f)
-		}
-	}
-	// Follow the log from its first pack: each pack's successor is the
-	// one that names it.
-	var chain []found
-	prev := ""
-	for seq := 1; ; seq++ {
-		var next []found
-		for _, f := range bySeq[seq] {
-			if f.prev == prev {
-				next = append(next, f)
-			}
-		}
-		if len(next) == 0 {
-			break
-		}
-		if len(next) > 1 {
-			sort.Slice(next, func(i, j int) bool { return next[i].entry.SHA256 < next[j].entry.SHA256 })
-			return SyncStats{}, fmt.Errorf("packs %.12s and %.12s both follow pack %d", next[0].entry.SHA256, next[1].entry.SHA256, seq-1)
-		}
-		chain = append(chain, next[0])
-		prev = next[0].entry.SHA256
-	}
-	if len(chain) == 0 {
-		return SyncStats{}, fmt.Errorf("the packs in %s don't include the first of their log", dir)
 	}
 	listed := make([]PackEntry, len(chain))
 	files := map[string]string{}
@@ -430,4 +366,160 @@ func (s *Store) UnpackDir(ctx context.Context, dir string, own map[string]bool, 
 		}
 		return nil
 	}, progress)
+}
+
+// packFile is a pack file found in a directory.
+type packFile struct {
+	entry    PackEntry
+	prev     string
+	file     string
+	replaces []string
+}
+
+// packChain finds the log the pack files in dir make (leaving out those
+// in own, and those replaced): from its first pack, each one's
+// successor is the one that names it.
+func packChain(dir string, own map[string]bool) ([]packFile, error) {
+	ents, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("%s: %w", dir, ErrNoPacks)
+	}
+	if err != nil {
+		return nil, err
+	}
+	var all []packFile
+	for _, d := range ents {
+		sha, ok := strings.CutSuffix(d.Name(), ".tar.zst")
+		if !ok || !ValidHash(sha) || own[sha] {
+			continue
+		}
+		file := filepath.Join(dir, d.Name())
+		h, err := ReadPackHeader(file)
+		if err != nil {
+			return nil, err
+		}
+		fi, err := d.Info()
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, packFile{PackEntry{Path: PackPath(sha), SHA256: sha, Bytes: fi.Size(), Seq: h.Seq, Tail: h.Tail}, h.Prev, file, h.Replaces})
+	}
+	if len(all) == 0 {
+		return nil, fmt.Errorf("%s: %w", dir, ErrNoPacks)
+	}
+	replaced := map[string]bool{}
+	for _, f := range all {
+		for _, r := range f.replaces {
+			replaced[r] = true
+		}
+	}
+	bySeq := map[int][]packFile{}
+	for _, f := range all {
+		if !replaced[f.entry.SHA256] {
+			bySeq[f.entry.Seq] = append(bySeq[f.entry.Seq], f)
+		}
+	}
+	// Follow the log from its first pack: each pack's successor is the
+	// one that names it.
+	var chain []packFile
+	prev := ""
+	for seq := 1; ; seq++ {
+		var next []packFile
+		for _, f := range bySeq[seq] {
+			if f.prev == prev {
+				next = append(next, f)
+			}
+		}
+		if len(next) == 0 {
+			break
+		}
+		if len(next) > 1 {
+			sort.Slice(next, func(i, j int) bool { return next[i].entry.SHA256 < next[j].entry.SHA256 })
+			return nil, fmt.Errorf("packs %.12s and %.12s both follow pack %d", next[0].entry.SHA256, next[1].entry.SHA256, seq-1)
+		}
+		chain = append(chain, next[0])
+		prev = next[0].entry.SHA256
+	}
+	if len(chain) == 0 {
+		return nil, fmt.Errorf("the packs in %s don't include the first of their log", dir)
+	}
+	return chain, nil
+}
+
+// AdoptPacks makes the log of packs in dir this repository's (in place of
+// its own): what to list when it's published as a copy of the repository
+// they came from, as one made by unpacking just them is. Pack files are
+// linked into root/packs/ (or copied, across file systems), and any
+// others there are removed.
+func AdoptPacks(root, dir string) ([]PackEntry, error) {
+	chain, err := packChain(dir, nil)
+	if err != nil {
+		return nil, err
+	}
+	pdir := filepath.Join(root, "packs")
+	if err := os.MkdirAll(pdir, 0o755); err != nil {
+		return nil, err
+	}
+	keep := map[string]bool{"index.json": true}
+	log := &PackLog{Format: Format}
+	for _, f := range chain {
+		if err := checkFile(f.file, f.entry.SHA256, f.entry.Bytes); err != nil {
+			return nil, err
+		}
+		name := f.entry.SHA256 + ".tar.zst"
+		keep[name] = true
+		dst := filepath.Join(pdir, name)
+		if checkFile(dst, f.entry.SHA256, f.entry.Bytes) != nil {
+			os.Remove(dst)
+			if err := os.Link(f.file, dst); err != nil {
+				if err := copyFile(f.file, dst); err != nil {
+					return nil, err
+				}
+			}
+		}
+		log.Packs = append(log.Packs, f.entry)
+	}
+	ents, err := os.ReadDir(pdir)
+	if err != nil {
+		return nil, err
+	}
+	for _, d := range ents {
+		if !keep[d.Name()] && !strings.HasPrefix(d.Name(), ".") {
+			os.Remove(filepath.Join(pdir, d.Name()))
+		}
+	}
+	b, err := json.MarshalIndent(log, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return log.Packs, WriteFile(filepath.Join(root, filepath.FromSlash(PackLogPath())), append(b, '\n'))
+}
+
+// copyFile copies a file, synced, by way of a temporary one.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	tmp := dst + ".tmp"
+	out, err := os.Create(tmp)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := out.Sync(); err != nil {
+		out.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := out.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return os.Rename(tmp, dst)
 }

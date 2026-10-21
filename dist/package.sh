@@ -3,7 +3,7 @@
 # Copyright (C) 2026 Naomi Persephone Amethyst <naomi@amethyst.name>
 #
 # Builds girlpages' packages for one architecture: girlpages (girl,
-# girlrepo and girlc, with each package manager's hook and the daily timer)
+# girlrepo, girlc and girlserve, with each package manager's hook and the daily timer)
 # and girlc alone, as deb, rpm, apk and Arch packages, with nfpm.
 #
 #   dist/package.sh [-a ARCH] [-v VERSION] [-o DIR]
@@ -58,7 +58,7 @@ build() { # make, in the copy, for arch
 }
 # (The copy has no .git to stamp the build with; VERSION says it.)
 export GOOS=linux GOARCH="$arch" CGO_ENABLED=0 GOFLAGS="${GOFLAGS:-} -buildvcs=false"
-build girl girlrepo girlc
+build girl girlrepo girlc girlserve
 
 for format in deb rpm apk archlinux; do
 	case $format in

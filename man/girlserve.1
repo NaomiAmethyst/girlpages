@@ -1,0 +1,156 @@
+.\" SPDX-License-Identifier: GPL-3.0-or-later
+.\" Copyright (C) 2026 Naomi Persephone Amethyst <naomi@amethyst.name>
+.TH GIRLSERVE 1 2026-10-21 girlpages "girlpages Manual"
+.SH NAME
+girlserve \- serve a published girlpages site
+.SH SYNOPSIS
+.B girlserve
+.RI [ options ]
+.B \-\-archive
+.I dir
+.br
+.B girlserve
+.RI [ options ]
+.B \-\-dir
+.I site
+.SH DESCRIPTION
+.B girlserve
+serves a girlpages site (its website and its repository) as
+.B girlrepo publish
+made it: from an archive, as
+.B girlrepo publish \-\-archive
+writes, or from a site directory.
+It's
+.B girlrepo serve
+on its own, for production: a small static program with nothing else in
+it, for a minimal container image.
+.PP
+Each file is sent in the smallest form the client accepts (zstd, brotli,
+gzip or as it is, by its
+.BR Accept-Encoding ),
+with the
+.B Cache-Control
+of its kind (immutable for files named after their hash, five minutes for
+the files that point to them, an hour for the website, and no-cache for its
+service worker), a strong
+.B ETag
+(from an archive; a directory's files get
+.B Last-Modified
+instead), range requests, and the site's own 404 page.
+.PP
+An archive is checked for a new version every
+.B \-\-reload-interval
+and on
+.BR SIGHUP ;
+a new one is loaded alongside what's being served and switched to at once,
+so no request sees half of each.
+If it can't be loaded, what was being served still is, and it's tried again
+next time.
+Until the archive has a version (before its first publish), every request
+gets 503 and
+.B /readyz
+fails.
+.PP
+On
+.B SIGTERM
+or
+.BR SIGINT ,
+.B /readyz
+fails at once, the site is served for
+.B \-\-drain-delay
+more (so load balancers notice first), and then requests in flight get
+.B \-\-drain
+to finish.
+.SH OPTIONS
+.TP
+.BR \-\-archive =\fIdir\fR
+Serve the archive in
+.I dir
+(or
+.BR $GIRLSERVE_ARCHIVE ).
+It may be on a network file system: only a few files are opened, and each
+request is a read of the bytes it sends.
+.TP
+.BR \-\-dir =\fIsite\fR
+Serve a site directory instead.
+.TP
+.BR \-\-listen =\fIaddr\fR
+Serve the site on
+.I addr
+(default
+.BR :8080 ,
+or
+.BR $GIRLSERVE_LISTEN ).
+.TP
+.BR \-\-admin\-listen =\fIaddr\fR
+Serve
+.B /healthz
+(the process is up),
+.B /readyz
+(it has a site to serve, and isn't stopping) and
+.B /metrics
+(Prometheus) on
+.I addr
+(default
+.BR :9090 ,
+or
+.BR $GIRLSERVE_ADMIN_LISTEN ;
+empty for none), which shouldn't be public.
+.TP
+.BR \-\-reload\-interval =\fIduration\fR
+How often to check the archive for a new version (default 10s; 0 for only on
+.BR SIGHUP ).
+.TP
+.B \-\-access\-log
+Write a line of JSON for each request to standard output: its time, method,
+path, status, size, duration, encoding, address, referrer and user agent.
+.TP
+.BR \-\-drain\-delay =\fIduration\fR
+When stopping, keep serving this long first, with
+.B /readyz
+failing (default 5s).
+.TP
+.BR \-\-drain =\fIduration\fR
+Then give requests in flight this long to finish (default 30s).
+Packs are hundreds of megabytes, so there's no limit on how long a response
+may take otherwise.
+.TP
+.B \-\-version
+Print the version.
+.SH METRICS
+.TP
+.B girlpages_http_requests_total{code}
+Requests, by status.
+.TP
+.B girlpages_http_request_duration_seconds
+How long they took (a histogram).
+.TP
+.B girlpages_http_response_bytes_total
+Bytes of response bodies.
+.TP
+.BR girlpages_archive_generated_time_seconds ", " girlpages_archive_loaded_time_seconds
+When the version being served was written, and loaded: alert on either
+getting old.
+.TP
+.BR girlpages_archive_reloads_total ", " girlpages_archive_reload_failures_total
+Reloads that changed what's served, and those that failed.
+.TP
+.BR girlpages_archive_files ", " girlpages_archive_live_bytes
+The size of the version being served.
+.SH EXAMPLES
+.TP
+.B girlserve \-\-archive /data/archive \-\-access\-log
+Serve the archive the publishing job writes to, on :8080, with health and
+metrics on :9090.
+.PP
+.B dist/hosting/kubernetes.yaml
+in the source has a CronJob that unpacks packs dropped into a directory,
+publishes them into an archive, and a Deployment of
+.B girlserve
+serving it.
+.SH "SEE ALSO"
+.BR girlrepo (1),
+.BR girl (1),
+.BR girlc (1)
+.SH AUTHOR
+Naomi Persephone Amethyst <naomi@amethyst.name>

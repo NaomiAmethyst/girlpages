@@ -49,7 +49,7 @@ jobs:
           path: dist/packages/*
           if-no-files-found: error
 
-  # Images of girlpages (all of it, on Debian) and girlc (alone, on
+  # Images of girlpages (all of it, on Debian), and girlc and girlserve (alone, on
   # nothing), for amd64 and arm64: pushed to ghcr.io for main (as edge)
   # and releases (as their version and latest), built for anything else.
   images:
@@ -60,7 +60,7 @@ jobs:
       packages: write
     strategy:
       matrix:
-        image: [girlpages, girlc]
+        image: [girlpages, girlc, girlserve]
     steps:
       - uses: actions/checkout@v4
         with:

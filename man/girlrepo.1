@@ -65,6 +65,13 @@ girlrepo \- build and publish girlpages repositories and their website
 .B girlrepo
 .RB [ \-d
 .IR dir ]
+.B archive
+.RI [ options ]
+.I archive
+.br
+.B girlrepo
+.RB [ \-d
+.IR dir ]
 .BR gc " | " search " | " serve " | " status
 .SH DESCRIPTION
 .B girlrepo
@@ -582,6 +589,31 @@ The changes since the last full pack are kept in small tail packs, which
 are replaced by full packs once they'd make one; full packs never change.
 The first publish packs everything, which takes a while.
 .TP
+.BR \-\-packs =\fIpath\fR
+List the packs in
+.I path
+(a directory of pack files, as
+.B unpack
+takes) as the repository's, in place of its own, adding nothing to them.
+For a repository made by unpacking just those packs, as a publishing job
+does from scratch each time: it's a copy of the one they came from, so its
+log is theirs, and publishing that keeps the site's packs the same from one
+publish to the next.
+.TP
+.BR \-\-archive =\fIdir\fR
+Add the website (and repository) to the archive in
+.I dir
+afterwards: see
+.BR archive .
+The archive compresses what it adds, so
+.B \-\-precompress
+defaults to
+.B none
+with it.
+It takes
+.BR archive 's
+options too.
+.TP
 .B \-\-gc
 Collect garbage afterwards.
 .TP
@@ -638,14 +670,82 @@ finds
 .BR mkdir ),
 as the website's "parts of words" does, rather than only the words they
 start.
+.SS "archive \fIarchive\fR"
+Adds the website in
+.I dir
+(and the repository in it) to the archive in
+.I archive
+(making it, if it's not there), as its new version: a few big files to
+serve the site from, made for a network file system, where a site's
+millions of small files are slow.
+It holds
+.IR segments ,
+files of up to a gigabyte of the site's files' bytes, each stored as it's
+sent (as it is, and compressed with zstd, brotli and gzip, where that's
+smaller); an
+.I index
+for each version, of where each file's bytes are; and
+.BR current ,
+naming the version being served, which
+.B serve \-\-archive
+and
+.BR girlserve (1)
+watch.
+Only files whose content isn't in the archive already are compressed and
+added: the rest of the new version points at where they are.
+Versions replaced are kept (at least
+.B \-\-keep
+of them, and any newer than
+.BR \-\-keep\-for ),
+for servers still on one, and then they, and the segments only they used, go.
+When less than half of the segments' bytes are in use, it's compacted: what
+is, is copied into new segments.
+One
+.B archive
+(or
+.BR "publish \-\-archive" )
+runs at a time.
+The format is in
+.B doc/archive-format.md
+in the source.
+.TP
+.BR \-j ", " \-\-jobs =\fIn\fR
+Compress this many files at once (default one per CPU).
+.TP
+.B \-\-compact
+Compact it now, whatever its state.
+.TP
+.BR \-\-keep =\fIn\fR ", " \-\-keep\-for =\fIduration\fR
+Keep at least
+.I n
+versions (default 5), and any replaced less than
+.I duration
+ago (default 1h).
 .SS serve
 Serves
 .I dir
-at
+(or, with
+.BR \-\-archive ,
+an archive) at
 .B http://localhost:1990/
 (or
-.BR \-\-listen )
-to preview the site.
+.BR \-\-listen ).
+It serves the way a production server should (each file in the smallest form
+the client accepts, with its cache lifetime, ETags and the site's 404 page),
+and takes the options of
+.BR girlserve (1),
+which is the same server on its own:
+.BR \-\-archive ,
+.BR \-\-admin\-listen ,
+.BR \-\-reload\-interval ,
+.BI \-\-access\-log= file
+(a file, or
+.B \-
+for standard output),
+.B \-\-drain
+and
+.BR \-\-drain\-delay
+(default 0 here).
 .SS status
 Counts pages, versions and conversions.
 .SH "REPOSITORY FORMAT"
@@ -882,6 +982,7 @@ Read
 from a repository on disk.
 .SH "SEE ALSO"
 .BR girl (1),
+.BR girlserve (1),
 .BR man (1)
 .SH AUTHOR
 Naomi Persephone Amethyst <naomi@amethyst.name>

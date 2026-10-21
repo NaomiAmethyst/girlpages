@@ -20,7 +20,8 @@ description: |-
   girl is man, but every page is rewritten by an LLM in the voice of a Gen Z
   teenage girl, keeping every option, default and caveat, and cached. With it
   come girlrepo, which builds and publishes repositories of girlified pages
-  and their website, and girlc, which reads pages from one.
+  and their website, girlserve, which serves them, and girlc, which reads
+  pages from one.
 depends:
   - man-db
 recommends:

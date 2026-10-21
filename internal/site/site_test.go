@@ -818,8 +818,27 @@ func TestHandler(t *testing.T) {
 		resp.Body.Close()
 		return resp
 	}
+	// The smallest copy the client accepts is sent.
+	size := func(ext string) int64 {
+		fi, err := os.Stat(filepath.Join(out, "man", "1", "ls", "index.html"+ext))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fi.Size()
+	}
+	smallest := func(encs ...string) string {
+		ext := map[string]string{"zstd": ".zst", "br": ".br", "gzip": ".gz"}
+		best := ""
+		for _, e := range encs {
+			if best == "" || size(ext[e]) < size(ext[best]) {
+				best = e
+			}
+		}
+		return best
+	}
 	for _, c := range []struct{ accept, want string }{
-		{"zstd, br, gzip", "zstd"}, {"gzip, br", "br"}, {"gzip", "gzip"}, {"br;q=0, gzip", "gzip"}, {"", ""}, {"*", "zstd"},
+		{"zstd, br, gzip", smallest("zstd", "br", "gzip")}, {"gzip, br", smallest("br", "gzip")}, {"gzip", "gzip"},
+		{"br;q=0, gzip", "gzip"}, {"", ""}, {"*", smallest("zstd", "br", "gzip")},
 	} {
 		resp := get("/man/1/ls/", c.accept)
 		if got := resp.Header.Get("Content-Encoding"); got != c.want || resp.Header.Get("Content-Type") != "text/html; charset=utf-8" ||

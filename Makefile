@@ -58,11 +58,11 @@ ifeq ($(SYSTEMD),auto)
   override SYSTEMD := $(if $(wildcard /run/systemd/system),yes,no)
 endif
 
-.PHONY: all build test check e2e lint packages install install-user install-girlrepo install-girlc uninstall uninstall-user clean
+.PHONY: all build test check e2e lint packages install install-user install-girlrepo install-girlc install-girlserve uninstall uninstall-user clean
 
 all: build
 
-build: girl girlrepo girlc
+build: girl girlrepo girlc girlserve
 
 SOURCES := $(shell find cmd internal -name '*.go' -o -name '*.html' -o -name '*.css' -o -name '*.js') go.mod go.sum
 
@@ -78,6 +78,11 @@ girlrepo: $(SOURCES)
 # static, with no cgo, so it runs anywhere (musl, distroless, scratch).
 girlc: $(SOURCES)
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags '$(LDFLAGS)$(if $(GIRLC_REPO), -X main.defaultRepo=$(GIRLC_REPO))' -o $@ ./cmd/girlc
+
+# girlserve serves a published site (or an archive of it) in production:
+# girlrepo serve on its own, static, for a scratch or distroless image.
+girlserve: $(SOURCES)
+	CGO_ENABLED=0 $(GO) build -trimpath -ldflags '$(LDFLAGS)' -o $@ ./cmd/girlserve
 
 test:
 	$(GO) test ./...
@@ -108,11 +113,15 @@ install-girlrepo: girlrepo
 	install -Dm755 girlrepo '$(DESTDIR)$(BINDIR)/girlrepo'
 	install -Dm644 man/girlrepo.1 '$(DESTDIR)$(MANDIR)/man1/girlrepo.1'
 
+install-girlserve: girlserve
+	install -Dm755 girlserve '$(DESTDIR)$(BINDIR)/girlserve'
+	install -Dm644 man/girlserve.1 '$(DESTDIR)$(MANDIR)/man1/girlserve.1'
+
 install-girlc: girlc
 	install -Dm755 girlc '$(DESTDIR)$(BINDIR)/girlc'
 	install -Dm644 man/girlc.1 '$(DESTDIR)$(MANDIR)/man1/girlc.1'
 
-install: girl install-girlrepo install-girlc
+install: girl install-girlrepo install-girlc install-girlserve
 	install -Dm755 girl '$(DESTDIR)$(BINDIR)/girl'
 	install -Dm644 man/girl.1 '$(DESTDIR)$(MANDIR)/man1/girl.1'
 	install -dm755 '$(DESTDIR)$(LIBEXECDIR)'
@@ -151,8 +160,8 @@ ifneq ($(HOOKS)$(filter yes,$(SYSTEMD)),)
 	@echo '   After that, the $(strip $(if $(HOOKS),$(HOOKS) hooks)$(if $(HOOKS),$(if $(filter yes,$(SYSTEMD)), and)) $(if $(filter yes,$(SYSTEMD)),daily timer)) will keep it fresh ✨'
 endif
 
-install-user: girl girlrepo girlc
-	for b in girl girlrepo girlc; do \
+install-user: girl girlrepo girlc girlserve
+	for b in girl girlrepo girlc girlserve; do \
 		install -Dm755 $$b '$(USER_PREFIX)/bin/'$$b && \
 		install -Dm644 man/$$b.1 '$(USER_PREFIX)/share/man/man1/'$$b.1 || exit 1; \
 	done
@@ -168,7 +177,7 @@ endif
 	@echo
 	@echo '💖 girlpages installed in $(USER_PREFIX). Try: girl girl'
 	@case ":$$PATH:" in *':$(USER_PREFIX)/bin:'*) ;; *) echo '   (add $(USER_PREFIX)/bin to your PATH first)';; esac
-	@if [ -n "$$MANPATH" ]; then echo '   $$MANPATH is set, so add $(USER_PREFIX)/share/man to it for girl(1), girlrepo(1) and girlc(1)'; fi
+	@if [ -n "$$MANPATH" ]; then echo '   $$MANPATH is set, so add $(USER_PREFIX)/share/man to it for girl(1), girlrepo(1), girlc(1) and girlserve(1)'; fi
 	@echo '   Girlify all your man pages with: girl --bulk'
 
 uninstall:
@@ -176,6 +185,7 @@ uninstall:
 	rm -f '$(DESTDIR)$(BINDIR)/girl' '$(DESTDIR)$(MANDIR)/man1/girl.1' \
 		'$(DESTDIR)$(BINDIR)/girlrepo' '$(DESTDIR)$(MANDIR)/man1/girlrepo.1' \
 		'$(DESTDIR)$(BINDIR)/girlc' '$(DESTDIR)$(MANDIR)/man1/girlc.1' \
+		'$(DESTDIR)$(BINDIR)/girlserve' '$(DESTDIR)$(MANDIR)/man1/girlserve.1' \
 		'$(DESTDIR)$(LIBEXECDIR)/girlpages-hook' \
 		'$(DESTDIR)$(SYSTEMDUNITDIR)/girlpages-update.service' \
 		'$(DESTDIR)$(SYSTEMDUNITDIR)/girlpages-update.timer' \
@@ -190,9 +200,10 @@ uninstall-user:
 	rm -f '$(USER_PREFIX)/bin/girl' '$(USER_PREFIX)/share/man/man1/girl.1' \
 		'$(USER_PREFIX)/bin/girlrepo' '$(USER_PREFIX)/share/man/man1/girlrepo.1' \
 		'$(USER_PREFIX)/bin/girlc' '$(USER_PREFIX)/share/man/man1/girlc.1' \
+		'$(USER_PREFIX)/bin/girlserve' '$(USER_PREFIX)/share/man/man1/girlserve.1' \
 		'$(USER_CONFIG_DIR)/systemd/user/girlpages-update.service' \
 		'$(USER_CONFIG_DIR)/systemd/user/girlpages-update.timer'
 	@echo 'Left $(USER_CONFIG_DIR)/girlpages and your cache in place.'
 
 clean:
-	rm -f girl girlrepo girlc
+	rm -f girl girlrepo girlc girlserve

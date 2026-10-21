@@ -181,6 +181,9 @@ func Parse(list string) ([]Encoding, error) {
 var worth = map[string]bool{".json": true, ".html": true, ".js": true, ".css": true, ".xml": true,
 	".svg": true, ".txt": true, ".webmanifest": true}
 
+// Worth reports whether a file (by name) is the kind worth compressing.
+func Worth(name string) bool { return worth[filepath.Ext(name)] }
+
 // MinSize is the smallest file worth compressing: below it, the headers
 // cost more than compression saves.
 const MinSize = 256

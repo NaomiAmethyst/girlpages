@@ -254,6 +254,18 @@ fetching just the new ones next time; `girlrepo export DIR` writes a
 pack-only copy to host anywhere, adding to it each time; and `girlrepo
 unpack` merges packs you've copied over by hand.
 
+Serving millions of small files off a network file system is slow too, so
+a site can also live in an *archive*: a few big files (segments of every
+file's bytes, stored in each form it's sent in, and an index of where they
+are) that `girlrepo publish --archive DIR` adds each new version to, writing
+only what changed. `girlserve`, a small static server (and image) of its own,
+serves an archive, sending each file in the smallest form the client accepts,
+and switches to new versions as they're written, with health checks,
+Prometheus metrics and access logs for running it in production.
+[dist/hosting/kubernetes.yaml](dist/hosting/kubernetes.yaml) has a CronJob
+that publishes packs dropped into a directory into an archive and a Deployment
+serving it; [doc/archive-format.md](doc/archive-format.md) has the format.
+
 ## Configure
 
 ```toml
