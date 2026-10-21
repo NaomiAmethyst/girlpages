@@ -55,3 +55,15 @@ export const sourceLabel = (key) => (key ? key.replace("/", " ") : "everything")
 
 // plural counts pages.
 export const plural = (n) => (n === 1 ? "1 page" : `${n} pages`);
+
+// How the variants girlrepo has prompts for (llm.Variants) are offered;
+// others (made with other prompts) get their name. As site.variantLabel.
+const VARIANT_LABELS = {
+  girl: "💅 girly", man: "📜 original", boy: "🎮 boy", femboy: "🥺 femboy", lolcat: "😺 lolcat", pirate: "🏴‍☠️ pirate",
+  eli5: "🧸 eli5", woman: "☕ woman", witch: "🔮 witch", bofh: "🔥 bofh",
+};
+
+/** @param {string} v */
+export function variantLabelOf(v) {
+  return Object.hasOwn(VARIANT_LABELS, v) ? VARIANT_LABELS[/** @type {keyof typeof VARIANT_LABELS} */ (v)] : "✨ " + v;
+}

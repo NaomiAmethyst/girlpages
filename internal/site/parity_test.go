@@ -9,6 +9,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/NaomiAmethyst/girlpages/internal/llm"
 	"github.com/NaomiAmethyst/girlpages/internal/manpage"
 	"github.com/NaomiAmethyst/girlpages/internal/web"
 )
@@ -25,7 +26,8 @@ func TestJSParity(t *testing.T) {
 const m = await import(%q);
 const u = await import(%q);
 const { names, secs } = %s;
-const out = { letter: {}, chapter: {}, series: {}, sectionName: {}, order: [], page: {}, list: {}, browse: {} };
+const out = { letter: {}, chapter: {}, series: {}, sectionName: {}, order: [], page: {}, list: {}, browse: {}, variant: {} };
+for (const v of ["girl", "man", "boy", "femboy", "lolcat", "pirate", "eli5", "woman", "witch", "bofh", "other", "constructor"]) out.variant[v] = m.variantLabelOf(v);
 for (const n of names) out.letter[n] = m.letterOf(n);
 for (const s of secs) {
   out.chapter[s] = m.chapter(s);
@@ -48,11 +50,22 @@ console.log(JSON.stringify(out));`, staticFile(t, "manual.js"), staticFile(t, "u
 		Order           [][2]string
 		Page, Browse    map[string]string
 		List            map[string][2]string
+		Variant         map[string]string
 	}
 	if err := json.Unmarshal(got, &js); err != nil {
 		t.Fatalf("%v\n%s", err, got)
 	}
 
+	for v, label := range js.Variant {
+		if want := variantLabel(v); label != want {
+			t.Errorf("variantLabelOf(%q) = %q, Go says %q", v, label, want)
+		}
+	}
+	for _, v := range llm.Variants() {
+		if _, ok := variantLabels[v.Name]; !ok {
+			t.Errorf("no label for the %s variant", v.Name)
+		}
+	}
 	b := &builder{o: Options{Base: "/g/"}}
 	for _, n := range names {
 		if want := manpage.Letter(n); js.Letter[n] != want {

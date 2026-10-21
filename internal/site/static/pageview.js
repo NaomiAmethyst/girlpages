@@ -9,13 +9,8 @@ import { errorKind } from "./cache.js";
 import { Drawer } from "./draw.js";
 import { Spy } from "./spy.js";
 import { pathEscape, segmentName } from "./urls.js";
-import { chapter, isSeries, sectionLabel, sourceLabel } from "./manual.js";
-
-// How the variants girlrepo has prompts for are offered (llm.Variants).
-const VARIANT_LABELS = {
-  girl: "💅 girly", man: "📜 original", boy: "🎮 boy", femboy: "🥺 femboy", lolcat: "😺 lolcat", pirate: "🏴‍☠️ pirate",
-  eli5: "🧸 eli5", woman: "☕ woman", witch: "🔮 witch", bofh: "🔥 bofh",
-};
+import { preferredVariant, setPreferredVariant } from "./prefs.js";
+import { chapter, isSeries, sectionLabel, sourceLabel, variantLabelOf } from "./manual.js";
 
 // createPageView makes the page view for an app: ctx has its element (el),
 // the site's base, listing(name, sec) and variant(source, which, sha) to
@@ -24,7 +19,7 @@ const VARIANT_LABELS = {
 export function createPageView({ el: app, base, listing, findName, variant, browse, staticPage, listingURL, oops }) {
   // How variants are offered. Others (made with other prompts) get their name.
   function variantLabel(v) {
-    return VARIANT_LABELS[v] || "✨ " + v;
+    return variantLabelOf(v);
   }
 
   // Girly first, the original last, anything else between.
@@ -130,9 +125,13 @@ export function createPageView({ el: app, base, listing, findName, variant, brow
     if (!ver) return { error: "that page has no versions 🤔" };
     const has = (k) => ver.variants && ver.variants[k];
     const variants = Object.keys(ver.variants || {}).filter(k => /^[a-z][a-z0-9-]{0,31}$/.test(k)).sort(variantOrder);
-    if (!which || !has(which)) which = variants[0] || "man";
+    // The one shown when the address doesn't say: the reader's choice, if
+    // this version has it.
+    const pref = preferredVariant();
+    const def = pref && has(pref) ? pref : variants[0] || "man";
+    if (!which || !has(which)) which = def;
     const doc = await variant(ver.source, which, ver.variants[which].sha256);
-    return { l, ver, which, variants, versions, slug, doc, at, mono };
+    return { l, ver, which, variants, def, versions, slug, doc, at, mono };
   }
 
   // pageView shows a page.
@@ -146,7 +145,7 @@ export function createPageView({ el: app, base, listing, findName, variant, brow
       return nav.redirect(u.href);
     }
     if ("error" in d) return oops(nav, d.error);
-    const { l, ver, which, variants, versions, slug, doc, at, mono } = d;
+    const { l, ver, which, variants, def, versions, slug, doc, at, mono } = d;
     const title = ver.title || `${name.toUpperCase()}(${sec})`;
     const latest = ver.source === l.current;
     const suffix = which === "girl" ? "" : which === "man" ? " · original" : " · " + which;
@@ -177,11 +176,19 @@ export function createPageView({ el: app, base, listing, findName, variant, brow
     if (variants.length > 1) {
       for (const k of variants) {
         pills.push(k === which ? html`<span class="pill on">${variantLabel(k)}</span>`
-          : html`<a class="pill" href="${here({ variant: k === variants[0] ? "" : k })}">${variantLabel(k)}</a>`);
+          : html`<a class="pill" href="${here({ variant: k === def ? "" : k })}">${variantLabel(k)}</a>`);
+      }
+      // Making the one read the default (or, if it's the one chosen,
+      // going back to girlpages' own).
+      const chosen = preferredVariant() === which;
+      if (chosen || which !== def) {
+        pills.push(html`<button type="button" class="pill prefer${chosen ? " on" : ""}" data-prefer="${chosen ? "" : which}"
+          title="${chosen ? "pages open in this unless they haven't it; press to go back to girly first" : "open pages in this from now on, where they have it"}">${
+          chosen ? "★ my default" : `☆ make ${variantLabel(which).replace(/^\S+ /, "")} my default`}</button>`);
       }
     }
     if (doc.syntax !== "girlpages-markup") {
-      pills.push(html`<a class="pill${mono ? " on" : ""}" href="${here({ variant: which === variants[0] ? "" : which, mono: !mono })}" title="as man prints it">⌨️ monospace</a>`);
+      pills.push(html`<a class="pill${mono ? " on" : ""}" href="${here({ variant: which === def ? "" : which, mono: !mono })}" title="as man prints it">⌨️ monospace</a>`);
     }
 
     // Where it's from, and its versions, as on the static page: this one
@@ -223,6 +230,14 @@ export function createPageView({ el: app, base, listing, findName, variant, brow
 
     if (!nav.render(html`<div class="layout"><article class="card manpage">${crumbs}<h1>${title}${suffix}</h1>${lede}${inLine}${
       pills.length > 0 && html`<div class="meta">${pills}</div>`}${notices}${body}${provenance}</article>${contents}</div>`)) return;
+    // Choosing a default: the same page, at the address that shows the
+    // same variant under the new choice.
+    app.querySelector("[data-prefer]")?.addEventListener("click", (e) => {
+      const v = /** @type {HTMLElement} */ (e.currentTarget).dataset.prefer || "";
+      setPreferredVariant(v);
+      const nextDef = v && variants.includes(v) ? v : variants[0] || "man";
+      nav.redirect(here({ variant: which === nextDef ? "" : which, mono }));
+    });
     // Drawn ahead of scrolling (see draw.js).
     nav.own(new Drawer()).watch(app.querySelectorAll(".content > *, .original > *"));
     // The contents follow the reading (see spy.js).

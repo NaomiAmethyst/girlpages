@@ -128,6 +128,10 @@ export class Router {
     this.nav = null;        // the newest navigation
     this.showing = "";      // the address shown, if it's the static view's
     this.started = false;
+    // takeOver has the app show the page loaded, in place of its own
+    // view (for a reader who'd rather read another variant than the one
+    // it shows).
+    this.takeOver = false;
   }
 
   // start follows the address from now on, and shows it.
@@ -177,6 +181,7 @@ export class Router {
   // it's the page loaded (and not a route), or history says it was.
   isStatic() {
     if (history.state?.own) return true;
+    if (this.takeOver) return false;
     return location.pathname + location.search === this.docURL && !isRoute(location.hash);
   }
 

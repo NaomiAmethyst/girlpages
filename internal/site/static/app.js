@@ -138,6 +138,14 @@ export function start() {
   return moved() || app().router.start();
 }
 
+// takeOver shows the page loaded with the app, in place of its own view.
+export function takeOver() {
+  if (moved()) return moved();
+  const r = app().router;
+  r.takeOver = true;
+  return r.start();
+}
+
 // navigate goes to an address (a link followed), in a new history entry.
 export function navigate(href) {
   return moved() || app().router.navigate(href);

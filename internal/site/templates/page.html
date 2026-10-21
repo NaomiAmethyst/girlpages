@@ -5,7 +5,7 @@
 <h1>{{.Title}}</h1>
 {{if and .Series .Description}}<p class="lede">{{.Description}}</p>{{end}}
 {{if .In}}<div class="meta in">{{if .Series}}📅 {{if .Published}}published {{.Published}}, {{end}}from {{else}}📦 {{if .VersionLinks}}<details class="versions" id="versions"><summary>{{if .Version}}version {{.Version}}{{else}}this version{{end}} <span class="n">· {{len .VersionLinks}} versions</span></summary><ul>{{range .VersionLinks}}<li>{{if .On}}<strong>{{.Label}}</strong>{{else}}<a href="{{.URL}}">{{.Label}}</a>{{end}}</li>{{end}}</ul></details>, {{else if .Version}}version {{.Version}}, {{end}}in {{end}}{{range $i, $c := .In}}{{if $i}}, {{end}}<a href="{{$c.URL}}">{{$c.Label}}</a>{{end}}</div>{{end}}
-{{if .Girlified}}<div class="meta"><span class="pill on">💅 girly</span><a class="pill" href="{{.BrowseURL}}/man">📜 original</a></div>
+{{if or .Girlified .Others}}<div class="meta">{{if .Girlified}}<span class="pill on">💅 girly</span>{{end}}{{range .Others}}<a class="pill" href="{{.URL}}">{{.Label}}</a>{{end}}{{if .Girlified}}<a class="pill" href="{{.BrowseURL}}/man">📜 original</a>{{else}}<span class="pill on">📜 original</span>{{end}}</div>
 {{end}}{{if not .Girlified}}<div class="notice">💤 she hasn't gotten to this one yet, so here's the original for now.</div>
 {{end}}<div class="content{{if not .Girlified}} reflowed{{end}}">
 {{.Body}}

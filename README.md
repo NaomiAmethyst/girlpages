@@ -234,7 +234,8 @@ which scroll on into each other with JavaScript). Everything else runs
 in the browser straight from the repo: originals, older versions, browsing
 just Debian, just Debian trixie, just Arch or upstream git, and search over
 every page and version from every source (typos and all: `grpe` finds
-`grep`). The site installs as an app (a PWA) and works offline: every repo file
+`grep`). Pages made in other voices too (`girlrepo girlify --variant pirate`)
+offer each, and any of them can be made your default, kept in your browser. The site installs as an app (a PWA) and works offline: every repo file
 fetched is kept (in the browser's Cache API), so pages you've read and
 searches you've done work without a network, and offline the app renders
 any page from them. Each section listing has a "save for offline" button

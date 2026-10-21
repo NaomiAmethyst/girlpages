@@ -23,7 +23,10 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+import json
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 try:
     from playwright.async_api import async_playwright
@@ -79,8 +82,49 @@ def build_site(tmp):
     site = os.path.join(tmp, "site")
     run = lambda *a: subprocess.run([GIRLREPO, "-d", site, *a], check=True, capture_output=True)
     run("ingest", man)
+    # Two variants of one page (and its original), for choosing a default.
+    girlify(tmp, site, ["admin050(8)"])
     run("publish", "--precompress", "none")
     return site
+
+
+class FakeModel(BaseHTTPRequestHandler):
+    """An OpenAI-compatible chat API that "rewrites" a page: in the voice
+    its system prompt asks for, keeping its options."""
+
+    def do_POST(self):
+        req = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        system = next((m["content"] for m in req["messages"] if m["role"] == "system"), "")
+        user = next((m["content"] for m in req["messages"] if m["role"] == "user"), "")
+        name = re.search(r"Rewrite the manual page (\S+)", user).group(1).split("(")[0].lower()
+        voice = "arr matey, pirate" if "pirate captain" in system else "slay bestie, girly"
+        opts = " ".join(sorted(set(re.findall(r"(?<![\w-])-[a-z]\b", user))))
+        reply = f"# NAME\n\n{voice} {name} {opts}\n"
+        body = json.dumps({"choices": [{"message": {"role": "assistant", "content": reply}, "finish_reason": "stop"}],
+                           "model": "fake"}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *a):
+        pass
+
+
+def girlify(tmp, site, names):
+    """Girlifies pages, and makes their pirate variants, with FakeModel."""
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), FakeModel)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    conf = os.path.join(tmp, "config.toml")
+    with open(conf, "w") as f:
+        f.write(f'backend = "openai"\nbatch = "none"\n[openai]\nbase_url = "http://127.0.0.1:{srv.server_port}/v1"\n'
+                'model = "fake"\napi_key = "x"\n')
+    env = dict(os.environ, GIRLPAGES_CONFIG=conf, XDG_CACHE_HOME=os.path.join(tmp, "cache"))
+    for variant in ["girl", "pirate"]:
+        subprocess.run([GIRLREPO, "-d", site, "girlify", "-q", "--no-cache", "--variant", variant, *names],
+                       check=True, capture_output=True, env=env)
+    srv.shutdown()
 
 
 def free_port():
@@ -458,6 +502,43 @@ async def main():
             await ctx.close()
             # Looking the name up as written first is a 404, which is expected.
             errors[:] = [e for e in errors if not ("404" in e and ("/ADMIN002/" in e or "/ssl_thing001/" in e))]
+
+            print("choosing a default variant")
+            ctx, page = await fresh("/man/8/admin050/", width=1200)
+            content = lambda: page.evaluate("""() => { const routed = document.documentElement.classList.contains('routed');
+              const app = document.querySelector('#app'), sv = document.querySelector('.static-view');
+              const v = (routed && app && !app.hidden ? app : sv); return v ? v.querySelector('.content, .original')?.textContent || '' : '' }""")
+            check("girly admin050" in await content(), f"girly first: {(await content())[:60]!r}")
+            await page.click("a.pill:has-text('pirate')")
+            await shown(page)
+            check("pirate admin050" in await content(), "the pirate variant, picked")
+            await page.click("[data-prefer]")
+            s = await shown(page)
+            check("pirate admin050" in await content() and page.url.endswith("#/8/admin050"),
+                  f"made the default, at the plain address: {page.url}")
+            pref = await page.evaluate("localStorage.getItem('girlpages:variant')")
+            check(pref == "pirate", f"remembered: {pref!r}")
+            # The static page (girly) is shown as the pirate one, at its own address.
+            await page.goto(base + "/man/8/admin050/", wait_until="networkidle")
+            await page.wait_for_timeout(1500)
+            s = await shown(page)
+            check(s[0] == "app" and "pirate admin050" in await content() and page.url.endswith("/man/8/admin050/"),
+                  f"the static page, in pirate: {s} {page.url} {(await content())[:40]!r}")
+            check(await page.locator("a.pill:has-text('girly')").count() == 1, "girly's still offered")
+            # A page without that variant shows what it has.
+            await tap(page, base + "/man/8/admin051/")
+            s = await shown(page)
+            check(s[0] == "app" and "admin051" in await content(), f"a page without pirate: {s}")
+            # Undone: girly again.
+            await page.goto(base + "/man/8/admin050/", wait_until="networkidle")
+            await page.wait_for_timeout(1500)
+            await page.click("[data-prefer].on")
+            await shown(page)
+            pref = await page.evaluate("localStorage.getItem('girlpages:variant')")
+            await page.goto(base + "/man/8/admin050/", wait_until="networkidle")
+            await page.wait_for_timeout(1500)
+            check(pref is None and "girly admin050" in await content(), f"back to girly: {pref!r}")
+            await ctx.close()
 
             print("no script errors")
             for e in errors:

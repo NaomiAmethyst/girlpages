@@ -358,6 +358,23 @@ type pageView struct {
 	VersionLinks []pagerLink
 	Versions     int
 	Version      string // upstream version number
+	// Others are its variants but the girly one and the original (pirate,
+	// witch…), each linking to it in the browser app.
+	Others []chip
+}
+
+// variantLabels are how the variants girlrepo has prompts for are
+// offered (as manual.js's variantLabelOf); others get their name.
+var variantLabels = map[string]string{
+	"girl": "💅 girly", "man": "📜 original", "boy": "🎮 boy", "femboy": "🥺 femboy", "lolcat": "😺 lolcat",
+	"pirate": "🏴‍☠️ pirate", "eli5": "🧸 eli5", "woman": "☕ woman", "witch": "🔮 witch", "bofh": "🔥 bofh",
+}
+
+func variantLabel(v string) string {
+	if l, ok := variantLabels[v]; ok {
+		return l
+	}
+	return "✨ " + v
 }
 
 func (b *builder) url(parts ...string) string {
@@ -972,6 +989,16 @@ func (b *builder) page(p repo.PageRef) error {
 	}
 	if len(p.Listing.Versions) > 1 {
 		pv.VersionLinks = versionLinks(p.Listing, u, func(slug string) string { return b.browseURL("", sec, name, slug) })
+	}
+	others := make([]string, 0, len(ver.Variants))
+	for v := range ver.Variants {
+		if v != repo.VariantGirl && v != repo.VariantMan && repo.ValidVariant(v) {
+			others = append(others, v)
+		}
+	}
+	sort.Strings(others)
+	for _, v := range others {
+		pv.Others = append(pv.Others, chip{Label: variantLabel(v), URL: b.browseURL("", sec, name, v)})
 	}
 
 	man, err := b.s.Variant(ver.Source, repo.VariantMan)

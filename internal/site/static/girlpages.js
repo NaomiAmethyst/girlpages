@@ -14,6 +14,7 @@ import { Drawer } from "./draw.js";
 import { Spy } from "./spy.js";
 import { keys } from "./keys.js";
 import { outdated, watchUpdates } from "./update.js";
+import { preferredVariant } from "./prefs.js";
 
 const PREFIX = "girlpages:";
 
@@ -137,6 +138,11 @@ function boot() {
   // A static page read (or listing seen) is kept, so the browse app can
   // show it offline.
   const page = /** @type {HTMLElement | null} */ (document.querySelector("[data-keep-page]"));
+  // A reader who'd rather read another variant than the girly one a page
+  // shows by default gets it from the app, at the same address.
+  if (page && preferredVariant() && preferredVariant() !== "girl" && !outdated()) {
+    import(new URL(base + "static/app.js", location.href).href).then(m => m.takeOver()).catch(() => {});
+  }
   if (page) idle(() => cache.keepPage(page.dataset.keepPage, page.dataset.keepSection).catch(() => {}));
   if (typeof globalThis.caches !== "undefined") {
     for (const b of /** @type {NodeListOf<HTMLButtonElement>} */ (document.querySelectorAll("button[data-save-section], button[data-save-search]"))) {
