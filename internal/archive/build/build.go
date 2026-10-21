@@ -204,6 +204,7 @@ func NewStage(dir string, o Options) (*Stage, error) {
 		known: map[archive.Hash][4]archive.Blob{}, fresh: map[archive.Hash][4]archive.Blob{},
 		entries: map[string]staged{}, dirs: map[string]map[string]bool{}}
 	st.w = &segWriter{dir: dir, limit: o.SegmentSize, table: st.segs, readers: st.readers}
+	readable(filepath.Join(dir, archive.SegmentDir))
 	prev, err := archive.ReadCurrent(dir)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		unlock()
@@ -635,6 +636,12 @@ func (w *segWriter) finish() error {
 	if w.readers != nil && w.readers[w.cur] == f {
 		delete(w.readers, w.cur) // (opened by its name when it's next read)
 	}
+	// Readable by servers running as other users (temporary files are
+	// made 0600).
+	if err := f.Chmod(0o644); err != nil {
+		f.Close()
+		return err
+	}
 	if err := f.Sync(); err != nil {
 		f.Close()
 		return err
@@ -825,6 +832,23 @@ func collect(dir, current string, o Options) (int, error) {
 		}
 	}
 	return removed, nil
+}
+
+// readable makes the segments in dir readable by everyone, as servers
+// may run as other users (earlier versions left them 0600).
+func readable(dir string) {
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, d := range ents {
+		if !strings.HasSuffix(d.Name(), ".seg") {
+			continue
+		}
+		if fi, err := d.Info(); err == nil && fi.Mode().Perm()&0o044 != 0o044 {
+			_ = os.Chmod(filepath.Join(dir, d.Name()), fi.Mode().Perm()|0o644)
+		}
+	}
 }
 
 // lockFile takes an exclusive lock on a file, waiting for it.

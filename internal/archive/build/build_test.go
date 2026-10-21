@@ -75,6 +75,20 @@ func TestWrite(t *testing.T) {
 	if st.Files != 4 || st.New != 3 || st.Segments != 1 || st.Index == "" {
 		t.Fatalf("first: %+v", st)
 	}
+	// Everything a server reads is readable by other users.
+	readableBy := func(p string) {
+		t.Helper()
+		if fi, err := os.Stat(p); err != nil || fi.Mode().Perm()&0o044 != 0o044 {
+			t.Errorf("%s: %v %v", p, fi.Mode(), err)
+		}
+	}
+	readableBy(filepath.Join(dir, archive.CurrentName))
+	readableBy(filepath.Join(dir, archive.IndexName(st.Index)))
+	segs0, _ := filepath.Glob(filepath.Join(dir, archive.SegmentDir, "*.seg"))
+	for _, p := range segs0 {
+		readableBy(p)
+		os.Chmod(p, 0o600) // as an earlier version left them: put right next time
+	}
 	a, err := archive.Open(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -115,6 +129,9 @@ func TestWrite(t *testing.T) {
 	}
 	if st.New != 1 || st.NewBytes != int64(len(`{"format":1,"pages":2}`)) || st.Segments != 2 {
 		t.Fatalf("second: %+v", st)
+	}
+	for _, p := range segs0 {
+		readableBy(p)
 	}
 	if changed, err := a.Reload(); err != nil || !changed {
 		t.Fatalf("reload: %v, %v", changed, err)
