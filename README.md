@@ -285,6 +285,30 @@ model = "claude-haiku-5-5"
 Results come back within a day. Runs save what they sent, so Ctrl-C is fine
 and `--no-wait` just sends them off; the next run collects them.
 
+Use more than one service? Name each in a `[providers.NAME]` section (any
+of `[openai]`'s settings, or `[claude]`'s with `backend = "claude"`, and
+its own `batch`) and switch with `--provider` instead of editing the file:
+
+```toml
+provider = "sail"   # the default; must come before any [section]
+
+[providers.sail]
+base_url = "https://api.sailresearch.com/v1"
+model = "deepseek-ai/DeepSeek-V4.1-Flash"
+api_key_file = "/home/me/.config/girlpages/sail-key"
+api = "responses"
+completion_window = "flex"
+batch = "sail"
+
+[providers.haiku]
+backend = "claude"
+model = "claude-haiku-5-5"
+```
+
+```sh
+girlrepo girlify --provider haiku -j 8
+```
+
 `girl --doctor` shows what it's actually using. Everything is documented in
 `dist/config.toml` and in `girl girl`. Want a different vibe? Set
 `extra_instructions`.

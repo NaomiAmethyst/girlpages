@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -69,6 +70,12 @@ type Config struct {
 	// BatchMaxRequests caps how many requests go in one batch (0: as many
 	// as the API takes); a run sends as many batches as it needs.
 	BatchMaxRequests int `toml:"batch_max_requests"`
+	// Provider names the provider in Providers to use, unless
+	// GIRLPAGES_PROVIDER or --provider says otherwise.
+	Provider string `toml:"provider"`
+	// Providers are named setups, each one an [openai] or [claude] section
+	// in itself, to switch between with --provider.
+	Providers map[string]ProviderConfig `toml:"providers"`
 
 	OpenAI OpenAIConfig `toml:"openai"`
 	Claude ClaudeConfig `toml:"claude"`
@@ -109,6 +116,37 @@ type OpenAIConfig struct {
 	BatchURL string `toml:"batch_url"`
 	// BatchPoll is how often to check on a batch while waiting for it.
 	BatchPoll Duration `toml:"batch_poll"`
+}
+
+// ProviderConfig is one named provider: a whole [openai] section (the
+// default) or [claude] one (backend = "claude"), and how it batches.
+type ProviderConfig struct {
+	// Backend is "openai" (an OpenAI-compatible API; the default) or
+	// "claude" (the claude CLI).
+	Backend string `toml:"backend"`
+	// Batch and BatchMaxRequests are the provider's own batch and
+	// batch_max_requests: the top-level ones don't apply to it, and no
+	// batch means none. Anthropic batches use [anthropic], with the
+	// provider's api_key or api_key_file if it has one.
+	Batch            string `toml:"batch"`
+	BatchMaxRequests int    `toml:"batch_max_requests"`
+	// For OpenAI-compatible APIs, as in OpenAIConfig.
+	BaseURL          string            `toml:"base_url"`
+	APIKey           string            `toml:"api_key"`
+	APIKeyFile       string            `toml:"api_key_file"`
+	Model            string            `toml:"model"`
+	Temperature      *float64          `toml:"temperature"`
+	MaxTokens        int               `toml:"max_tokens"`
+	Timeout          Duration          `toml:"timeout"`
+	Headers          map[string]string `toml:"headers"`
+	Extra            map[string]any    `toml:"extra"`
+	API              string            `toml:"api"`
+	CompletionWindow string            `toml:"completion_window"`
+	BatchURL         string            `toml:"batch_url"`
+	BatchPoll        Duration          `toml:"batch_poll"`
+	// For the claude CLI, as in ClaudeConfig.
+	Command string   `toml:"command"`
+	Args    []string `toml:"args"`
 }
 
 type ClaudeConfig struct {
@@ -306,13 +344,100 @@ func Load(explicit string) (Config, error) {
 		}
 		cfg.Files = append(cfg.Files, p)
 	}
-	if err := cfg.applyEnv(); err != nil {
+	name := os.Getenv("GIRLPAGES_PROVIDER")
+	if name == "" {
+		name = cfg.Provider
+	}
+	if name != "" {
+		return cfg, cfg.UseProvider(name)
+	}
+	if err := cfg.applyEnv(false); err != nil {
 		return cfg, err
 	}
 	return cfg, nil
 }
 
-func (c *Config) applyEnv() error {
+// ProviderNames lists the configured providers, sorted.
+func (c *Config) ProviderNames() []string {
+	names := make([]string, 0, len(c.Providers))
+	for n := range c.Providers {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// UseProvider switches to a named provider: its backend, and an [openai]
+// or [claude] section made of its settings alone (and the defaults), so
+// nothing of another provider's is sent to it. The connection settings
+// from the environment (base URL, API key) are left out too; the rest
+// still apply.
+func (c *Config) UseProvider(name string) error {
+	p, ok := c.Providers[name]
+	if !ok {
+		if len(c.Providers) == 0 {
+			return fmt.Errorf("no provider %q: there are no [providers.NAME] sections in the config", name)
+		}
+		return fmt.Errorf("no provider %q (there's %s)", name, strings.Join(c.ProviderNames(), ", "))
+	}
+	d := Defaults()
+	switch b := strings.ToLower(p.Backend); b {
+	case "", BackendOpenAI:
+		o := d.OpenAI
+		set := func(dst *string, v string) {
+			if v != "" {
+				*dst = v
+			}
+		}
+		set(&o.BaseURL, p.BaseURL)
+		set(&o.APIKey, p.APIKey)
+		set(&o.APIKeyFile, p.APIKeyFile)
+		set(&o.Model, p.Model)
+		set(&o.API, p.API)
+		set(&o.CompletionWindow, p.CompletionWindow)
+		set(&o.BatchURL, p.BatchURL)
+		o.Temperature, o.Headers, o.Extra = p.Temperature, p.Headers, p.Extra
+		if p.MaxTokens > 0 {
+			o.MaxTokens = p.MaxTokens
+		}
+		if p.Timeout.Duration > 0 {
+			o.Timeout = p.Timeout
+		}
+		if p.BatchPoll.Duration > 0 {
+			o.BatchPoll = p.BatchPoll
+		}
+		c.Backend, c.OpenAI = BackendOpenAI, o
+	case BackendClaude:
+		cl := d.Claude
+		if p.Command != "" {
+			cl.Command = p.Command
+		}
+		if p.Model != "" {
+			cl.Model = p.Model
+		}
+		cl.Args = p.Args
+		if p.Timeout.Duration > 0 {
+			cl.Timeout = p.Timeout
+		}
+		c.Backend, c.Claude = BackendClaude, cl
+	default:
+		return fmt.Errorf("provider %q: backend = %q: want openai or claude", name, p.Backend)
+	}
+	c.Batch, c.BatchMaxRequests = p.Batch, p.BatchMaxRequests
+	if c.Batch == "" {
+		c.Batch = BatchNone
+	}
+	if b, _ := c.ResolveBatch(); b == BatchAnthropic && (p.APIKey != "" || p.APIKeyFile != "") {
+		c.Anthropic.APIKey, c.Anthropic.APIKeyFile = p.APIKey, p.APIKeyFile
+	}
+	c.Provider = name
+	return c.applyEnv(true)
+}
+
+// applyEnv applies GIRLPAGES_* (and a few other) environment variables;
+// with provider, not the ones that say where to connect and with what
+// key, which belong to the provider.
+func (c *Config) applyEnv(provider bool) error {
 	str := func(dst *string, names ...string) {
 		for _, n := range names {
 			if v, ok := os.LookupEnv(n); ok && v != "" {
@@ -321,18 +446,23 @@ func (c *Config) applyEnv() error {
 			}
 		}
 	}
-	str(&c.Backend, "GIRLPAGES_BACKEND")
 	str(&c.CacheDir, "GIRLPAGES_CACHE_DIR")
-	str(&c.OpenAI.BaseURL, "GIRLPAGES_OPENAI_BASE_URL", "OPENAI_BASE_URL")
-	str(&c.OpenAI.APIKey, "GIRLPAGES_OPENAI_API_KEY", "OPENAI_API_KEY")
-	str(&c.OpenAI.Model, "GIRLPAGES_OPENAI_MODEL")
-	str(&c.OpenAI.BatchURL, "GIRLPAGES_OPENAI_BATCH_URL")
-	str(&c.Batch, "GIRLPAGES_BATCH")
-	str(&c.Anthropic.APIKey, "GIRLPAGES_ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY")
+	if !provider || (c.Anthropic.APIKey == "" && c.Anthropic.APIKeyFile == "") {
+		// (A provider's own Anthropic key wins over the environment's.)
+		str(&c.Anthropic.APIKey, "GIRLPAGES_ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY")
+	}
 	str(&c.Anthropic.Model, "GIRLPAGES_ANTHROPIC_MODEL")
-	str(&c.Claude.Command, "GIRLPAGES_CLAUDE_COMMAND")
-	str(&c.Claude.Model, "GIRLPAGES_CLAUDE_MODEL")
 	str(&c.Repo.URL, "GIRLPAGES_REPO")
+	if !provider {
+		str(&c.Backend, "GIRLPAGES_BACKEND")
+		str(&c.OpenAI.BaseURL, "GIRLPAGES_OPENAI_BASE_URL", "OPENAI_BASE_URL")
+		str(&c.OpenAI.APIKey, "GIRLPAGES_OPENAI_API_KEY", "OPENAI_API_KEY")
+		str(&c.OpenAI.Model, "GIRLPAGES_OPENAI_MODEL")
+		str(&c.OpenAI.BatchURL, "GIRLPAGES_OPENAI_BATCH_URL")
+		str(&c.Batch, "GIRLPAGES_BATCH")
+		str(&c.Claude.Command, "GIRLPAGES_CLAUDE_COMMAND")
+		str(&c.Claude.Model, "GIRLPAGES_CLAUDE_MODEL")
+	}
 	if v := os.Getenv("GIRLPAGES_JOBS"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1 {

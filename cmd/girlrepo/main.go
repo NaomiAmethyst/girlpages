@@ -653,6 +653,7 @@ func absPath(p string) string {
 
 func (a *app) girlify(ctx context.Context, args []string) error {
 	fs := flags("girlify", "[options] [NAME...]")
+	provider := fs.String("provider", "", "use this provider from the girlpages config's [providers.NAME]")
 	backend := fs.String("backend", "", "openai or claude (default from the girlpages config)")
 	model := fs.String("model", "", "model to use")
 	jobs := fs.IntP("jobs", "j", a.cfg.Jobs, "pages to convert at once")
@@ -683,6 +684,11 @@ func (a *app) girlify(ctx context.Context, args []string) error {
 	}
 	if _, err := llm.LookupVariant(*variant); err != nil {
 		return err
+	}
+	if *provider != "" {
+		if err := a.cfg.UseProvider(*provider); err != nil {
+			return err
+		}
 	}
 	if *backend != "" {
 		a.cfg.Backend = *backend

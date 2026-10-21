@@ -7,6 +7,10 @@
 # on $PATH, else OpenAI proper if there's an API key.
 #backend = "auto"
 
+# Which of the [providers.NAME] sections below to use (--provider and
+# GIRLPAGES_PROVIDER override it). Unset, [openai] and [claude] are used.
+#provider = "sail"
+
 # LLM requests at once. For a single page, the parts of a long page are
 # converted in parallel; for --bulk, whole pages are.
 #jobs = 4
@@ -84,6 +88,39 @@
 #[openai.extra]
 #provider = { only = ["deepinfra"], allow_fallbacks = false }
 #reasoning = { enabled = false }
+
+# Providers: name each service you use in a [providers.NAME] section, and
+# switch with provider = "NAME" here, GIRLPAGES_PROVIDER, or --provider on
+# girl and girlrepo girlify, instead of editing [openai] or [claude]. A
+# provider takes [openai]'s settings (or, with backend = "claude",
+# [claude]'s), and stands alone: what it doesn't set is the default, never
+# [openai]'s or another provider's, and OPENAI_API_KEY and OPENAI_BASE_URL
+# from the environment don't apply to it. Batching belongs to the provider
+# too: its own batch and batch_max_requests, and none if it doesn't say
+# (the top-level ones are for [openai] and [claude]). batch = "anthropic"
+# uses [anthropic], with the provider's api_key(_file) if it has one. With no provider,
+# [openai] and [claude] are used as before. (provider = "…" itself goes
+# at the top, with backend.)
+#
+#[providers.sail]
+#base_url = "https://api.sailresearch.com/v1"
+#model = "deepseek-ai/DeepSeek-V4.1-Flash"
+#api_key_file = "/home/me/.config/girlpages/sail-key"
+#api = "responses"
+#completion_window = "flex"
+#max_tokens = 32000
+#batch = "sail"
+#
+#[providers.openrouter]
+#base_url = "https://openrouter.ai/api/v1"
+#model = "anthropic/claude-haiku-5.5"
+#api_key_file = "/home/me/.config/girlpages/openrouter-key"
+#
+#[providers.haiku]
+#backend = "claude"
+#model = "claude-haiku-5-5"
+#batch = "anthropic"
+#api_key_file = "/home/me/.config/girlpages/anthropic-key"
 
 [repo]
 # A girlpages repository (made with girlrepo) to fetch ready-made pages from

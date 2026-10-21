@@ -4,8 +4,10 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -127,5 +129,119 @@ func TestResolveBatch(t *testing.T) {
 	}
 	if cfg.Anthropic.Model != "claude-haiku-5-5" || cfg.Anthropic.BatchURL != DefaultAnthropicBatchURL {
 		t.Errorf("anthropic defaults: %+v", cfg.Anthropic)
+	}
+}
+
+func TestProviders(t *testing.T) {
+	tmp := t.TempDir()
+	SysconfDir = filepath.Join(tmp, "etc")
+	t.Cleanup(func() { SysconfDir = "/etc" })
+	for _, k := range []string{"GIRLPAGES_CONFIG", "GIRLPAGES_BACKEND", "GIRLPAGES_MODEL", "GIRLPAGES_PROVIDER",
+		"OPENAI_BASE_URL", "GIRLPAGES_OPENAI_API_KEY", "GIRLPAGES_OPENAI_BASE_URL", "GIRLPAGES_BATCH"} {
+		t.Setenv(k, "")
+	}
+	// An OpenAI key in the environment is for [openai], never a provider.
+	t.Setenv("OPENAI_API_KEY", "sk-from-env")
+	p := filepath.Join(tmp, "config.toml")
+	if err := os.WriteFile(p, []byte(`backend = "openai"
+batch = "openrouter"
+[openai]
+base_url = "https://openrouter.ai/api/v1"
+model = "plain"
+headers = {"X-Plain" = "1"}
+[providers.sail]
+base_url = "https://api.sailresearch.com/v1"
+model = "deepseek-ai/DeepSeek-V4.1-Flash"
+api_key_file = "/run/sail-key"
+api = "responses"
+completion_window = "flex"
+max_tokens = 32000
+batch = "sail"
+[providers.haiku]
+backend = "claude"
+model = "claude-haiku-5-5"
+args = ["--effort", "low"]
+[providers.local]
+base_url = "http://localhost:11434/v1"
+[providers.claudebatch]
+backend = "claude"
+batch = "anthropic"
+batch_max_requests = 500
+api_key_file = "/run/anthropic-key"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Provider != "" || cfg.OpenAI.APIKey != "sk-from-env" || cfg.OpenAI.Model != "plain" {
+		t.Fatalf("without a provider: %+v", cfg.OpenAI)
+	}
+	if fmt.Sprint(cfg.ProviderNames()) != "[claudebatch haiku local sail]" {
+		t.Errorf("names: %v", cfg.ProviderNames())
+	}
+
+	sail := cfg
+	if err := sail.UseProvider("sail"); err != nil {
+		t.Fatal(err)
+	}
+	o := sail.OpenAI
+	if sail.Backend != BackendOpenAI || sail.Provider != "sail" || o.BaseURL != "https://api.sailresearch.com/v1" ||
+		o.Model != "deepseek-ai/DeepSeek-V4.1-Flash" || o.APIKey != "" || o.APIKeyFile != "/run/sail-key" ||
+		o.API != "responses" || o.CompletionWindow != "flex" || o.MaxTokens != 32000 || len(o.Headers) != 0 ||
+		o.Timeout.Duration != 10*time.Minute || sail.Batch != BatchSail {
+		t.Fatalf("sail: backend %q batch %q %+v", sail.Backend, sail.Batch, o)
+	}
+
+	haiku := cfg
+	if err := haiku.UseProvider("haiku"); err != nil {
+		t.Fatal(err)
+	}
+	if haiku.Backend != BackendClaude || haiku.Claude.Model != "claude-haiku-5-5" || haiku.Claude.Command != "claude" ||
+		fmt.Sprint(haiku.Claude.Args) != "[--effort low]" || haiku.Batch != BatchNone {
+		t.Fatalf("haiku: %+v, batch %q", haiku.Claude, haiku.Batch)
+	}
+	haiku.SetModel("claude-opus-5-5") // --model after --provider
+	if haiku.Claude.Model != "claude-opus-5-5" {
+		t.Errorf("--model: %q", haiku.Claude.Model)
+	}
+
+	local := cfg
+	if err := local.UseProvider("local"); err != nil {
+		t.Fatal(err)
+	}
+	if local.OpenAI.BaseURL != "http://localhost:11434/v1" || local.OpenAI.Model != "" || local.OpenAI.APIKey != "" {
+		t.Fatalf("local: %+v", local.OpenAI)
+	}
+
+	// Batches belong to the provider: the top-level batch (openrouter,
+	// here) never applies to one.
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-from-env")
+	cb := cfg
+	cb.BatchMaxRequests = 3000
+	if err := cb.UseProvider("claudebatch"); err != nil {
+		t.Fatal(err)
+	}
+	if cb.Batch != BatchAnthropic || cb.BatchMaxRequests != 500 || cb.Anthropic.APIKeyFile != "/run/anthropic-key" || cb.Anthropic.APIKey != "" ||
+		cb.Anthropic.Model != "claude-haiku-5-5" {
+		t.Fatalf("claudebatch: batch %q, max %d, %+v", cb.Batch, cb.BatchMaxRequests, cb.Anthropic)
+	}
+	if local.Batch != BatchNone || local.BatchMaxRequests != 0 {
+		t.Errorf("local batches: %q, %d", local.Batch, local.BatchMaxRequests)
+	}
+
+	if err := cfg.UseProvider("nope"); err == nil || !strings.Contains(err.Error(), "claudebatch, haiku, local, sail") {
+		t.Errorf("nope: %v", err)
+	}
+
+	// provider = "…" in the file, or GIRLPAGES_PROVIDER, picks one at load.
+	t.Setenv("GIRLPAGES_PROVIDER", "sail")
+	if cfg, err := Load(p); err != nil || cfg.Provider != "sail" || cfg.OpenAI.APIKey != "" {
+		t.Fatalf("GIRLPAGES_PROVIDER: %+v, %v", cfg.OpenAI, err)
+	}
+	t.Setenv("GIRLPAGES_PROVIDER", "nope")
+	if _, err := Load(p); err == nil {
+		t.Error("GIRLPAGES_PROVIDER=nope loaded")
 	}
 }

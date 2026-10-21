@@ -57,7 +57,7 @@ type flags struct {
 	noWait, noBatch, reprompt                              bool
 	jobs, limit                                            int
 	refresh, noCache, cachedOnly, raw, doctor, html, serve bool
-	color, backend, model, listen, repo, batch             string
+	color, backend, model, listen, repo, batch, provider   string
 	importSrc, exportDir                                   string
 	remote, versions, ngrams                               bool
 	pageVersion, variant                                   string
@@ -107,6 +107,7 @@ func newFlagSet(f *flags) *pflag.FlagSet {
 	fs.StringVar(&f.listen, "listen", "localhost:1989", "")
 	fs.StringVar(&f.color, "color", "auto", "")
 	fs.StringVar(&f.backend, "backend", "", "")
+	fs.StringVar(&f.provider, "provider", "", "")
 	fs.StringVar(&f.model, "model", "", "")
 	fs.StringVar(&f.repo, "repo", "", "")
 	fs.BoolVarP(&f.remote, "remote", "r", false, "")
@@ -162,6 +163,7 @@ girl options:
       --raw               print the stored markup instead of rendering it
       --html              write the page as a standalone HTML document
       --color=WHEN        auto, always or never (default auto; NO_COLOR works)
+      --provider=NAME     use this provider from the config's [providers.NAME]
       --backend=NAME      auto, openai or claude
       --model=MODEL       model to ask
       --repo=URL          fetch pages from this girlpages repository before
@@ -270,6 +272,12 @@ func run(args []string) int {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "girl: %v\n", err)
 		return exitUsage
+	}
+	if f.provider != "" {
+		if err := cfg.UseProvider(f.provider); err != nil {
+			fmt.Fprintf(os.Stderr, "girl: %v\n", err)
+			return exitUsage
+		}
 	}
 	if f.backend != "" {
 		cfg.Backend = f.backend
@@ -711,6 +719,13 @@ func doctor(ctx context.Context, cfg *config.Config, g *core.Girl) int {
 		}
 	}
 	fmt.Println()
+	if names := cfg.ProviderNames(); len(names) > 0 {
+		using := cfg.Provider
+		if using == "" {
+			using = "none (the [openai] and [claude] sections)"
+		}
+		fmt.Printf("providers: %s; using %s\n", strings.Join(names, ", "), using)
+	}
 	if b, err := core.NewBackend(cfg); err != nil {
 		fmt.Printf("backend: 💔 %v\n", err)
 	} else {

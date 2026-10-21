@@ -154,6 +154,18 @@ or
 .B NO_COLOR
 is not set.
 .TP
+.BR \-\-provider =\fIname\fR
+Use the provider configured as
+.BI [providers. name ]
+(see
+.BR CONFIGURATION ),
+overriding
+.BR provider .
+.B \-\-backend
+and
+.B \-\-model
+still apply on top of it.
+.TP
 .BR \-\-backend =\fIname\fR
 Use the
 .BR auto ,
@@ -623,6 +635,81 @@ url = "https://girlpages.dev/repo"   # a girlpages repository, or "none"
 timeout = "20s"
 .fi
 .RE
+.SS Providers
+Rather than editing
+.B [openai]
+or
+.B [claude]
+to switch between services, name each one in a
+.BI [providers. name ]
+section and pick one with
+.BR provider ,
+.B GIRLPAGES_PROVIDER
+or
+.BR \-\-provider :
+.PP
+.RS
+.nf
+provider = "sail"        # the default, if any
+
+[providers.sail]
+base_url = "https://api.sailresearch.com/v1"
+model = "deepseek\-ai/DeepSeek\-V4.1\-Flash"
+api_key_file = "/home/me/.config/girlpages/sail\-key"
+api = "responses"
+completion_window = "flex"
+max_tokens = 32000
+batch = "sail"           # its own batch API, if any
+batch_max_requests = 3000
+
+[providers.openrouter]
+base_url = "https://openrouter.ai/api/v1"
+model = "anthropic/claude\-haiku\-5.5"
+api_key_file = "/home/me/.config/girlpages/openrouter\-key"
+
+[providers.haiku]
+backend = "claude"       # the claude CLI; the default is openai
+model = "claude\-haiku\-5\-5"
+batch = "anthropic"      # Message Batches, with [anthropic]
+api_key_file = "/home/me/.config/girlpages/anthropic\-key"
+.fi
+.RE
+.PP
+A provider takes any of
+.BR [openai] 's
+settings (with
+.BR "backend = \(dqclaude\(dq" ,
+any of
+.BR [claude] 's),
+and its own
+.B batch
+and
+.BR batch_max_requests :
+the top\-level ones don't apply to it, and a provider with no
+.B batch
+doesn't batch.
+.B batch = \(dqanthropic\(dq
+uses
+.BR [anthropic] ,
+with the provider's
+.B api_key
+or
+.B api_key_file
+if it has one.
+It stands alone: whatever it doesn't set is the default, not what
+.B [openai]
+or another provider says, so one service's key or headers are never sent to
+another.
+For the same reason,
+.BR OPENAI_API_KEY ,
+.B OPENAI_BASE_URL
+and the other connection settings in the environment are ignored when a
+provider is in use; the rest still apply.
+With no provider chosen,
+.B [openai]
+and
+.B [claude]
+are used, as ever.
 .PP
 A system configuration file that holds an API key should not be world-readable;
 use
@@ -709,6 +796,10 @@ Turns colour off.
 .TP
 .B GIRLPAGES_CONFIG
 User configuration file to read.
+.TP
+.B GIRLPAGES_PROVIDER
+Overrides
+.BR provider .
 .TP
 .BR GIRLPAGES_BACKEND ", " GIRLPAGES_MODEL ", " GIRLPAGES_JOBS ", " GIRLPAGES_CACHE_DIR
 Override
