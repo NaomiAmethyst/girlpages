@@ -125,13 +125,7 @@ func (f *archiveFile) Open(encoding string) (io.ReadSeeker, error) {
 	return r, err
 }
 
-func (f *archiveFile) ETag(encoding string) string {
-	tag := f.e.Hash.String()
-	if encoding != "" {
-		tag += "-" + encoding
-	}
-	return `"` + tag + `"`
-}
+func (f *archiveFile) ETag(encoding string) string { return f.snap.ETag(f.e, encoding) }
 
 // ModTime is unknown: an archive's files are told apart by their ETags.
 func (f *archiveFile) ModTime() time.Time { return time.Time{} }

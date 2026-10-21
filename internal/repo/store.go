@@ -37,6 +37,10 @@ type Store struct {
 	SyncRoot string
 	// Warn, if set, is told of problems that don't stop what's going on.
 	Warn func(msg string)
+	// Files, if set, is where the store's files are, in place of Dir (an
+	// archive being written, say: see package archive/build). Garbage
+	// collection and packing need a directory.
+	Files Files
 
 	// Listing updates (by page) and variants.json updates (by version)
 	// are one at a time, within this process; different pages' and
@@ -70,6 +74,43 @@ var ErrNotFound = errors.New("not in the repo")
 
 func (s *Store) abs(rel string) string { return filepath.Join(s.Dir, filepath.FromSlash(rel)) }
 
+// Files is where a store keeps its files, by their slash paths from its
+// root.
+type Files interface {
+	// ReadFile reads a file: an fs.ErrNotExist error if it isn't there.
+	ReadFile(rel string) ([]byte, error)
+	// WriteFile writes a file, all at once (a reader never sees part).
+	WriteFile(rel string, b []byte) error
+	// Exists reports whether a file is there.
+	Exists(rel string) bool
+	// ReadDir lists a directory: an fs.ErrNotExist error if it isn't
+	// there.
+	ReadDir(rel string) ([]fs.DirEntry, error)
+}
+
+// DirFiles is files in a directory.
+type DirFiles string
+
+func (d DirFiles) path(rel string) string { return filepath.Join(string(d), filepath.FromSlash(rel)) }
+
+func (d DirFiles) ReadFile(rel string) ([]byte, error)  { return os.ReadFile(d.path(rel)) }
+func (d DirFiles) WriteFile(rel string, b []byte) error { return WriteFile(d.path(rel), b) }
+func (d DirFiles) ReadDir(rel string) ([]fs.DirEntry, error) {
+	return os.ReadDir(d.path(rel))
+}
+func (d DirFiles) Exists(rel string) bool {
+	_, err := os.Stat(d.path(rel))
+	return err == nil
+}
+
+// files is where the store's files are.
+func (s *Store) files() Files {
+	if s.Files != nil {
+		return s.Files
+	}
+	return DirFiles(s.Dir)
+}
+
 // Encode is how every document is serialised. Map keys come out sorted, so
 // the same document always hashes the same.
 func Encode(v any) ([]byte, error) {
@@ -90,7 +131,7 @@ func Hash(b []byte) string {
 
 // Read decodes the document at rel.
 func (s *Store) Read(rel string, v any) error {
-	b, err := os.ReadFile(s.abs(rel))
+	b, err := s.files().ReadFile(rel)
 	if errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("%s: %w", rel, ErrNotFound)
 	}
@@ -109,16 +150,16 @@ func (s *Store) Write(rel string, v any) (string, int64, error) {
 	if err != nil {
 		return "", 0, err
 	}
-	return Hash(b), int64(len(b)), s.writeFile(s.abs(rel), b)
+	return Hash(b), int64(len(b)), s.writeFile(rel, b)
 }
 
 // writeFile writes a file, and tells Written.
-func (s *Store) writeFile(path string, b []byte) error {
-	if err := WriteFile(path, b); err != nil {
+func (s *Store) writeFile(rel string, b []byte) error {
+	if err := s.files().WriteFile(rel, b); err != nil {
 		return err
 	}
-	if s.Written != nil {
-		s.Written(path)
+	if s.Written != nil && s.Files == nil {
+		s.Written(s.abs(rel))
 	}
 	return nil
 }
@@ -136,11 +177,11 @@ func (s *Store) writeSized(name func(sha string) string, v any) (string, int64, 
 		return "", 0, err
 	}
 	sha := Hash(b)
-	p := s.abs(name(sha))
-	if _, err := os.Stat(p); err == nil {
+	rel := name(sha)
+	if s.files().Exists(rel) {
 		return sha, int64(len(b)), nil
 	}
-	return sha, int64(len(b)), s.writeFile(p, b)
+	return sha, int64(len(b)), s.writeFile(rel, b)
 }
 
 // WriteFile writes data atomically, creating directories as needed.
@@ -171,7 +212,12 @@ func WriteFile(path string, data []byte) error {
 
 // Lock takes the repository's lock, waiting for other writers. Every
 // command that changes the repository holds it while it does.
-func (s *Store) Lock() (func(), error) { return LockFile(filepath.Join(s.Dir, ".lock")) }
+func (s *Store) Lock() (func(), error) {
+	if s.Files != nil {
+		return func() {}, nil // (its own business)
+	}
+	return LockFile(filepath.Join(s.Dir, ".lock"))
+}
 
 // LockFile takes an exclusive lock on a file (creating it), waiting for
 // it if another process has it, and returns what releases it.
@@ -245,11 +291,11 @@ func (s *Store) UpdateListing(name, section string, fn func(*Listing) error) err
 
 // WriteRaw stores a document's bytes as they are, so a copy from another
 // repository keeps its hash.
-func (s *Store) WriteRaw(rel string, b []byte) error { return s.writeFile(s.abs(rel), b) }
+func (s *Store) WriteRaw(rel string, b []byte) error { return s.writeFile(rel, b) }
 
 // ReadRaw reads a stored document's bytes.
 func (s *Store) ReadRaw(rel string) ([]byte, error) {
-	b, err := os.ReadFile(s.abs(rel))
+	b, err := s.files().ReadFile(rel)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, fmt.Errorf("%s: %w", rel, ErrNotFound)
 	}
@@ -457,9 +503,8 @@ func (s *Store) putVariant(source, variant string, b []byte) (VariantInfo, error
 		return VariantInfo{}, fmt.Errorf("bad variant %s/%s", source, variant)
 	}
 	info := InfoFor(b)
-	p := s.abs(VariantPath(source, variant, info.SHA256))
-	if _, err := os.Stat(p); err != nil {
-		if err := WriteFile(p, b); err != nil {
+	if rel := VariantPath(source, variant, info.SHA256); !s.files().Exists(rel) {
+		if err := s.files().WriteFile(rel, b); err != nil {
 			return VariantInfo{}, err
 		}
 	}
@@ -526,8 +571,7 @@ func (s *Store) eachPage(ctx context.Context, fn func(Pointer) error) error {
 // pointerPaths lists every page's pointer.
 func (s *Store) pointerPaths() ([]string, error) {
 	var out []string
-	root := s.abs("page")
-	ents, err := os.ReadDir(root)
+	ents, err := s.files().ReadDir("page")
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
@@ -538,7 +582,7 @@ func (s *Store) pointerPaths() ([]string, error) {
 		if !d.IsDir() || !strings.HasPrefix(d.Name(), "name-") {
 			continue
 		}
-		files, err := os.ReadDir(filepath.Join(root, d.Name()))
+		files, err := s.files().ReadDir("page/" + d.Name())
 		if err != nil {
 			return nil, err
 		}

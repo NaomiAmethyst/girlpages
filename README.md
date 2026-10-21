@@ -258,7 +258,8 @@ Serving millions of small files off a network file system is slow too, so
 a site can also live in an *archive*: a few big files (segments of every
 file's bytes, stored in each form it's sent in, and an index of where they
 are) that `girlrepo publish --archive DIR` adds each new version to, writing
-only what changed. `girlserve`, a small static server (and image) of its own,
+only what changed; `publish --from-packs PACKS --archive DIR` goes straight
+from packs to an archive, with no repository (or millions of files) between. `girlserve`, a small static server (and image) of its own,
 serves an archive, sending each file in the smallest form the client accepts,
 and switches to new versions as they're written, with health checks,
 Prometheus metrics and access logs for running it in production.

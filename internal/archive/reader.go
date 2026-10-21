@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -142,11 +143,13 @@ type Archive struct {
 	reloads, reloadErrors atomic.Int64
 }
 
-// Snapshot is one version of an archive: an index and its segments.
+// Snapshot is one version of an archive: an index (its header: its
+// records are kept in a smaller table) and its segments.
 type Snapshot struct {
 	Index  *Index
 	Loaded time.Time
 	segs   []*os.File
+	table  *table
 }
 
 // New is an archive with nothing loaded yet (Current is nil until a
@@ -200,10 +203,12 @@ func (a *Archive) reload() (bool, error) {
 	if s := a.cur.Load(); s != nil && IndexName(s.Index.SHA256) == c.Index {
 		return false, nil
 	}
-	ix, err := ReadIndex(filepath.Join(a.dir, c.Index))
+	ix, t, err := loadTable(filepath.Join(a.dir, c.Index))
 	if err != nil {
 		return false, err
 	}
+	// Loading made garbage (decompressing does); give it back.
+	defer debug.FreeOSMemory()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	segs := make([]*os.File, len(ix.Segments))
@@ -248,7 +253,7 @@ func (a *Archive) reload() (bool, error) {
 			time.AfterFunc(segmentGrace, func() { f.Close() })
 		}
 	}
-	a.cur.Store(&Snapshot{Index: ix, Loaded: time.Now(), segs: segs})
+	a.cur.Store(&Snapshot{Index: ix, Loaded: time.Now(), segs: segs, table: t})
 	return true, nil
 }
 
@@ -290,8 +295,25 @@ func (a *Archive) Close() error {
 // ErrNotFound is what Open returns for a path the archive hasn't.
 var ErrNotFound = errors.New("not in the archive")
 
-// Lookup finds a file in the snapshot.
-func (s *Snapshot) Lookup(path string) (Entry, bool) { return s.Index.Lookup(path) }
+// Lookup finds a file in the snapshot. (Its Hash isn't kept: see ETag.)
+func (s *Snapshot) Lookup(path string) (Entry, bool) {
+	blobs, ok := s.table.lookup(path)
+	return Entry{Path: path, Blobs: blobs}, ok
+}
+
+// ETag is a strong entity tag for a form of an entry: where its bytes
+// are, which is the same for as long as they are (versions share them).
+func (s *Snapshot) ETag(e Entry, encoding string) string {
+	b, ok := e.Blob(encoding)
+	if !ok {
+		return ""
+	}
+	tag := fmt.Sprintf("%.16s-%x", s.Index.Segments[b.Seg].SHA256, b.Off)
+	if encoding != "" {
+		tag += "-" + encoding
+	}
+	return `"` + tag + `"`
+}
 
 // Open reads one of an entry's encodings ("" for identity).
 func (s *Snapshot) Open(e Entry, encoding string) (io.ReadSeeker, int64, error) {

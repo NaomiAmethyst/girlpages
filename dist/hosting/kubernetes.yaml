@@ -5,10 +5,10 @@
 #
 #   1. Pack files (girlrepo export, or another repository's) are copied into
 #      /data/packs on a shared volume (CephFS, NFS: anything ReadWriteMany).
-#   2. A CronJob notices new ones, unpacks them on its own local scratch
-#      volume (millions of small files, so not on the shared one), publishes
-#      the site, and adds it to the archive in /data/archive: only what
-#      changed is written there.
+#   2. A CronJob notices new ones and publishes the repository they make,
+#      and its website, straight into the archive in /data/archive: the
+#      packs' files are replayed into it as they're read, with no millions
+#      of small files anywhere, and only what changed is written.
 #   3. girlserve serves the archive, and switches to each new version as
 #      it's written.
 #
@@ -42,11 +42,6 @@ spec:
           containers:
             - name: publish
               image: ghcr.io/naomiamethyst/girlpages:latest
-              env:
-                - name: HOME
-                  value: /scratch
-                - name: XDG_CACHE_HOME
-                  value: /scratch/cache
               command: [sh, -euc]
               args:
                 - |
@@ -58,9 +53,8 @@ spec:
                   if [ "$sum" = "$(cat "$archive/.published-packs" 2>/dev/null)" ]; then
                     echo "no new packs"; exit 0
                   fi
-                  girlrepo -d /scratch/site unpack -j 16 "$packs"
-                  girlrepo -d /scratch/site publish -j 16 --url https://girlpages.dev \
-                    --packs "$packs" --archive "$archive"
+                  girlrepo publish -j 16 --url https://girlpages.dev \
+                    --from-packs "$packs" --archive "$archive"
                   echo "$sum" > "$archive/.published-packs"
               # Compressing at the formats' best takes a lot of CPU and some
               # memory (brotli's, mostly), but only for what's changed.
@@ -69,14 +63,9 @@ spec:
                 limits: {memory: 16Gi}
               volumeMounts:
                 - {name: data, mountPath: /data}
-                - {name: scratch, mountPath: /scratch}
           volumes:
             - name: data
               persistentVolumeClaim: {claimName: girlpages-data}
-            # Local disk, for the unpacked repository and the site built
-            # from it; it goes when the job does.
-            - name: scratch
-              emptyDir: {sizeLimit: 60Gi}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -109,10 +98,11 @@ spec:
             httpGet: {path: /healthz, port: admin}
             periodSeconds: 20
           resources:
-            # It keeps the index in memory: about 300 bytes a file, so about
-            # 700 MB for girlpages.dev's two million.
-            requests: {cpu: 250m, memory: 1Gi}
-            limits: {memory: 2Gi}
+            # It keeps the index in memory, in about 50 bytes a file: about
+            # 100 MB for girlpages.dev's two million, and twice that for a
+            # moment when it loads a new version.
+            requests: {cpu: 250m, memory: 256Mi}
+            limits: {memory: 512Mi}
           securityContext:
             runAsNonRoot: true
             readOnlyRootFilesystem: true

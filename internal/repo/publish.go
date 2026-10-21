@@ -253,8 +253,8 @@ func (s *Store) PublishContext(ctx context.Context, pages []PageRef) (*Manifest,
 	}
 
 	// The packs (see pack.go), if it has them.
-	log, err := ReadPackLog(s.Dir)
-	if err != nil {
+	log := &PackLog{}
+	if err := s.Read(PackLogPath(), log); err != nil && !errors.Is(err, ErrNotFound) {
 		return nil, err
 	}
 	m.Packs = log.Packs
@@ -447,6 +447,9 @@ func (s *Store) GC(dryRun bool) (GCStats, error) { return s.GCContext(context.Ba
 // the garbage, and nothing else).
 func (s *Store) GCContext(ctx context.Context, dryRun bool) (GCStats, error) {
 	var st GCStats
+	if s.Files != nil {
+		return st, errors.New("garbage collection needs a repository in a directory")
+	}
 	live := map[string]bool{ManifestPath(): true}
 	m, err := s.Manifest()
 	if err != nil {

@@ -96,6 +96,10 @@ type Options struct {
 	Ctx context.Context
 	// Jobs is how many files are written at once (one per CPU if 0).
 	Jobs int
+	// Files, if set, is where the site's files are written (by their
+	// paths from Out), in place of Out: a stage of an archive, say, which
+	// starts empty, so nothing old is looked for to remove.
+	Files repo.Files
 }
 
 // Stats summarises a build.
@@ -447,6 +451,16 @@ func (b *builder) write(path string, data []byte) error {
 	b.mu.Lock()
 	b.written[path] = true
 	b.mu.Unlock()
+	if b.o.Files != nil {
+		rel, err := filepath.Rel(b.o.Out, path)
+		if err != nil {
+			return err
+		}
+		b.mu.Lock()
+		b.st.Written++
+		b.mu.Unlock()
+		return b.o.Files.WriteFile(filepath.ToSlash(rel), data)
+	}
 	if old, err := os.ReadFile(path); err == nil && bytes.Equal(old, data) {
 		b.mu.Lock()
 		b.st.Unchanged++
@@ -1046,6 +1060,9 @@ func (b *builder) browse() error {
 func (b *builder) sitemap(pages []repo.PageRef) error {
 	path := filepath.Join(b.o.Out, "sitemap.xml")
 	if b.o.URL == "" {
+		if b.o.Files != nil {
+			return nil
+		}
 		// Without an absolute URL there's no sitemap; don't leave an old one.
 		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
@@ -1105,6 +1122,9 @@ func (b *builder) sitemap(pages []repo.PageRef) error {
 // the per-version, per-original and per-source pages earlier versions of
 // girlrepo made).
 func (b *builder) prune() error {
+	if b.o.Files != nil {
+		return nil // (nothing was there before)
+	}
 	dirs := []string{"man", "section", "src"}
 	for _, e := range b.m.Sections {
 		if manpage.IsSeries(e.Section) {

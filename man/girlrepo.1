@@ -600,6 +600,24 @@ does from scratch each time: it's a copy of the one they came from, so its
 log is theirs, and publishing that keeps the site's packs the same from one
 publish to the next.
 .TP
+.BR \-\-from\-packs =\fIpath\fR
+Publish the repository the packs in
+.I path
+make, and its website, straight into
+.B \-\-archive
+(which it needs), with no repository in
+.IR dir ,
+or anything else written anywhere: their files are replayed into the
+archive's new version as they're read, the indexes and website made from
+there, and the packs listed as the repository's (as with
+.BR \-\-packs ).
+It's what
+.B unpack
+then
+.B publish \-\-packs \-\-archive
+make, without the millions of files between, so a job publishing packs
+needs no scratch space.
+.TP
 .BR \-\-archive =\fIdir\fR
 Add the website (and repository) to the archive in
 .I dir

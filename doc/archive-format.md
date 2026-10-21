@@ -112,8 +112,7 @@ to `dir/`).
 
 The hash identifies a file's content: two paths with the same content share
 their bytes, and a new version reuses the bytes of any file whose content
-the previous version had. Servers use it, with the form, as a strong ETag
-(`"<hash>-br"`).
+the previous version had.
 
 A compressed form is stored only if it's smaller than the file. A server
 sends the smallest form a client accepts.
@@ -146,7 +145,15 @@ version have time to switch.
 `girlserve` (and `girlrepo serve --archive`) keep the current index in
 memory and the segments open, and answer each request with one read of the
 bytes it sends: `Content-Encoding` the smallest form the client accepts,
-`Cache-Control` by the kind of file (as `girlrepo(1)` describes), the ETag
-above, and range requests. A request is served from the version it started
+`Cache-Control` by the kind of file (as `girlrepo(1)` describes), range
+requests, and a strong ETag from where the bytes are (the start of their
+segment's hash, their offset and the form: `"6b9d979c6b32ec0e-1c480c2e-br"`),
+which stays the same for as long as versions share them.
+
+A server reads an index as a stream, keeping only what serving needs in a
+smaller table of its own: no content hashes, each run of 64 hex digits in a
+path as the 32 bytes it spells, and each form's range as just its length
+where it follows the one before. That's about 45 bytes a file (an index's
+records are about 90), so about 100 MB for two million files. A request is served from the version it started
 on, even if a reload happens meanwhile, and segments a new version doesn't
 use stay open for a while for requests still reading them.

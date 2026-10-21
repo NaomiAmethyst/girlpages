@@ -237,10 +237,14 @@ func (st *Stage) report(stage string, done, total int) {
 }
 
 // Put puts a file (by its slash path from the site's root) into the
-// stage, in place of any already there.
+// stage, in place of any already there. Hidden files (whose names start
+// with a dot: .nojekyll, say) aren't served, so they aren't kept.
 func (st *Stage) Put(rel string, b []byte) error {
 	if !validPath(rel) {
 		return fmt.Errorf("bad path %q", rel)
+	}
+	if strings.HasPrefix(path.Base(rel), ".") {
+		return nil
 	}
 	h := archive.HashOf(b)
 	st.mu.Lock()
@@ -282,7 +286,7 @@ func (st *Stage) Put(rel string, b []byte) error {
 	}
 	blobs := blank()
 	for k, d := range data {
-		if d == nil {
+		if d == nil && k != 0 { // (the file itself is kept, even empty)
 			continue
 		}
 		bl, err := st.w.append(d)

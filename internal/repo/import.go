@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"regexp"
 	"sort"
 	"sync"
@@ -382,7 +381,7 @@ func (s *Store) stored(l *Listing) bool {
 			if !cs.has(variant, info.SHA256) {
 				return false
 			}
-			if _, err := os.Stat(s.abs(VariantPath(v.Source, variant, info.SHA256))); err != nil {
+			if !s.files().Exists(VariantPath(v.Source, variant, info.SHA256)) {
 				return false
 			}
 		}
@@ -401,7 +400,7 @@ func (s *Store) importVariant(ctx context.Context, c *Client, source, variant st
 	}
 	have := cs.Latest(variant)
 	if have != nil {
-		if _, err := os.Stat(s.abs(VariantPath(source, variant, have.SHA256))); err != nil {
+		if !s.files().Exists(VariantPath(source, variant, have.SHA256)) {
 			// Listed but not here: fetch it again, as it was.
 			have = nil
 		}

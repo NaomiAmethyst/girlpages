@@ -523,3 +523,42 @@ func copyFile(src, dst string) error {
 	}
 	return os.Rename(tmp, dst)
 }
+
+// ReplayPacks reads the log of packs in dir (each checked against its
+// hash), in order, as applying them to an empty repository would: start
+// is told of each pack (with its header, whose deletes come first) before
+// put is told of the files it puts. It returns the log.
+func ReplayPacks(ctx context.Context, dir string, start func(i int, e PackEntry, h *PackHeader) error,
+	put func(path string, data []byte) error) ([]PackEntry, error) {
+	chain, err := packChain(dir, nil)
+	if err != nil {
+		return nil, err
+	}
+	log := make([]PackEntry, len(chain))
+	for i, f := range chain {
+		log[i] = f.entry
+		if err := checkFile(f.file, f.entry.SHA256, f.entry.Bytes); err != nil {
+			return nil, err
+		}
+		err := readPack(ctx, f.file, func(h *PackHeader) error { return start(i, f.entry, h) }, put)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return log, nil
+}
+
+// PackFiles lists the files of the log of packs in dir, in order, with
+// their entries: what a repository unpacked from them lists as its packs.
+func PackFiles(dir string) ([]PackEntry, []string, error) {
+	chain, err := packChain(dir, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	entries := make([]PackEntry, len(chain))
+	files := make([]string, len(chain))
+	for i, f := range chain {
+		entries[i], files[i] = f.entry, f.file
+	}
+	return entries, files, nil
+}

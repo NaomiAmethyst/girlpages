@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"runtime/debug"
 	"sort"
 	"strconv"
@@ -830,9 +831,16 @@ func (a *app) publish(ctx context.Context, args []string) error {
 	noPacks := fs.Bool("no-packs", false, "don't add to the repository's packs")
 	packsFrom := fs.String("packs", "", "list the packs in this directory as the repository's (one unpacked from just them is a copy of theirs), not its own")
 	toArchive := fs.String("archive", "", "add the website to this archive afterwards (which compresses it: --precompress defaults to none)")
+	fromPacks := fs.String("from-packs", "", "publish the repository these packs make straight into --archive, with no repository here (see girlrepo(1))")
 	archOpts := archiveOptions(fs)
 	if err := parse(fs, args); err != nil {
 		return err
+	}
+	if *fromPacks != "" {
+		if *toArchive == "" || *noSite || *packsFrom != "" || *gc {
+			return fmt.Errorf("--from-packs needs --archive, and goes without --no-site, --packs and --gc")
+		}
+		return a.publishFromPacks(ctx, *fromPacks, *toArchive, site.Options{Base: *base, URL: *siteURL, Jobs: *jobs}, archOpts)
 	}
 	if *toArchive != "" && *noSite {
 		return fmt.Errorf("--archive archives the website, which --no-site doesn't write")
@@ -1075,6 +1083,68 @@ func (a *app) serve(ctx context.Context, args []string) error {
 		return nil
 	}
 	return err
+}
+
+// publishFromPacks publishes the repository the packs in dir make, and
+// its website, straight into an archive: nothing's written anywhere else.
+func (a *app) publishFromPacks(ctx context.Context, dir, archiveDir string, so site.Options,
+	archOpts func(int, *progress) build.Options) error {
+	start := time.Now()
+	pr := newProgress(os.Stderr)
+	jobs := so.Jobs
+	if jobs <= 0 {
+		jobs = runtime.NumCPU()
+	}
+	repo.Workers = jobs
+	st, err := build.NewStage(archiveDir, archOpts(jobs, pr))
+	if err != nil {
+		return err
+	}
+	defer st.Abort()
+	packs, err := st.PutPacks(ctx, dir, "repo/")
+	pr.say("")
+	if err != nil {
+		return err
+	}
+	pr.say("📦 unpacked %d packs from %s into the archive (%s)\n", len(packs), dir, time.Since(start).Round(time.Second))
+	s := &repo.Store{Dir: filepath.Join(a.dir, "repo"), Files: st.Files("repo/"), Progress: pr.report,
+		Warn: func(msg string) { fmt.Fprintf(os.Stderr, "\r\033[K💔 %s\n", msg) }}
+	pages, err := s.AllPagesContext(ctx)
+	if err != nil {
+		return err
+	}
+	if n, err := s.RefreshContext(ctx, pages); err != nil {
+		return err
+	} else if n > 0 {
+		pr.say("🔄 brought %d listings up to date\n", n)
+		if pages, err = s.AllPagesContext(ctx); err != nil {
+			return err
+		}
+	}
+	m, err := s.PublishContext(ctx, pages)
+	if err != nil {
+		return err
+	}
+	pr.say("📚 published %d pages in %d sections (%d girlified)\n", m.Pages, len(m.Sections), m.Variants[repo.VariantGirl])
+	so.Out, so.Files, so.Version, so.Log, so.Progress, so.Ctx = a.dir, st.Files(""), getVersion(), os.Stderr, pr.report, ctx
+	bst, err := site.Build(s, pages, m, so)
+	if err != nil {
+		return err
+	}
+	pr.say("🌸 website: %d files\n", bst.Written)
+	ast, err := st.Finish(ctx)
+	pr.say("")
+	if err != nil {
+		return err
+	}
+	how := ""
+	if ast.Compacted {
+		how = ", compacted"
+	}
+	pr.say("🗜️ archived %d files into %s: %d new (%s), %s in use in %d segments%s; version %s\n",
+		ast.Files, archiveDir, ast.New, humanBytes(ast.NewBytes), humanBytes(ast.Live), ast.Segments, how, ast.Index[:12])
+	pr.say("✨ done in %s\n", time.Since(start).Round(time.Second))
+	return nil
 }
 
 // archiveOptions adds the options for writing an archive to a command's.
