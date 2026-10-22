@@ -1138,8 +1138,8 @@ func (a *app) publishFromPacks(ctx context.Context, dir, archiveDir string, so s
 		return err
 	}
 	how := ""
-	if ast.Compacted {
-		how = ", compacted"
+	if len(ast.Compacted) > 0 {
+		how = ", compacted (" + strings.Join(ast.Compacted, ", ") + ")"
 	}
 	pr.say("🗜️ archived %d files into %s: %d new (%s), %s in use in %d segments%s; version %s\n",
 		ast.Files, archiveDir, ast.New, humanBytes(ast.NewBytes), humanBytes(ast.Live), ast.Segments, how, ast.Index[:12])
@@ -1166,8 +1166,8 @@ func (a *app) writeArchive(ctx context.Context, dir string, o build.Options, pr 
 		return err
 	}
 	how := ""
-	if st.Compacted {
-		how = ", compacted"
+	if len(st.Compacted) > 0 {
+		how = ", compacted (" + strings.Join(st.Compacted, ", ") + ")"
 	}
 	pr.say("🗜️ archived %d files into %s: %d new (%s), %s in use in %d segments%s; version %s (%s)\n",
 		st.Files, dir, st.New, humanBytes(st.NewBytes), humanBytes(st.Live), st.Segments, how, st.Index[:12],

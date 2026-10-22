@@ -6,6 +6,7 @@ package build
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -72,7 +73,7 @@ func TestWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.Files != 4 || st.New != 3 || st.Segments != 1 || st.Index == "" {
+	if st.Files != 4 || st.New != 3 || st.Segments != 2 || st.Index == "" { // (one for contents, one generated)
 		t.Fatalf("first: %+v", st)
 	}
 	// Everything a server reads is readable by other users.
@@ -127,7 +128,7 @@ func TestWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.New != 1 || st.NewBytes != int64(len(`{"format":1,"pages":2}`)) || st.Segments != 2 {
+	if st.New != 1 || st.NewBytes != int64(len(`{"format":1,"pages":2}`)) || st.Segments != 3 {
 		t.Fatalf("second: %+v", st)
 	}
 	for _, p := range segs0 {
@@ -147,11 +148,11 @@ func TestWrite(t *testing.T) {
 		t.Errorf("a reload with nothing new: %v, %v", changed, err)
 	}
 
-	// Compacting puts it all in one segment again; an hour on, what the
+	// Compacting puts each class in one segment again; an hour on, what the
 	// old indexes used goes.
 	clock = clock.Add(time.Minute)
 	st, err = Write(ctx, site, dir, Options{Now: now, Compact: true, Keep: 1})
-	if err != nil || !st.Compacted || st.Segments != 1 {
+	if err != nil || len(st.Compacted) != 2 || st.Segments != 2 {
 		t.Fatalf("compact: %+v, %v", st, err)
 	}
 	// (Files' times are the real clock's: collecting goes by those.)
@@ -163,7 +164,7 @@ func TestWrite(t *testing.T) {
 	segs, _ := os.ReadDir(filepath.Join(dir, archive.SegmentDir))
 	idxs, _ := filepath.Glob(filepath.Join(dir, "index-*.idx"))
 	// Everything's "old" now: only the current index and its segment stay.
-	if len(segs) != 1 || len(idxs) != 1 || st.Removed < 3 {
+	if len(segs) != 2 || len(idxs) != 1 || st.Removed < 3 {
 		t.Errorf("after collecting: %d segments, %d indexes, removed %d", len(segs), len(idxs), st.Removed)
 	}
 	if _, err := a.Reload(); err != nil {
@@ -178,5 +179,63 @@ func TestWriteRefusesArchiveInsideSite(t *testing.T) {
 	site := t.TempDir()
 	if _, err := Write(context.Background(), site, filepath.Join(site, "archive"), Options{}); err == nil {
 		t.Error("wrote an archive inside its site")
+	}
+}
+
+// A class of segment too little in use is compacted alone: the
+// generated files' churn doesn't mean copying the contents.
+func TestCompactByClass(t *testing.T) {
+	ctx := context.Background()
+	site, dir := t.TempDir(), filepath.Join(t.TempDir(), "archive")
+	random := func(n int) string {
+		b := make([]byte, n)
+		for i := range b {
+			b[i] = byte('a' + (i*7919+n)%26)
+		}
+		return string(b)
+	}
+	write(t, site, "repo/contents/ab/"+strings.Repeat("a", 64)+"/man-"+strings.Repeat("b", 64)+".json", random(50000))
+	write(t, site, "index.html", random(90000))
+	write(t, site, "search/index.html", random(3000))
+	write(t, site, "section/1/index.html", random(60000))
+	st, err := Write(ctx, site, dir, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ix, _ := archive.ReadCurrent(dir)
+	classes := map[string]string{}
+	for _, s := range ix.Segments {
+		classes[s.Class] = s.SHA256
+	}
+	if len(classes) != 2 || classes[archive.ClassContents] == "" || classes[archive.ClassGenerated] == "" {
+		t.Fatalf("segments: %+v", ix.Segments)
+	}
+	// index.html changes and a listing goes: most of the first generated
+	// segment's dead.
+	write(t, site, "index.html", random(90001))
+	if err := os.RemoveAll(filepath.Join(site, "section")); err != nil {
+		t.Fatal(err)
+	}
+	if st, err = Write(ctx, site, dir, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(st.Compacted) != "[generated]" {
+		t.Fatalf("compacted %v", st.Compacted)
+	}
+	ix, _ = archive.ReadCurrent(dir)
+	var contents, generated int
+	for _, s := range ix.Segments {
+		switch s.Class {
+		case archive.ClassContents:
+			contents++
+			if s.SHA256 != classes[archive.ClassContents] {
+				t.Error("the contents' segment was rewritten")
+			}
+		case archive.ClassGenerated:
+			generated++
+		}
+	}
+	if contents != 1 || generated != 1 {
+		t.Errorf("%d contents segments, %d generated", contents, generated)
 	}
 }

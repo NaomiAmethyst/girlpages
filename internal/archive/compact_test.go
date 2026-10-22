@@ -51,7 +51,7 @@ func TestTable(t *testing.T) {
 		}
 	}
 	dir := t.TempDir()
-	sha, err := WriteIndex(dir, Header{Segments: []Segment{{"a", int64(8 + 30*len(paths))}, {"b", 8 + int64(len(paths))}}}, es)
+	sha, err := WriteIndex(dir, Header{Segments: []Segment{{SHA256: "a", Bytes: int64(8 + 30*len(paths))}, {SHA256: "b", Bytes: 8 + int64(len(paths))}}}, es)
 	if err != nil {
 		t.Fatal(err)
 	}

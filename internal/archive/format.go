@@ -121,6 +121,29 @@ func emptyBlobs() [4]Blob {
 type Segment struct {
 	SHA256 string `json:"sha256"`
 	Bytes  int64  `json:"bytes"`
+	// Class is what it holds: ClassContents or ClassGenerated ("" in
+	// archives written before there were classes: anything).
+	Class string `json:"class,omitempty"`
+}
+
+// Classes of segment: a repository's contents (its pages and their
+// variants, and its packs), which are big and seldom change; and what's
+// made from them each publish (its indexes, the website), which churns.
+// Each class has segments of its own, compacted on its own, so the churn
+// of one never means copying the other.
+const (
+	ClassContents  = "contents"
+	ClassGenerated = "generated"
+)
+
+// ClassOf is the class a file (by its path in the site) is kept in.
+func ClassOf(path string) string {
+	for _, p := range []string{"repo/contents/", "repo/page/", "repo/packs/"} {
+		if strings.HasPrefix(path, p) && path != "repo/packs/index.json" {
+			return ClassContents
+		}
+	}
+	return ClassGenerated
 }
 
 // Header is an index's metadata.

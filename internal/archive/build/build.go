@@ -59,9 +59,10 @@ type Stats struct {
 	Files, New int
 	NewBytes   int64
 	// Live is the bytes the new index uses, in Segments segments.
-	Live      int64
-	Segments  int
-	Compacted bool
+	Live     int64
+	Segments int
+	// Compacted lists the classes of segment compacted.
+	Compacted []string
 	// Removed counts old indexes and segments removed.
 	Removed int
 	Index   string
@@ -151,10 +152,11 @@ type Stage struct {
 	dir string
 	o   Options
 
-	mu      sync.Mutex
-	unlock  func()
-	segs    *segTable
-	w       *segWriter
+	mu     sync.Mutex
+	unlock func()
+	segs   *segTable
+	// writers write new segments, one for each class.
+	writers map[string]*segWriter
 	readers map[int]*os.File
 	// known is what the previous version has, by content; fresh what's
 	// been added since.
@@ -203,7 +205,7 @@ func NewStage(dir string, o Options) (*Stage, error) {
 	st := &Stage{dir: dir, o: o, unlock: unlock, segs: &segTable{}, readers: map[int]*os.File{},
 		known: map[archive.Hash][4]archive.Blob{}, fresh: map[archive.Hash][4]archive.Blob{},
 		entries: map[string]staged{}, dirs: map[string]map[string]bool{}}
-	st.w = &segWriter{dir: dir, limit: o.SegmentSize, table: st.segs, readers: st.readers}
+	st.writers = map[string]*segWriter{}
 	readable(filepath.Join(dir, archive.SegmentDir))
 	prev, err := archive.ReadCurrent(dir)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -290,7 +292,7 @@ func (st *Stage) Put(rel string, b []byte) error {
 		if d == nil && k != 0 { // (the file itself is kept, even empty)
 			continue
 		}
-		bl, err := st.w.append(d)
+		bl, err := st.writer(archive.ClassOf(rel)).append(d)
 		if err != nil {
 			return err
 		}
@@ -301,6 +303,16 @@ func (st *Stage) Put(rel string, b []byte) error {
 	st.new++
 	st.set(rel, staged{h, blobs})
 	return nil
+}
+
+// writer is the writer of a class's new segments (holding mu).
+func (st *Stage) writer(class string) *segWriter {
+	w := st.writers[class]
+	if w == nil {
+		w = &segWriter{dir: st.dir, limit: st.o.SegmentSize, table: st.segs, readers: st.readers, class: class}
+		st.writers[class] = w
+	}
+	return w
 }
 
 func (st *Stage) have(h archive.Hash) ([4]archive.Blob, bool) {
@@ -440,8 +452,10 @@ func (st *Stage) Finish(ctx context.Context) (Stats, error) {
 	if err := ctx.Err(); err != nil {
 		return stats, err
 	}
-	if err := st.w.finish(); err != nil {
-		return stats, err
+	for _, w := range st.writers {
+		if err := w.finish(); err != nil {
+			return stats, err
+		}
 	}
 	entries := make([]archive.Entry, 0, len(st.entries))
 	for p, e := range st.entries {
@@ -449,14 +463,26 @@ func (st *Stage) Finish(ctx context.Context) (Stats, error) {
 	}
 	stats.Files, stats.New, stats.NewBytes = len(entries), st.new, st.newBytes
 
-	live, total := usage(entries, st.segs)
-	if st.o.Compact || (st.o.CompactBelow > 0 && total > 0 && float64(live) < st.o.CompactBelow*float64(total)) {
+	// Each class whose segments are too little in use is compacted.
+	which := map[string]bool{}
+	for class, u := range usage(entries, st.segs) {
+		if st.o.Compact || (st.o.CompactBelow > 0 && u.total > 0 && float64(u.live) < st.o.CompactBelow*float64(u.total)) {
+			which[class] = true
+		}
+	}
+	if len(which) > 0 {
 		st.report("compacting", 0, len(entries))
-		if err := compact(ctx, st.dir, entries, st.segs, st.o.SegmentSize); err != nil {
+		if err := compact(ctx, st.dir, entries, st.segs, st.o.SegmentSize, which); err != nil {
 			return stats, err
 		}
-		stats.Compacted = true
-		live, _ = usage(entries, st.segs)
+		for class := range which {
+			stats.Compacted = append(stats.Compacted, class)
+		}
+		sort.Strings(stats.Compacted)
+	}
+	var live int64
+	for _, u := range usage(entries, st.segs) {
+		live += u.live
 	}
 	h, err := renumber(entries, st.segs)
 	if err != nil {
@@ -493,7 +519,9 @@ func (st *Stage) Abort() {
 func (st *Stage) release() {
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	st.w.abort()
+	for _, w := range st.writers {
+		w.abort()
+	}
 	for k, f := range st.readers {
 		f.Close()
 		delete(st.readers, k)
@@ -586,11 +614,13 @@ type segWriter struct {
 	// readers, if set, gets the open segment being written (to read from
 	// as it's written), and loses it when it's finished.
 	readers map[int]*os.File
-	f       *os.File
-	tmp     string
-	h       hash.Hash
-	n       int64
-	cur     int
+	// class is the class of segment written.
+	class string
+	f     *os.File
+	tmp   string
+	h     hash.Hash
+	n     int64
+	cur   int
 }
 
 func (w *segWriter) append(b []byte) (archive.Blob, error) {
@@ -605,7 +635,7 @@ func (w *segWriter) append(b []byte) (archive.Blob, error) {
 			return archive.Blob{}, err
 		}
 		w.f, w.tmp, w.h, w.n = f, f.Name(), sha256.New(), 0
-		w.cur = w.table.add(archive.Segment{})
+		w.cur = w.table.add(archive.Segment{Class: w.class})
 		if w.readers != nil {
 			w.readers[w.cur] = f
 		}
@@ -653,7 +683,7 @@ func (w *segWriter) finish() error {
 	if err := os.Rename(w.tmp, filepath.Join(w.dir, filepath.FromSlash(archive.SegmentName(sha)))); err != nil {
 		return err
 	}
-	w.table.segs[w.cur] = archive.Segment{SHA256: sha, Bytes: w.n}
+	w.table.segs[w.cur] = archive.Segment{SHA256: sha, Bytes: w.n, Class: w.class}
 	return nil
 }
 
@@ -669,43 +699,57 @@ func (w *segWriter) abort() {
 	}
 }
 
-// usage is how many bytes entries' blobs take (each once), and how big
-// the segments they're in are.
-func usage(entries []archive.Entry, t *segTable) (live, total int64) {
+// classUsage is how many bytes of a class's segments entries' blobs use
+// (each once), and how big those segments are.
+type classUsage struct{ live, total int64 }
+
+// usage is each class's (by the segments blobs are in).
+func usage(entries []archive.Entry, t *segTable) map[string]classUsage {
+	out := map[string]classUsage{}
 	seen := map[archive.Blob]bool{}
 	used := map[int]bool{}
 	for _, e := range entries {
 		for _, b := range e.Blobs {
 			if b.Len >= 0 && !seen[b] {
 				seen[b] = true
-				live += b.Len
+				u := out[t.segs[b.Seg].Class]
+				u.live += b.Len
+				out[t.segs[b.Seg].Class] = u
 				used[b.Seg] = true
 			}
 		}
 	}
 	for s := range used {
-		total += t.segs[s].Bytes
+		u := out[t.segs[s].Class]
+		u.total += t.segs[s].Bytes
+		out[t.segs[s].Class] = u
 	}
-	return live, total
+	return out
 }
 
-// compact copies every blob in use into new segments.
-func compact(ctx context.Context, dir string, entries []archive.Entry, t *segTable, limit int64) error {
+// compact copies the blobs in use in the classes which (whose segments
+// they're in) into new segments: of the class of the file they're of
+// (so segments from before there were classes are sorted into them).
+func compact(ctx context.Context, dir string, entries []archive.Entry, t *segTable, limit int64, which map[string]bool) error {
 	files := map[int]*os.File{}
 	defer func() {
 		for _, f := range files {
 			f.Close()
 		}
 	}()
-	w := &segWriter{dir: dir, limit: limit, table: t}
-	defer w.abort()
+	writers := map[string]*segWriter{}
+	defer func() {
+		for _, w := range writers {
+			w.abort()
+		}
+	}()
 	moved := map[archive.Blob]archive.Blob{}
 	for i := range entries {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		for k, b := range entries[i].Blobs {
-			if b.Len < 0 {
+			if b.Len < 0 || !which[t.segs[b.Seg].Class] {
 				continue
 			}
 			if nb, ok := moved[b]; ok {
@@ -724,6 +768,12 @@ func compact(ctx context.Context, dir string, entries []archive.Entry, t *segTab
 			if _, err := f.ReadAt(buf, b.Off); err != nil {
 				return err
 			}
+			class := archive.ClassOf(entries[i].Path)
+			w := writers[class]
+			if w == nil {
+				w = &segWriter{dir: dir, limit: limit, table: t, class: class}
+				writers[class] = w
+			}
 			nb, err := w.append(buf)
 			if err != nil {
 				return err
@@ -732,7 +782,12 @@ func compact(ctx context.Context, dir string, entries []archive.Entry, t *segTab
 			entries[i].Blobs[k] = nb
 		}
 	}
-	return w.finish()
+	for _, w := range writers {
+		if err := w.finish(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // renumber lists the segments entries use, in a header, and points their
