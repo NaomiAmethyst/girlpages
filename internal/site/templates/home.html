@@ -8,6 +8,7 @@
 <div class="stats">{{pages .Total}} · {{.Girlified}} girlified ✨ · updated {{.Generated}}</div>
 </section>
 {{template "sources" .Sources}}
+{{if .PackagesURL}}<div class="chips"><a class="pill" href="{{.PackagesURL}}">📦 browse by package</a></div>{{end}}
 <div class="sections">
 {{range .Sections}}<a class="section-card" href="{{.URL}}">
 <span class="emoji">{{.Emoji}}</span>

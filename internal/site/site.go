@@ -68,7 +68,7 @@ func init() {
 		}
 		return fmt.Sprintf("%d pages", n)
 	}}
-	for _, name := range []string{"home", "list", "page", "search", "browse", "notfound", "offline", "shell"} {
+	for _, name := range []string{"home", "list", "packages", "page", "search", "browse", "notfound", "offline", "shell"} {
 		templates[name] = template.Must(template.New(name).Funcs(funcs).ParseFS(templateFS,
 			"templates/layout.html", "templates/"+name+".html"))
 	}
@@ -116,6 +116,9 @@ type builder struct {
 	written map[string]bool
 	byName  map[string][]string // name → sections
 	byLower map[string][]string // lower-cased name → names
+	// packageLists are the lists of packages written, by URL, with how
+	// many packages each has (for the sitemap).
+	packageLists map[string]int
 }
 
 // Build writes the site.
@@ -146,6 +149,7 @@ func Build(s *repo.Store, pages []repo.PageRef, m *repo.Manifest, o Options) (St
 	}
 	steps := []func() error{
 		b.static,
+		func() error { return b.packages(pages) }, // before home, which links to them
 		func() error { return b.home(pages) },
 		func() error { return b.sections(pages) },
 		func() error { return b.pages(pages) },
@@ -182,6 +186,8 @@ type view struct {
 
 	// Sources lead to browsing by distribution or release.
 	Sources []sourceMenu
+	// PackagesURL is the list of packages, if there is one.
+	PackagesURL string
 
 	// list
 	Heading, Sub string
@@ -412,7 +418,7 @@ func (b *builder) variantURL(variant, name, sec string) string { return b.url(va
 
 // Reserved are the site's top-level directories (and files) that aren't
 // variants: no variant may be named one of these, or a series.
-var Reserved = []string{"section", "search", "browse", "offline", "static", "repo", "src",
+var Reserved = []string{"section", "packages", "search", "browse", "offline", "static", "repo", "src",
 	"404.html", "index.html", "sw.js", "sitemap.xml", "robots.txt", "manifest.webmanifest"}
 
 // listURL is a listing: a chapter's (section/3/, for sec ""), one of its
@@ -669,6 +675,9 @@ func (b *builder) home(pages []repo.PageRef) error {
 	v := &view{Title: "the manual, but make it girly",
 		Description: "Every Unix man page, rewritten by an LLM in the voice of a Gen Z girl, with every detail kept. 💅",
 		Generated:   b.m.Generated.Format(time.DateOnly), Sources: b.sourceChips("")}
+	if b.packageLists != nil {
+		v.PackagesURL = b.packageListsURL("")
+	}
 	for _, p := range pages {
 		key := mainKey(p.Pointer.Section)
 		c := cards[key]
@@ -1175,6 +1184,14 @@ func (b *builder) sitemap(pages []repo.PageRef) error {
 			}
 		}
 	}
+	lists := make([]string, 0, len(b.packageLists))
+	for u := range b.packageLists {
+		lists = append(lists, u)
+	}
+	sort.Strings(lists)
+	for _, u := range lists {
+		listing(u, b.packageLists[u])
+	}
 	for _, p := range pages {
 		loc(b.pageURL(p.Pointer.Name, p.Pointer.Section), p.Current().Added)
 	}
@@ -1191,7 +1208,7 @@ func (b *builder) prune() error {
 	}
 	// (man/ and series' own directories held pages before they moved to
 	// girl/; whatever's left there goes.)
-	dirs := []string{"girl", "man", "section", "src"}
+	dirs := []string{"girl", "man", "section", "packages", "src"}
 	for _, e := range b.m.Sections {
 		if manpage.IsSeries(e.Section) {
 			dirs = append(dirs, SegmentName(e.Section))

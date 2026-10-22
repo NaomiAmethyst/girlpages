@@ -50,7 +50,8 @@ export function createViews({ el: app, base, cache, manifest, browse, listingURL
     nav.render(html`<section class="hero"><h1>✨ girlpages ✨</h1>
       <p>the ${src && html`<strong>${sourceLabel(src)}</strong> `}manual, but make it girly 💅</p>${search}
       <div class="stats">${plural(s.pages)}${src && ` in ${sourceLabel(src)}`}</div></section>
-      ${sourceChips(m, src, "")}<div class="sections">${cards}</div>`);
+      ${sourceChips(m, src, "")}${(m.sources || []).length > 0 && html`<div class="chips"><a class="pill" href="${base}packages/${src ? src.split("/").map(encodeURIComponent).join("/") + "/" : ""}">📦 browse by package</a></div>`}
+      <div class="sections">${cards}</div>`);
   }
 
   // sourceSection shows a section's listing (or a subsection's), from one

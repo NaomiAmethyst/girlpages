@@ -1096,3 +1096,41 @@ func TestReservedNames(t *testing.T) {
 		t.Error("girl and man are variants")
 	}
 }
+
+// TestPackageLists checks the lists of packages: everything's and each
+// source's, linking to the searches for their pages.
+func TestPackageLists(t *testing.T) {
+	out := t.TempDir()
+	more := append([]pageSpec{}, specs...)
+	arch := []repo.Package{{Distro: "arch", Release: "rolling", Name: "coreutils", Version: "1"}}
+	more = append(more, pageSpec{name: "cat", sec: "1", desc: "concatenate files", pkgs: arch},
+		pageSpec{name: "tac", sec: "1", desc: "concatenate files backwards", pkgs: arch})
+	build(t, out, more, Options{URL: "https://example.test"})
+
+	all := read(t, filepath.Join(out, "packages", "index.html"))
+	for _, want := range []string{
+		`<h1>📦 packages</h1>`, `7 packages from every source`,
+		`<a href="/search/?q=pkg%3Acoreutils" rel="nofollow"><span class="name">coreutils</span></a><span class="desc">2 pages: cat(1), tac(1)</span>`,
+		`<a href="/search/?q=pkg%3Als" rel="nofollow"><span class="name">ls</span></a><span class="desc">1 page: ls(1)</span>`,
+		`href="/packages/debian/trixie/"`, `href="/packages/arch/"`,
+	} {
+		if !strings.Contains(all, want) {
+			t.Errorf("packages/ lacks %s", want)
+		}
+	}
+	trixie := read(t, filepath.Join(out, "packages", "debian", "trixie", "index.html"))
+	if !strings.Contains(trixie, `href="/search/?q=pkg%3Adebian%2Fls&amp;src=debian%2Ftrixie"`) || strings.Contains(trixie, "coreutils") {
+		t.Errorf("packages/debian/trixie/ links the wrong things:\n%s", trixie)
+	}
+	if a := read(t, filepath.Join(out, "packages", "arch", "index.html")); !strings.Contains(a, `href="/search/?q=pkg%3Aarch%2Fcoreutils"`) ||
+		strings.Contains(a, `pkg%3Aarch%2Fls`) {
+		t.Errorf("packages/arch/ links the wrong things")
+	}
+	if !strings.Contains(read(t, filepath.Join(out, "index.html")), `<a class="pill" href="/packages/">📦 browse by package</a>`) {
+		t.Error("the home page doesn't link to the packages")
+	}
+	sm := read(t, filepath.Join(out, "sitemap.xml"))
+	if !strings.Contains(sm, "<loc>https://example.test/packages/</loc>") || !strings.Contains(sm, "<loc>https://example.test/packages/debian/trixie/</loc>") {
+		t.Error("the sitemap lacks the packages")
+	}
+}
