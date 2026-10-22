@@ -9,6 +9,7 @@ import { chapter, isSeries, sectionName, sectionLabel, sourceLabel, plural } fro
 import { saveButton, sourceNav } from "./widgets.js";
 import { searchPage } from "./search.js";
 import { Listing, chunkMaker } from "./listing.js";
+import { packagesURL, packageURL } from "./urls.js";
 
 // createViews makes the views for an app: ctx has its element (el), the
 // site's base, the repository cache and manifest(), link makers (browse,
@@ -50,7 +51,7 @@ export function createViews({ el: app, base, cache, manifest, browse, listingURL
     nav.render(html`<section class="hero"><h1>✨ girlpages ✨</h1>
       <p>the ${src && html`<strong>${sourceLabel(src)}</strong> `}manual, but make it girly 💅</p>${search}
       <div class="stats">${plural(s.pages)}${src && ` in ${sourceLabel(src)}`}</div></section>
-      ${sourceChips(m, src, "")}${(m.sources || []).length > 0 && html`<div class="chips"><a class="pill" href="${base}packages/${src ? src.split("/").map(encodeURIComponent).join("/") + "/" : ""}">📦 browse by package</a></div>`}
+      ${sourceChips(m, src, "")}${src && (m.index || {}).packages && html`<div class="chips"><a class="pill" href="${packagesURL(base, src)}">📦 packages in ${sourceLabel(src)}</a></div>`}
       <div class="sections">${cards}</div>`);
   }
 
@@ -95,6 +96,71 @@ export function createViews({ el: app, base, cache, manifest, browse, listingURL
     }
   }
 
+  // listingView shows a listing of a plan: crumbs, heading and sub (what
+  // the heading says, and under it), chips (source chips and the like), and
+  // the listing, starting at static page start, following pageURL(n) (if
+  // it's given) as it scrolls.
+  /**
+   * @param {any} nav
+   * @param {{crumbs: any, heading: string, sub: string, chips: any, plan: any, start?: number, pageURL?: ((n: number) => string) | null}} o
+   */
+  async function listingView(nav, { crumbs, heading, sub, chips, plan, start = 1, pageURL = null }) {
+    const chunks = Math.max(1, plan.count);
+    const first = Math.min(Math.max(1, await plan.chunkForPage(start)), chunks);
+    const body = !plan.count || plan.total === 0 ? html`<div class="empty">nothing here, bestie 😭</div>`
+      : html`<nav class="letters" aria-label="Jump to letter">${[...plan.letters].map(([l, c]) => html`<a href="#letter-${l}" data-chunk="${c}">${l}</a>`)}</nav>
+        <div class="listing"><div class="chunk" data-chunk="${first}">${await chunkMaker(plan)(first)}</div></div>`;
+    nav.render(html`<div class="card"><nav class="crumbs">${crumbs}</nav>
+      <div class="pagehead"><h1>${heading}</h1><p class="sub">${sub}</p></div>${chips}${body}</div>`);
+    if (!nav.current()) return;
+    const listing = app.querySelector(".listing");
+    if (listing) {
+      await nav.own(new Listing(listing, plan, first, {
+        pageURL, page: start, letters: app.querySelector(".letters"), follow: (u) => nav.replace(u),
+      })).start();
+    }
+  }
+
+  // packagesView is the list of packages from a source (or all).
+  /** @param {any} nav @param {string} src @param {{start?: number}} [opts] */
+  async function packagesView(nav, src, { start = 1 } = {}) {
+    const m = await manifest();
+    if (!(m.index || {}).packages) return oops(nav, "there are no packages here 🤔");
+    const plan = await listings.packagesPlan(m, src);
+    const pi = await cache.get(`index/packages/manifest-${m.index.packages}.json`);
+    const n = src ? (pi.sources || {})[src] : pi.count;
+    const where = src ? ` in ${sourceLabel(src)}` : "";
+    nav.setTitle(`packages${where} · girlpages 💅`);
+    const sources = (m.sources || []).filter(s => (pi.sources || {})[sourceKey(s)]);
+    await listingView(nav, {
+      crumbs: html`<a href="${base}">home</a> › 📦 packages${where}`,
+      heading: `📦 packages${where}`,
+      sub: n == null ? "" : `${n} package${n === 1 ? "" : "s"} from ${src ? sourceLabel(src) : "every source"}`,
+      chips: html`<nav class="chips sources" aria-label="Packages by source">${sourceNav(sources, { on: src, href: (k) => packagesURL(base, k), all: "✨ every source" })}</nav>`,
+      plan, start, pageURL: (p) => packagesURL(base, src, p),
+    });
+  }
+
+  // packageView is a package's pages, from a source (in the browse app) or
+  // all (its static listing's address).
+  /** @param {any} nav @param {string} name @param {string} src @param {{start?: number}} [opts] */
+  async function packageView(nav, name, src, { start = 1 } = {}) {
+    const m = await manifest();
+    const plan = await listings.packagePlan(m, name.toLowerCase(), src);
+    if (!plan.row) return oops(nav, "there's no package called that here 🤔");
+    const where = src ? ` in ${sourceLabel(src)}` : "";
+    nav.setTitle(`${name}${where} · packages · girlpages 💅`);
+    const sources = (m.sources || []).filter(s => plan.row.sources[sourceKey(s)]);
+    await listingView(nav, {
+      crumbs: html`<a href="${base}">home</a> › <a href="${packagesURL(base, src)}">📦 packages${where}</a> › ${name}`,
+      heading: `📦 ${plan.row.name}`,
+      sub: `${plural(plan.total)}${where}`,
+      chips: html`<nav class="chips sources" aria-label="Its pages by source">${sourceNav(sources, {
+        on: src, href: (k) => (k ? browse({ src: k, pkg: plan.row.name }) : packageURL(base, plan.row.name)), all: "✨ every source" })}</nav>`,
+      plan, start, pageURL: src ? null : (p) => packageURL(base, plan.row.name, p),
+    });
+  }
+
   // searchView is the search page, in the app.
   async function searchView(nav, params) {
     nav.setTitle("search · girlpages 💅");
@@ -119,5 +185,5 @@ export function createViews({ el: app, base, cache, manifest, browse, listingURL
     nav.render(html`<div class="card waiting"><div class="spinner">😭</div><h1>${msg}</h1><p><a href="${base}">home</a> · <a href="${base}search/">search</a></p></div>`);
   }
 
-  return { sourceHome, sourceSection, searchView, oops };
+  return { sourceHome, sourceSection, packagesView, packageView, searchView, oops };
 }

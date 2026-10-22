@@ -9,7 +9,7 @@ export const isRoute = (h) => /^#\/./.test(h);
 
 // The site's top-level directories (and files) that aren't variants (as
 // site.Reserved): anything else at the top is a variant (a voice).
-export const RESERVED = new Set(["section", "packages", "search", "browse", "offline", "static", "repo", "src",
+export const RESERVED = new Set(["section", "packages", "package", "search", "browse", "offline", "static", "repo", "src",
   "404.html", "index.html", "sw.js", "sitemap.xml", "robots.txt", "manifest.webmanifest"]);
 
 // unsegment undoes site.SegmentName (names starting with a dot are escaped).
@@ -24,6 +24,8 @@ const unsegment = (s) => (s.startsWith("%") ? decodeURIComponent(s) : s);
  *   | {kind: "home", voice: string}
  *   | {kind: "page", sec: string, name: string, voice: string}
  *   | {kind: "section", key: string, sub: string, page: number, voice: string}
+ *   | {kind: "packages", src: string, page: number, voice: string}
+ *   | {kind: "package", name: string, page: number, voice: string}
  *   | {kind: "search", params: URLSearchParams, voice: string}} View
  */
 
@@ -50,6 +52,13 @@ export function viewOf(u, base, origin = globalThis.location?.origin) {
     if (parts.length === 2 && parts[0] !== "section") return { kind: "page", sec: parts[0], name: parts[1], voice };
   }
   if (parts[0] === "search" && parts.length === 1) return { kind: "search", params: u.searchParams, voice };
+  if (!voice && (parts[0] === "packages" || parts[0] === "package")) {
+    let page = 1;
+    if (parts.length >= 3 && parts[parts.length - 2] === "page") page = +parts.splice(-2)[1] || 1;
+    if (parts[0] === "packages" && parts.length <= 3) return { kind: "packages", src: parts.slice(1).join("/"), page, voice };
+    if (parts[0] === "package" && parts.length === 2) return { kind: "package", name: parts[1], page, voice };
+    return null;
+  }
   if (parts[0] === "section") {
     let page = 1;
     if (parts.length >= 4 && parts[parts.length - 2] === "page") page = +parts.splice(-2)[1] || 1;
@@ -65,6 +74,7 @@ export function viewOf(u, base, origin = globalThis.location?.origin) {
  * @typedef {{kind: "bad"}
  *   | {kind: "source", src: string}
  *   | {kind: "section", src: string, key: string, sub: string}
+ *   | {kind: "package", src: string, name: string}
  *   | {kind: "page", src: string, sec: string, name: string, rest: string[]}} Route
  */
 
@@ -87,6 +97,7 @@ export async function parse(h, sources) {
   }
   if (!segs.length) return { kind: "source", src };
   if (segs[0] === "section") return segs[1] ? { kind: "section", src, key: segs[1], sub: segs[2] || "" } : { kind: "source", src };
+  if (segs[0] === "package" && segs.length === 2) return { kind: "package", src, name: segs[1] };
   if (segs.length < 2) return { kind: "bad" };
   return { kind: "page", src, sec: segs[0], name: segs[1], rest: segs.slice(2) };
 }

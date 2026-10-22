@@ -7,7 +7,7 @@
 import { VirtualList } from "./vlist.js";
 import { idle, errorKind } from "./cache.js";
 import { html } from "./html.js";
-import { rows, chapterShardsOf } from "./format.js";
+import { rows, chapterShardsOf, packageIndexFile, packageShard, packageList, packageRowsOf, indexPagesOf } from "./format.js";
 import { chapter, isSeries, letterOf, nameCmp } from "./manual.js";
 
 // PAGE is how many pages each of the static listing's pages shows.
@@ -19,7 +19,7 @@ const BLOCK = 40;
 // createListings makes the listing functions for an app: ctx has the
 // repository cache, manifest(), browse(params) and staticPage(name, sec)
 // for links, and the router.
-export function createListings({ cache, manifest, browse, staticPage, router }) {
+export function createListings({ cache, manifest, browse, staticPage, packageURL = (n) => n, router }) {
   // chapterPlan works out a listing of a chapter (key), or of one of its
   // sections (sub), from one source (src) or all, from the chapter's index:
   // its chunks are the index's, {count, load(n) resolving to a chunk's
@@ -99,6 +99,65 @@ export function createListings({ cache, manifest, browse, staticPage, router }) 
     };
   }
 
+  // packageIndex is the package index (see repo.PackageIndex) and its
+  // chunks ({sha256, count, first, last, prev}), or null if there's none.
+  async function packageIndex(m) {
+    const sha = (m.index || {}).packages;
+    if (!sha) return null;
+    const pi = await cache.get(packageIndexFile(sha));
+    return { pi, chunks: rows(pi.chunks, { hashes: ["sha256"] }) };
+  }
+
+  // packagesPlan is a plan (as chapterPlan's) of the list of packages, from
+  // one source (src) or all, a chunk of the package index at a time.
+  async function packagesPlan(m, src) {
+    const ix = await packageIndex(m);
+    if (!ix) return emptyPlan();
+    const { pi, chunks } = ix;
+    return chunkedPlan({
+      chunks, letters: rows(pi.letters), total: src ? null : pi.count, filtered: !!src, entry: packageEntry,
+      items: async (n) => packageRowsOf((await cache.get(packageShard(chunks[n - 1].sha256))).packages)
+        .filter(r => !src || r.sources[src] > 0)
+        .map(r => ({ name: r.name, desc: packageDesc(r, src), url: src ? browse({ src, pkg: r.name }) : packageURL(r.name) })),
+    });
+  }
+
+  // findPackage is the package index's entry for a package (see
+  // format.packageRowsOf), or null if there's none.
+  async function findPackage(m, name) {
+    const ix = await packageIndex(m);
+    if (!ix) return null;
+    const c = ix.chunks.find(c => nameCmp(c.first.toLowerCase(), name) <= 0 && nameCmp(name, c.last.toLowerCase()) <= 0)
+      || ix.chunks.find(c => c.first === name || c.last === name);
+    if (!c) return null;
+    return packageRowsOf((await cache.get(packageShard(c.sha256))).packages).find(r => r.name === name) || null;
+  }
+
+  // packagePlan is a plan of a package's pages (from one source, or all),
+  // PAGE to a chunk, as its static listing's pages have them; with the
+  // package's entry, as row (null if there's no such package).
+  async function packagePlan(m, name, src) {
+    const row = await findPackage(m, name);
+    if (!row) return { ...emptyPlan(), row: null };
+    const pages = indexPagesOf((await cache.get(packageList(row.list))).pages).filter(p => !src || p.sources.includes(src));
+    const items = pages.map(p => ({
+      name: p.name, sec: p.section, desc: p.description || "", girl: src ? p.girl.includes(src) : p.variants.includes("girl"),
+      url: src ? browse({ page: p.name, sec: p.section, src }) : staticPage(p.name, p.section),
+    }));
+    const count = Math.max(1, Math.ceil(items.length / PAGE));
+    const chunks = Array.from({ length: count }, (_, i) => {
+      const part = items.slice(i * PAGE, (i + 1) * PAGE);
+      return { count: part.length, first: part.length ? part[0].name : "", last: part.length ? part[part.length - 1].name : "",
+        prev: i > 0 ? letterOf(items[i * PAGE - 1].name) : "" };
+    });
+    const letters = [];
+    items.forEach((it, i) => {
+      const l = letterOf(it.name);
+      if (i === 0 || l !== letterOf(items[i - 1].name)) letters.push({ letter: l, chunk: Math.floor(i / PAGE) + 1 });
+    });
+    return { ...chunkedPlan({ chunks, letters, total: items.length, filtered: false, items: async (n) => items.slice((n - 1) * PAGE, n * PAGE) }), row };
+  }
+
   // chunkMaker renders a plan's chunks: its items, under letters (or
   // thousands) as they start, a letter carried over from the chunk before
   // being marked as such.
@@ -106,9 +165,10 @@ export function createListings({ cache, manifest, browse, staticPage, router }) 
   // a Listing of its whole chapter (or section), starting where the static
   // page does, with its first entry kept where it is on the screen. The
   // address follows it while the static view is what's shown.
-  async function attachListing(el, { key, sub = "", pageURL, letters = null }) {
+  /** @param {any} el @param {{key?: string, sub?: string, pkg?: string, packages?: string | null, pageURL: (n: number) => string, letters?: any}} opts */
+  async function attachListing(el, { key = "", sub = "", pkg = "", packages = null, pageURL, letters = null }) {
     const m = await manifest();
-    const plan = await chapterPlan(m, key, sub, "");
+    const plan = pkg ? await packagePlan(m, pkg, "") : packages != null ? await packagesPlan(m, packages) : await chapterPlan(m, key, sub, "");
     const firstLi = el.querySelector("li[data-name]");
     if (!firstLi || !plan.count) return null;
     const name = firstLi.dataset.name;
@@ -141,19 +201,99 @@ export function createListings({ cache, manifest, browse, staticPage, router }) 
     return hits.length ? hits[0].name : "";
   }
 
-  return { chapterPlan, attachListing, findName };
+  return { chapterPlan, packagesPlan, packagePlan, attachListing, findName };
 }
+
+// emptyPlan is a plan with nothing in it.
+function emptyPlan() {
+  return { count: 0, total: 0, subs: new Map(), letters: new Map(), load: async () => [], prevLetter: () => "", startOf: () => 0,
+    chunkOf: () => 1, chunkForPage: async () => 1, order: () => [] };
+}
+
+// chunkedPlan is a plan (see chapterPlan) of chunks ({count, first, last,
+// prev}), whose items items(n) resolves to: if filtered, only some of each
+// chunk's, so where each starts is known once those before it are loaded.
+// letters are {letter, chunk}s; entry, if given, renders an item.
+/**
+ * @param {{chunks: {count: number, first: string, last: string, prev: string}[], letters: {letter: string, chunk: number}[],
+ *   total: number | null, filtered: boolean, items: (n: number) => Promise<any[]>, entry?: (it: any) => any}} o
+ */
+function chunkedPlan({ chunks, letters, total, filtered, items, entry }) {
+  const count = chunks.length;
+  const wanted = new Map(), lastLetter = new Map(), loaded = new Map();
+  const load = (n) => {
+    if (!loaded.has(n)) {
+      const p = items(n).then(its => {
+        wanted.set(n, its.length);
+        lastLetter.set(n, its.length ? letterOf(its[its.length - 1].name) : "");
+        return its;
+      });
+      p.catch(() => loaded.delete(n));
+      loaded.set(n, p);
+    }
+    return loaded.get(n);
+  };
+  return {
+    count, total, subs: new Map(), letters: new Map(letters.map(l => [l.letter, l.chunk])), load, entry,
+    startOf: (n) => {
+      let at = 0;
+      for (let k = 1; k < n; k++) {
+        if (!filtered) at += chunks[k - 1].count;
+        else if (wanted.has(k)) at += wanted.get(k);
+        else return null;
+      }
+      return at;
+    },
+    prevLetter: (n) => {
+      if (!filtered) return n > 1 ? chunks[n - 1].prev || "" : "";
+      for (let k = n - 1; k >= 1; k--) {
+        if (!lastLetter.has(k)) return "";
+        if (lastLetter.get(k)) return lastLetter.get(k);
+      }
+      return "";
+    },
+    chunkOf: (name) => {
+      const low = name.toLowerCase();
+      let n = 1;
+      chunks.forEach((c, i) => { if (i > 0 && c.first && nameCmp(c.first.toLowerCase(), low) <= 0) n = i + 1; });
+      return n;
+    },
+    chunkForPage: async (p) => {
+      if (!filtered) return Math.min(Math.max(1, p), Math.max(1, count));
+      const at = (p - 1) * PAGE;
+      for (let n = 1, from = 0; n <= count; n++) {
+        const size = wanted.has(n) ? wanted.get(n) : (await load(n)).length;
+        if (at < from + size) return n;
+        from += size;
+      }
+      return 1;
+    },
+    order: (from) => [...new Set([from, ...letters.map(l => l.chunk), ...Array.from({ length: count }, (_, i) => i + 1)])],
+  };
+}
+
+// packageDesc is what a package's entry in src's list says, as
+// site.PackageDesc.
+export function packageDesc(r, src) {
+  const n = src ? r.sources[src] || 0 : r.pages;
+  let d = `${n} page${n === 1 ? "" : "s"}`;
+  if (n === r.pages && r.sample) d += ": " + r.sample;
+  return d;
+}
+
+// packageEntry renders a package in a list of them.
+const packageEntry = (it) => html`<li data-name="${it.name}"><a href="${it.url}"><span class="name">${it.name}</span></a><span class="desc">${it.desc}</span></li>`;
 
 // chunkMaker renders a plan's chunks: its items, under letters (or
 // thousands) as they start, a letter carried over from the chunk before
 // being marked as such.
 export function chunkMaker(plan) {
-  const entry = (it) => {
+  const entry = plan.entry || ((it) => {
     const series = isSeries(it.sec);
     return html`<li data-name="${it.name}"><a href="${it.url}"><span class="name">${series ? `${it.sec.toUpperCase()} ${it.name}` : it.name}</span>${
       !series && html`<span class="sec">(${it.sec})</span>`}</a><span class="desc">${it.desc}</span>${
       it.girl && html`<span class="done" title="girlified">✨</span>`}</li>`;
-  };
+  });
   return async (n) => {
     // Runs of a letter, each under its heading: marked as carried on if
     // the chunk before ended with it.

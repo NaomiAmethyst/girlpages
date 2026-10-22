@@ -101,6 +101,9 @@ type IndexEntry struct {
 	// ShardManifest of SourceShards), which says which page versions have
 	// that variant without asking for each.
 	Variants map[string]string `json:"variants,omitempty"`
+	// Packages is the package index (a PackageIndex), if any page comes
+	// from a package.
+	Packages string `json:"packages,omitempty"`
 }
 
 // Pointer is a small mutable document naming an immutable one.

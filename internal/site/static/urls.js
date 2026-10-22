@@ -51,13 +51,28 @@ export function listingURL(base, key, sub = "", n = 1, v = voice) {
 export const homeURL = (base, v = voice) => `${base}${v ? seg(v) + "/" : ""}`;
 export const searchURL = (base, v = voice) => `${homeURL(base, v)}search/`;
 
+// packagesURL is page n of the list of packages from a source ("" for
+// all, "debian", "debian/trixie"): packages/[<distro>/[<release>/]].
+export function packagesURL(base, src = "", n = 1) {
+  const u = `${base}packages/${src ? src.split("/").map(seg).join("/") + "/" : ""}`;
+  return n > 1 ? `${u}page/${n}/` : u;
+}
+
+// packageURL is page n of a package's listing of its pages: package/<name>/.
+// (From one source, it's the browse app's: browseURL's pkg.)
+export function packageURL(base, name, n = 1) {
+  const u = `${base}package/${seg(name)}/`;
+  return n > 1 ? `${u}page/${n}/` : u;
+}
+
 // browseURL is a view in the browse app, which lives in the home page's
 // hash: #/[<source>/]<sec>/<name>[/<version>][/<variant>][/mono] for a page
 // (the latest version, or as a source has it, unless a version is given:
 // an upstream version number, or the start of a source hash), and
-// #/[<source>/]section/<key>[/<sec>] for a listing, where a source is a
+// #/[<source>/]section/<key>[/<sec>] for a listing, and
+// #/[<source>/]package/<name> for a package's pages, where a source is a
 // distro or distro/release.
-export function browseURL(base, { src = "", section = "", sub = "", page = "", sec = "", version = "", variant = "", mono = false, at = "" } = {}) {
+export function browseURL(base, { src = "", section = "", sub = "", page = "", sec = "", version = "", variant = "", mono = false, at = "", pkg = "" } = {}) {
   const segs = src ? src.split("/") : [];
   if (page) {
     segs.push(sec, page);
@@ -68,6 +83,8 @@ export function browseURL(base, { src = "", section = "", sub = "", page = "", s
   } else if (section) {
     segs.push("section", section);
     if (sub) segs.push(sub);
+  } else if (pkg) {
+    segs.push("package", pkg);
   }
   return base + "#/" + segs.map(pathEscape).join("/");
 }

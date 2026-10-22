@@ -238,6 +238,9 @@ highest number.
 | `index/names/shard-ab/<sha>.json` | no | ″ |
 | `index/docs/manifest-<sha>.json` | no | ″ the page table: the rest |
 | `index/docs/shard-ab/<sha>.json` | no | ″ |
+| `index/packages/manifest-<sha>.json` | no | [Package index](#the-package-index): every package, A to Z |
+| `index/packages/shard-ab/<sha>.json` | no | ″ its chunks |
+| `index/package/shard-ab/<sha>.json` | no | ″ a package's pages |
 | `packs/<sha>.tar.zst` | no | [Packs](#packs) of everything in `page/` and `contents/` |
 
 `<section>` and `<name>` are [escaped](#paths); `<source>` is a source
@@ -279,6 +282,7 @@ The root. Fetch it fresh to see the repository as it is now.
 | `chapters` | Each [chapter](#names-and-sections), sorted: the hash of its [index](#sectionchapter-shajson), and how many pages it has. |
 | `index.words`, `.grams`, `.names`, `.docs` | Hashes of the [search index](#the-search-index) manifests. |
 | `index.variants` | For each variant, the hash of its [variant index](#variant-indexes) manifest. |
+| `index.packages` | Optional: the hash of the [package index](#the-package-index), if any page comes from a package. |
 | `sources` | Each [source](#sources), sorted by distro then release (a distro's entry, with no `release`, first): how many pages have a version from it, in all and by [chapter](#names-and-sections). |
 | `packs` | Optional: the repository's [packs](#packs), in order. |
 
@@ -705,6 +709,42 @@ time, each named as soon as its names shard is in and described when its
 docs shard is. A query that names a page exactly (`2 open`, `open(2)`,
 `rfc 9110`: a section, or every section of a chapter in turn, and a name)
 goes straight to it, if it's there, without searching.
+
+## The package index
+
+Every package pages come from, by name in lower case (packages called the
+same in different distributions are one), sorted as listings are, for
+browsing by package. `index/packages/manifest-<sha>.json`:
+
+```json
+{"format": 1, "count": 4156, "sources": {"debian": 3799, "debian/trixie": 3799, …},
+ "chunks": {"keys": ["sha256", "bytes", "count", "first", "last", "prev"], "data": […]},
+ "letters": {"keys": ["letter", "chunk"], "data": ["#", 1, "a", 1, "b", 3, …]}}
+```
+
+`sources` counts the packages from each source; `chunks` are the packages
+200 at a time (so chunk *n* is page *n* of the website's list of them),
+each with its first and last names and the letter of the package before
+it (as a [chapter index's](#sectionchapter-shajson) shards), and
+`letters` where each letter starts. A chunk,
+`index/packages/shard-ab/<sha>.json`:
+
+```json
+{"format": 1, "packages": {"keys": ["name", "pages", "sources", "sample", "list"],
+  "data": ["coreutils", 105, "debian=105 debian/trixie=105", "[(1), arch(1), b2sum(1), base32(1), base64(1), basename(1), …", "<basE91 hash>", …]}}
+```
+
+`pages` is how many pages come from the package, and `sources` how many
+from each source; `sample` names the first six; `list` is the hash of its
+pages' list, `index/package/shard-ab/<sha>.json`:
+
+```json
+{"format": 1, "package": "coreutils", "pages": {…}}
+```
+
+`pages` are the package's pages as a [chapter index](#sectionchapter-shajson)
+lists them, sorted the same way, each page's `sources` (and `girl`) only
+those it has from this package.
 
 ## Packs
 

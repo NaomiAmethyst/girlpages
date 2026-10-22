@@ -149,7 +149,7 @@ func Build(s *repo.Store, pages []repo.PageRef, m *repo.Manifest, o Options) (St
 	}
 	steps := []func() error{
 		b.static,
-		func() error { return b.packages(pages) }, // before home, which links to them
+		b.packages, // first, as other pages link to them if there are any
 		func() error { return b.home(pages) },
 		func() error { return b.sections(pages) },
 		func() error { return b.pages(pages) },
@@ -186,8 +186,17 @@ type view struct {
 
 	// Sources lead to browsing by distribution or release.
 	Sources []sourceMenu
-	// PackagesURL is the list of packages, if there is one.
-	PackagesURL string
+	// Packages says there are lists of packages, for the header to link
+	// to, and Nav which of its links is to where the page is ("sections",
+	// "packages").
+	Packages bool
+	Nav      string
+	// ListSource, on a list of packages, is the source it's of ("" for
+	// all), and ListPackage, on a package's listing, its name: for the
+	// browse app to make them again from the repository.
+	ListSource, ListPackage string
+	// Parent, if given, is in the breadcrumbs between home and the page.
+	Parent *chip
 
 	// list
 	Heading, Sub string
@@ -418,7 +427,7 @@ func (b *builder) variantURL(variant, name, sec string) string { return b.url(va
 
 // Reserved are the site's top-level directories (and files) that aren't
 // variants: no variant may be named one of these, or a series.
-var Reserved = []string{"section", "packages", "search", "browse", "offline", "static", "repo", "src",
+var Reserved = []string{"section", "packages", "package", "search", "browse", "offline", "static", "repo", "src",
 	"404.html", "index.html", "sw.js", "sitemap.xml", "robots.txt", "manifest.webmanifest"}
 
 // listURL is a listing: a chapter's (section/3/, for sec ""), one of its
@@ -512,6 +521,7 @@ func (b *builder) write(path string, data []byte) error {
 
 func (b *builder) render(u, name string, v *view) error {
 	v.Base, v.Version = b.o.Base, b.o.Version
+	v.Packages = b.packageLists != nil
 	if v.Canonical == "" && !v.NoIndex {
 		v.Canonical = b.abs(u)
 	}
@@ -675,9 +685,7 @@ func (b *builder) home(pages []repo.PageRef) error {
 	v := &view{Title: "the manual, but make it girly",
 		Description: "Every Unix man page, rewritten by an LLM in the voice of a Gen Z girl, with every detail kept. 💅",
 		Generated:   b.m.Generated.Format(time.DateOnly), Sources: b.sourceChips("")}
-	if b.packageLists != nil {
-		v.PackagesURL = b.packageListsURL("")
-	}
+	v.Nav = "sections"
 	for _, p := range pages {
 		key := mainKey(p.Pointer.Section)
 		c := cards[key]
@@ -754,6 +762,7 @@ func (b *builder) sections(pages []repo.PageRef) error {
 				Chips:       chipsFor(sec),
 				Sources:     b.sourceChips(key),
 				SaveSection: label,
+				Nav:         "sections",
 			}
 			var items []item
 			for _, p := range ps {
@@ -1000,7 +1009,7 @@ func (b *builder) page(p repo.PageRef) error {
 		pv.Published = published(ver.Packages[0].Version)
 	}
 	for _, pk := range ver.Packages {
-		pv.Packages = append(pv.Packages, chip{Label: pk.String(), URL: b.packageURL(pk)})
+		pv.Packages = append(pv.Packages, chip{Label: pk.String(), URL: b.packageLink(pk)})
 	}
 	for _, src := range sourcesIn(ver) {
 		pv.In = append(pv.In, chip{Label: src.Label(), URL: b.browseURL(src.Key(), sec, name)})
@@ -1064,17 +1073,14 @@ func (b *builder) page(p repo.PageRef) error {
 	return b.render(u, "page", v)
 }
 
-// packageURL is the search for a package's pages (pkg:debian/coreutils),
-// or "" for a package without a name.
-func (b *builder) packageURL(p repo.Package) string {
+// packageLink is a package's listing, or "" if it hasn't one (a package
+// without a name, or a repository without a package index).
+func (b *builder) packageLink(p repo.Package) string {
 	k := strings.ToLower(p.Name)
-	if k == "" || strings.ContainsAny(k, " \t\n") {
+	if k == "" || strings.ContainsAny(k, " \t\n/") || b.packageLists == nil {
 		return ""
 	}
-	if p.Distro != "" {
-		k = strings.ToLower(p.Distro) + "/" + k
-	}
-	return b.o.Base + "search/?" + url.Values{"q": {repo.PackagePrefix + k}}.Encode()
+	return b.url("package", k)
 }
 
 // sourcesIn lists the distribution releases (or upstream) a version came
@@ -1208,7 +1214,7 @@ func (b *builder) prune() error {
 	}
 	// (man/ and series' own directories held pages before they moved to
 	// girl/; whatever's left there goes.)
-	dirs := []string{"girl", "man", "section", "packages", "src"}
+	dirs := []string{"girl", "man", "section", "packages", "package", "src"}
 	for _, e := range b.m.Sections {
 		if manpage.IsSeries(e.Section) {
 			dirs = append(dirs, SegmentName(e.Section))

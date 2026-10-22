@@ -83,7 +83,7 @@ func (s *siteInfos) get(src Source) siteInfo {
 
 // reserved are the site's top-level directories (and files) that aren't
 // variants, as site.Reserved.
-var reserved = map[string]bool{"section": true, "packages": true, "search": true, "browse": true, "offline": true, "static": true,
+var reserved = map[string]bool{"section": true, "packages": true, "package": true, "search": true, "browse": true, "offline": true, "static": true,
 	"repo": true, "src": true, "404.html": true, "index.html": true, "sw.js": true, "sitemap.xml": true,
 	"robots.txt": true, "manifest.webmanifest": true}
 

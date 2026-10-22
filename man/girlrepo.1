@@ -557,13 +557,18 @@ which the app draws the page in; listings are at
 .IB section / key /
 .RB ( section/1/ ,
 .BR section/rfc/ ),
-and the packages pages come from, A to Z, are listed at
+and the packages pages come from, A to Z, at
 .B packages/
 (from every source),
 .IB packages/ distro /
 and
-.IB packages/ distro / release /R,
-each package linking to the search for its pages.
+.IB packages/ distro / release /\fR,
+each package's pages at
+.IB package/ name /
+(or, from one source, in the app:
+.BR #/debian/trixie/package/coreutils ),
+all of them scrolling through as one list, as section listings do.
+The header links to the sections (the home page) and the packages.
 .B serve
 and
 .BR girlserve (1)

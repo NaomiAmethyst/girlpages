@@ -1,6 +1,6 @@
 {{define "content"}}
 <div class="card">
-<nav class="crumbs" aria-label="Breadcrumbs"><a href="{{.Base}}">home</a> › {{.Heading}}</nav>
+<nav class="crumbs" aria-label="Breadcrumbs"><a href="{{.Base}}">home</a> › {{with .Parent}}<a href="{{.URL}}">{{.Label}}</a> › {{end}}{{.Heading}}</nav>
 <div class="pagehead">
 <h1>{{.Heading}}</h1>
 <p class="sub">{{.Sub}}</p>
@@ -9,7 +9,7 @@
 {{template "sources" .Sources}}
 {{if .Chips}}<div class="chips">{{range .Chips}}<a class="pill{{if .On}} on{{end}}" href="{{.URL}}">{{.Label}}</a>{{end}}</div>{{end}}
 {{if .Letters}}<nav class="letters" aria-label="Jump to letter">{{range .Letters}}<a href="{{.URL}}">{{.Letter}}</a>{{end}}</nav>{{end}}
-<div class="listing" data-first="{{.ListFirst}}" data-page="{{.ListPage}}" data-pages="{{.ListPages}}" data-key="{{.ListKey}}" data-sub="{{.ListSub}}">
+<div class="listing" data-first="{{.ListFirst}}" data-page="{{.ListPage}}" data-pages="{{.ListPages}}" {{if .ListPackage}}data-package="{{.ListPackage}}"{{else}}data-key="{{.ListKey}}" data-sub="{{.ListSub}}"{{end}}>
 <div class="chunk" data-chunk="{{.ListPage}}">
 {{range .Groups}}
 {{if .Cont}}<h2 class="letter cont">{{.Letter}} <span class="sub">(continued)</span></h2>{{else}}<h2 class="letter" id="letter-{{.Letter}}">{{.Letter}}</h2>{{end}}

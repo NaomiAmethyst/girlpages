@@ -104,6 +104,27 @@ export function indexPagesOf(t) {
 // chapterShardsOf reads a chapter index's shards: {sha256, bytes, count, first, last, prev}.
 export const chapterShardsOf = (ci) => rows(ci.shards, { hashes: ["sha256"] });
 
+// packageIndexFile is the package index (repo.PackageIndex), by its hash
+// (the manifest's index.packages); packageShard one of its chunks, and
+// packageList a package's pages (repo.PackagePages).
+export const packageIndexFile = (sha) => `index/packages/manifest-${sha}.json`;
+export const packageShard = (sha) => `index/packages/shard-${sha.slice(0, 2)}/${sha}.json`;
+export const packageList = (sha) => `index/package/shard-${sha.slice(0, 2)}/${sha}.json`;
+
+// packageRowsOf reads a package index chunk's packages: each {name, pages,
+// sources (source key → pages), sample, list}.
+export function packageRowsOf(t) {
+  return rows(t, { hashes: ["list"] }).map(r => {
+    /** @type {Record<string, number>} */
+    const sources = {};
+    for (const f of (r.sources || "").split(" ").filter(Boolean)) {
+      const i = f.lastIndexOf("=");
+      sources[f.slice(0, i)] = +f.slice(i + 1);
+    }
+    return { ...r, sources };
+  });
+}
+
 // chapterFile is a chapter's index, from its manifest entry.
 export const chapterFile = (e) => `section/${enc(e.chapter)}-${e.sha256}.json`;
 

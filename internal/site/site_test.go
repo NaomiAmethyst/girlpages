@@ -263,10 +263,10 @@ func TestPrune(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, st := build(t, out, nil, Options{})
-	if st.Removed != 4 {
+	if st.Removed != 5 { // and its package's listing
 		t.Errorf("removed %d pages", st.Removed)
 	}
-	for _, gone := range []string{"man/1/git-commit", "man/1/ls/v", "src"} {
+	for _, gone := range []string{"man/1/git-commit", "man/1/ls/v", "src", "package/git-commit"} {
 		if _, err := os.Stat(filepath.Join(out, gone)); err == nil {
 			t.Errorf("%s is still there", gone)
 		}
@@ -1097,40 +1097,53 @@ func TestReservedNames(t *testing.T) {
 	}
 }
 
-// TestPackageLists checks the lists of packages: everything's and each
-// source's, linking to the searches for their pages.
+// TestPackageLists checks the lists of packages, everything's and each
+// source's, and each package's listing of its pages.
 func TestPackageLists(t *testing.T) {
 	out := t.TempDir()
 	more := append([]pageSpec{}, specs...)
 	arch := []repo.Package{{Distro: "arch", Release: "rolling", Name: "coreutils", Version: "1"}}
-	more = append(more, pageSpec{name: "cat", sec: "1", desc: "concatenate files", pkgs: arch},
+	more = append(more, pageSpec{name: "cat", sec: "1", desc: "concatenate files", pkgs: arch, girl: true},
 		pageSpec{name: "tac", sec: "1", desc: "concatenate files backwards", pkgs: arch})
 	build(t, out, more, Options{URL: "https://example.test"})
 
 	all := read(t, filepath.Join(out, "packages", "index.html"))
 	for _, want := range []string{
-		`<h1>📦 packages</h1>`, `7 packages from every source`,
-		`<a href="/search/?q=pkg%3Acoreutils" rel="nofollow"><span class="name">coreutils</span></a><span class="desc">2 pages: cat(1), tac(1)</span>`,
-		`<a href="/search/?q=pkg%3Als" rel="nofollow"><span class="name">ls</span></a><span class="desc">1 page: ls(1)</span>`,
-		`href="/packages/debian/trixie/"`, `href="/packages/arch/"`,
+		`<h1>📦 packages</h1>`, `7 packages from every source`, `data-packages=""`,
+		`<li data-name="coreutils"><a href="/package/coreutils/"><span class="name">coreutils</span></a><span class="desc">2 pages: cat(1), tac(1)</span>`,
+		`<li data-name="ls"><a href="/package/ls/"><span class="name">ls</span></a><span class="desc">1 page: ls(1)</span>`,
+		`href="/packages/debian/trixie/"`, `href="/packages/arch/"`, `aria-current="page">📦`,
 	} {
 		if !strings.Contains(all, want) {
 			t.Errorf("packages/ lacks %s", want)
 		}
 	}
+	if strings.Contains(all, "?q=") {
+		t.Error("packages/ links to searches")
+	}
 	trixie := read(t, filepath.Join(out, "packages", "debian", "trixie", "index.html"))
-	if !strings.Contains(trixie, `href="/search/?q=pkg%3Adebian%2Fls&amp;src=debian%2Ftrixie"`) || strings.Contains(trixie, "coreutils") {
+	if !strings.Contains(trixie, `href="/#/debian/trixie/package/ls"`) || strings.Contains(trixie, "coreutils") ||
+		!strings.Contains(trixie, `data-packages="debian/trixie"`) {
 		t.Errorf("packages/debian/trixie/ links the wrong things:\n%s", trixie)
 	}
-	if a := read(t, filepath.Join(out, "packages", "arch", "index.html")); !strings.Contains(a, `href="/search/?q=pkg%3Aarch%2Fcoreutils"`) ||
-		strings.Contains(a, `pkg%3Aarch%2Fls`) {
-		t.Errorf("packages/arch/ links the wrong things")
+	pkg := read(t, filepath.Join(out, "package", "coreutils", "index.html"))
+	for _, want := range []string{`<h1>📦 coreutils</h1>`, `data-package="coreutils"`, `href="/girl/1/cat/"`, `href="/girl/1/tac/"`,
+		`href="/#/arch/package/coreutils"`, `title="girlified"`} {
+		if !strings.Contains(pkg, want) {
+			t.Errorf("package/coreutils/ lacks %s", want)
+		}
 	}
-	if !strings.Contains(read(t, filepath.Join(out, "index.html")), `<a class="pill" href="/packages/">📦 browse by package</a>`) {
-		t.Error("the home page doesn't link to the packages")
+	// The header links to them, and a page's packages to theirs.
+	if !strings.Contains(read(t, filepath.Join(out, "index.html")), `<a href="/packages/" title="packages">📦<span> packages</span></a>`) {
+		t.Error("the header doesn't link to the packages")
+	}
+	if !strings.Contains(read(t, filepath.Join(out, "girl", "1", "cat", "index.html")), `<a href="/package/coreutils/"`) {
+		t.Error("cat(1) doesn't link to its package")
 	}
 	sm := read(t, filepath.Join(out, "sitemap.xml"))
-	if !strings.Contains(sm, "<loc>https://example.test/packages/</loc>") || !strings.Contains(sm, "<loc>https://example.test/packages/debian/trixie/</loc>") {
-		t.Error("the sitemap lacks the packages")
+	for _, want := range []string{"/packages/</loc>", "/packages/debian/trixie/</loc>", "/package/coreutils/</loc>"} {
+		if !strings.Contains(sm, "<loc>https://example.test"+want) {
+			t.Errorf("the sitemap lacks %s", want)
+		}
 	}
 }

@@ -7,15 +7,18 @@
 </div>
 {{template "sources" .Sources}}
 {{if .Letters}}<nav class="letters" aria-label="Jump to letter">{{range .Letters}}<a href="{{.URL}}">{{.Letter}}</a>{{end}}</nav>{{end}}
-<div class="listing packages">
+<div class="listing packages" data-first="{{.ListFirst}}" data-page="{{.ListPage}}" data-pages="{{.ListPages}}" data-packages="{{.ListSource}}">
+<div class="chunk" data-chunk="{{.ListPage}}">
 {{range .Groups}}
 {{if .Cont}}<h2 class="letter cont">{{.Letter}} <span class="sub">(continued)</span></h2>{{else}}<h2 class="letter" id="letter-{{.Letter}}">{{.Letter}}</h2>{{end}}
 <ul class="pages">
-{{range .Items}}<li><a href="{{.URL}}" rel="nofollow"><span class="name">{{.Name}}</span></a><span class="desc">{{.Desc}}</span></li>
+{{range .Items}}<li data-name="{{.Name}}"><a href="{{.URL}}"><span class="name">{{.Name}}</span></a><span class="desc">{{.Desc}}</span></li>
 {{end}}</ul>
 {{else}}<div class="empty">nothing here, bestie 😭</div>
 {{end}}
 </div>
+</div>
 {{if .Pager}}<nav class="pager" aria-label="Pages">{{if .Prev}}<a class="pill" rel="prev" href="{{.Prev}}">‹ prev</a>{{end}}{{range .Pager}}{{if .On}}<span class="pill on" aria-current="page">{{.Label}}</span>{{else if .URL}}<a class="pill" href="{{.URL}}">{{.Label}}</a>{{else}}<span class="gap">{{.Label}}</span>{{end}}{{end}}{{if .Next}}<a class="pill" rel="next" href="{{.Next}}">next ›</a>{{end}}</nav>{{end}}
 </div>
+{{if .Pager}}<script type="module" src="{{.Base}}static/takeover.js"></script>{{end}}
 {{end}}

@@ -167,7 +167,8 @@ func (s *Store) PublishContext(ctx context.Context, pages []PageRef) (*Manifest,
 
 	byChapter := map[string][]IndexPage{}
 	bySection := map[string]*SectionEntry{}
-	for _, p := range pages {
+	ips := make([]IndexPage, len(pages))
+	for i, p := range pages {
 		v := p.Current()
 		sec := p.Pointer.Section
 		keys, girl := p.Listing.SourceKeys()
@@ -178,6 +179,7 @@ func (s *Store) PublishContext(ctx context.Context, pages []PageRef) (*Manifest,
 		if n := len(p.Listing.Versions); n > 1 {
 			ip.Versions = n
 		}
+		ips[i] = ip
 		ch := manpage.Chapter(sec)
 		byChapter[ch] = append(byChapter[ch], ip)
 		e := bySection[sec]
@@ -246,6 +248,10 @@ func (s *Store) PublishContext(ctx context.Context, pages []PageRef) (*Manifest,
 	}
 
 	if m.Index.Variants, err = s.writeVariantIndexes(pages); err != nil {
+		return nil, err
+	}
+	s.counter("writing the package index", 0)
+	if m.Index.Packages, err = s.writePackageIndex(pages, ips); err != nil {
 		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
@@ -493,6 +499,23 @@ func (s *Store) GCContext(ctx context.Context, dryRun bool) (GCStats, error) {
 		}
 		for _, r := range sm.Shards {
 			live[ShardPath(kind, r.SHA256)] = true
+		}
+	}
+	if m.Index.Packages != "" {
+		live[IndexManifestPath("packages", m.Index.Packages)] = true
+		_, rows, err := PackageIndexOf(m, s.Read)
+		if err != nil {
+			return st, err
+		}
+		var pi PackageIndex
+		if err := s.Read(IndexManifestPath("packages", m.Index.Packages), &pi); err != nil {
+			return st, err
+		}
+		for _, c := range pi.Chunks {
+			live[ShardPath("packages", c.SHA256)] = true
+		}
+		for _, r := range rows {
+			live[ShardPath("package", r.List)] = true
 		}
 	}
 	seenSource := map[string]bool{}

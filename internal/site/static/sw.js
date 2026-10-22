@@ -48,7 +48,7 @@ self.addEventListener("fetch", (event) => {
 
 // page tries the network (briefly). Failing that, the home page comes from
 // the shell, and a page or listing (in a variant or not: girl/1/ls/,
-// pirate/1/ls/, section/1/) gets the app's shell, which shows it from the
+// pirate/1/ls/, section/1/, packages/, package/coreutils/) gets the app's shell, which shows it from the
 // repository the pages have cached; anything else gets the offline page.
 async function page(req, url) {
   try {
@@ -68,14 +68,14 @@ async function page(req, url) {
 
 // The site's top-level directories (and files) that aren't variants (as
 // routes.js's RESERVED): anything else at the top is a variant.
-const RESERVED = ["section", "packages", "search", "browse", "offline", "static", "repo", "src",
+const RESERVED = ["section", "packages", "package", "search", "browse", "offline", "static", "repo", "src",
   "404.html", "index.html", "sw.js", "sitemap.xml", "robots.txt", "manifest.webmanifest"];
 
 // appView reports whether the app's shell shows an address: a listing,
 // or anything in a variant.
 function appView(url) {
   const first = url.pathname.slice(BASE.length).split("/")[0];
-  return first === "section" || (first !== "" && !RESERVED.includes(first) && /^[a-z][a-z0-9-]{0,31}$/.test(first));
+  return first === "section" || first === "packages" || first === "package" || (first !== "" && !RESERVED.includes(first) && /^[a-z][a-z0-9-]{0,31}$/.test(first));
 }
 
 // asset serves the shell from its cache (it's refreshed whenever the site

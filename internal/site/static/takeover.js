@@ -7,14 +7,14 @@
 // following the page on screen. Without JavaScript, the pager links the
 // static pages.
 
-const listing = /** @type {HTMLElement | null} */ (document.querySelector(".listing[data-key]"));
+const listing = /** @type {HTMLElement | null} */ (document.querySelector(".listing[data-key], .listing[data-package], .listing[data-packages]"));
 if (listing && "IntersectionObserver" in globalThis && Number(listing.dataset.pages) > 1) {
   const base = document.documentElement.dataset.base;
   const first = listing.dataset.first;
   const url = (n) => (n <= 1 ? first : `${first}page/${n}/`);
   import(new URL(base + "static/app.js", location.href).href).then(async (app) => {
     const list = await app.attachListing(listing, {
-      key: listing.dataset.key, sub: listing.dataset.sub, pageURL: url,
+      key: listing.dataset.key, sub: listing.dataset.sub, pkg: listing.dataset.package, packages: listing.dataset.packages ?? null, pageURL: url,
       letters: document.querySelector(".letters"),
     });
     if (list) document.querySelector(".pager")?.setAttribute("hidden", "");

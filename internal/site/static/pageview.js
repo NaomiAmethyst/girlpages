@@ -8,7 +8,7 @@ import { renderHTML, renderOriginalHTML } from "./render.js";
 import { errorKind } from "./cache.js";
 import { Drawer } from "./draw.js";
 import { Spy } from "./spy.js";
-import { pathEscape, segmentName, pageURL, homeURL, searchURL } from "./urls.js";
+import { pathEscape, segmentName, pageURL, homeURL, packageURL } from "./urls.js";
 import { preferredVariant, setPreferredVariant } from "./prefs.js";
 import { chapter, isSeries, sectionLabel, sourceLabel, variantLabelOf } from "./manual.js";
 
@@ -69,12 +69,11 @@ export function createPageView({ el: app, base, listing, findName, variant, brow
     return parts.join(": ") + (p.url ? ` from ${p.url}` : "");
   }
 
-  // packageKey is what a package's pages are searched for by
-  // (pkg:debian/coreutils), as repo.PackageKeys: "" without a name.
+  // packageKey is the name of a package's listing (as site.packageLink),
+  // or "" if it hasn't one.
   function packageKey(p) {
     const n = (p.name || "").toLowerCase();
-    if (!n || /\s/.test(n)) return "";
-    return p.distro ? `${p.distro.toLowerCase()}/${n}` : n;
+    return !n || /[\s/]/.test(n) ? "" : n;
   }
 
   // publishedLabel is a "2022-06" date as "June 2022", as site.published.
@@ -238,7 +237,7 @@ export function createPageView({ el: app, base, listing, findName, variant, brow
     const from = [
       ...(ver.packages || []).map(p => {
         const k = packageKey(p);
-        return html`<li>${k ? html`<a href="${searchURL(base)}?${new URLSearchParams({ q: "pkg:" + k })}" title="every page from it">${packageLabel(p)}</a>` : packageLabel(p)}</li>`;
+        return html`<li>${k ? html`<a href="${packageURL(base, k)}" title="every page from it">${packageLabel(p)}</a>` : packageLabel(p)}</li>`;
       }),
       g && html`<li>💖 ${which === "girl" ? "girlified" : "rewritten"} by ${g.model || g.backend || "a model"}${made && ` on ${made}`}</li>`,
     ].filter(Boolean);

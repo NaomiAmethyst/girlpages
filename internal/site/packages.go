@@ -5,29 +5,18 @@ package site
 
 import (
 	"fmt"
-	"net/url"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/NaomiAmethyst/girlpages/internal/manpage"
 	"github.com/NaomiAmethyst/girlpages/internal/repo"
 )
 
-// packageSample is how many of a package's pages its entry names.
-const packageSample = 6
-
-// pkgEntry is a package in a list: its name (as it's first written), and
-// its pages (as indexes into the build's pages).
-type pkgEntry struct {
-	name  string
-	pages []int
-}
-
-// packageListsURL is the list of packages from a source ("" for all of
-// them, "debian", "debian/trixie"): packages/, packages/debian/,
+// packagesURL is the list of packages from a source ("" for all of them,
+// "debian", "debian/trixie"): packages/, packages/debian/,
 // packages/debian/trixie/. (A distribution can't have a release called
 // "page", which its list's later pages are under.)
-func (b *builder) packageListsURL(src string) string {
+func (b *builder) packagesURL(src string) string {
 	parts := []string{"packages"}
 	if src != "" {
 		parts = append(parts, strings.Split(src, "/")...)
@@ -35,138 +24,165 @@ func (b *builder) packageListsURL(src string) string {
 	return b.url(parts...)
 }
 
-// packages writes the lists of packages: every package any page comes
-// from, A to Z, and those from each source. Each links to the search for
-// its pages (pkg:debian/coreutils), which lists them all.
-func (b *builder) packages(pages []repo.PageRef) error {
-	// source key ("" for all) → lower-cased package name → entry
-	lists := map[string]map[string]*pkgEntry{"": {}}
-	add := func(src, name string, i int) {
-		m := lists[src]
-		if m == nil {
-			m = map[string]*pkgEntry{}
-			lists[src] = m
-		}
-		k := strings.ToLower(name)
-		e := m[k]
-		if e == nil {
-			e = &pkgEntry{name: name}
-			m[k] = e
-		}
-		if n := len(e.pages); n == 0 || e.pages[n-1] != i {
-			e.pages = append(e.pages, i)
-		}
+// packageURL is a package's pages: package/<name>/ for every source's, or
+// in the browse app, one source's (#/debian/trixie/package/<name>), as
+// sections from a source are.
+func (b *builder) packageURL(name, src string) string {
+	if src != "" {
+		return b.browseURL(src, "package", name)
 	}
-	for i, p := range pages {
-		for _, v := range p.Listing.Versions {
-			for _, pk := range v.Packages {
-				if pk.Name == "" || strings.ContainsAny(pk.Name, " \t\n") {
-					continue
-				}
-				add("", pk.Name, i)
-				if d := pk.Source(); d != "" {
-					add(d, pk.Name, i)
-					if pk.Release != "" && d != repo.Upstream {
-						add(d+"/"+pk.Release, pk.Name, i)
-					}
-				}
-			}
-		}
+	return b.url("package", name)
+}
+
+// PackageDesc is what a package's entry in src's list says: how many pages
+// it has there, and if those are all of them, the first few. (static's
+// packageDesc says the same.)
+func PackageDesc(r repo.PackageRow, src string) string {
+	n := r.Pages
+	if src != "" {
+		n = r.Sources[src]
 	}
-	if len(lists[""]) == 0 {
-		return nil
+	d := pluralOf(n, "page")
+	if n == r.Pages && r.Sample != "" {
+		d += ": " + r.Sample
+	}
+	return d
+}
+
+// packages writes the lists of packages, from the repository's package
+// index: every package any page comes from, A to Z, and those from each
+// source, each linking to its pages; and each package's pages, listed as a
+// section's are.
+func (b *builder) packages() error {
+	_, rows, err := repo.PackageIndexOf(b.m, b.s.Read)
+	if err != nil || len(rows) == 0 {
+		return err
 	}
 	b.packageLists = map[string]int{}
 	var jobs []func() error
-	for src, m := range lists {
-		u := b.packageListsURL(src)
-		b.packageLists[u] = len(m)
-		items := make([]item, 0, len(m))
-		for _, e := range m {
-			items = append(items, b.packageItem(src, e, pages))
+	srcs := []string{""}
+	for _, e := range b.m.Sources {
+		srcs = append(srcs, e.Key())
+	}
+	for _, src := range srcs {
+		var items []item
+		for _, r := range rows {
+			if src == "" || r.Sources[src] > 0 {
+				items = append(items, item{Name: r.Name, Desc: PackageDesc(r, src), URL: b.packageURL(r.Name, src)})
+			}
 		}
-		sort.Slice(items, func(i, j int) bool {
-			return manpage.ListingLess(items[i].Name, "", items[j].Name, "")
-		})
-		where, label := "", "every source"
+		if len(items) == 0 {
+			continue
+		}
+		where, from := "", "every source"
 		if src != "" {
-			where = " in " + sourceLabelOf(src)
-			label = sourceLabelOf(src)
+			where, from = " in "+sourceLabelOf(src), sourceLabelOf(src)
 		}
+		u := b.packagesURL(src)
+		b.packageLists[u] = len(items)
 		v := &view{
 			Title:       "packages" + where,
 			Description: fmt.Sprintf("Every package%s with man pages here, A to Z, each with its pages, girlified.", where),
 			Heading:     "📦 packages" + where,
-			Sub:         fmt.Sprintf("%s from %s", pluralOf(len(m), "package"), label),
+			Sub:         fmt.Sprintf("%s from %s", pluralOf(len(items), "package"), from),
 			Sources:     b.packageChips(src),
+			ListSource:  src,
+			Nav:         "packages",
 		}
-		lp, letters := paginate(u, items)
-		for i, gs := range lp {
-			pv := *v
-			n := i + 1
-			pv.Groups, pv.Letters = gs, letters
-			pv.ListPage, pv.ListPages, pv.ListFirst = n, len(lp), u
-			if len(lp) > 1 {
-				pv.Pager = pager(u, n, len(lp))
-				pv.Sub = fmt.Sprintf("%s · page %d of %d", v.Sub, n, len(lp))
-			}
-			if n > 1 {
-				pv.Title = fmt.Sprintf("%s · page %d", v.Title, n)
-				pv.Prev = listPageURL(u, n-1)
-			}
-			if n < len(lp) {
-				pv.Next = listPageURL(u, n+1)
-			}
-			pu := listPageURL(u, n)
-			jobs = append(jobs, func() error { return b.render(pu, "packages", &pv) })
-		}
+		jobs = append(jobs, b.listPages(u, v, items, "packages")...)
+	}
+	for _, r := range rows {
+		jobs = append(jobs, func() error { return b.packagePage(r) })
 	}
 	return parallel(b.o.Ctx, b.o.Jobs, jobs)
 }
 
-// packageItem is a package's entry in src's list: a link to the search for
-// its pages (within src), saying how many there are and naming a few.
-func (b *builder) packageItem(src string, e *pkgEntry, pages []repo.PageRef) item {
-	key := strings.ToLower(e.name)
-	q := url.Values{}
-	if src != "" {
-		distro, _, _ := strings.Cut(src, "/")
-		if distro != repo.Upstream {
-			key = distro + "/" + key
+// packagePage writes a package's listing: its pages, from every source.
+func (b *builder) packagePage(r repo.PackageRow) error {
+	var pp repo.PackagePages
+	if err := b.s.Read(repo.ShardPath("package", r.List), &pp); err != nil {
+		return err
+	}
+	items := make([]item, 0, len(pp.Pages))
+	for _, p := range pp.Pages {
+		items = append(items, item{Name: p.Name, Section: p.Section, Desc: p.Description,
+			Series: manpage.IsSeries(p.Section), Prefix: seriesPrefix(p.Section),
+			URL: b.pageURL(p.Name, p.Section), Girlified: slices.Contains(p.Variants, repo.VariantGirl)})
+	}
+	u := b.url("package", r.Name)
+	b.mu.Lock()
+	b.packageLists[u] = len(items)
+	b.mu.Unlock()
+	v := &view{
+		Title:       r.Name + " · packages",
+		Description: fmt.Sprintf("The man pages in the %s package, girlified: %s.", r.Name, PackageDesc(r, "")),
+		Heading:     "📦 " + r.Name,
+		Sub:         pluralOf(len(items), "page"),
+		Sources:     b.packageSourceChips(r),
+		ListPackage: r.Name,
+		Nav:         "packages",
+		Parent:      &chip{Label: "📦 packages", URL: b.packagesURL("")},
+	}
+	for _, job := range b.listPages(u, v, items, "list") {
+		if err := job(); err != nil {
+			return err
 		}
-		if src != distro || distro == repo.Upstream {
-			q.Set("src", src)
+	}
+	return nil
+}
+
+// listPages renders a listing of items at u, a page of listPage at a time,
+// with template name.
+func (b *builder) listPages(u string, v *view, items []item, name string) []func() error {
+	lp, letters := paginate(u, items)
+	var jobs []func() error
+	for i, gs := range lp {
+		pv := *v
+		n := i + 1
+		pv.Groups, pv.Letters = gs, letters
+		pv.ListPage, pv.ListPages, pv.ListFirst = n, len(lp), u
+		if len(lp) > 1 {
+			pv.Pager = pager(u, n, len(lp))
+			pv.Sub = fmt.Sprintf("%s · page %d of %d", v.Sub, n, len(lp))
 		}
+		if n > 1 {
+			pv.Title = fmt.Sprintf("%s · page %d", v.Title, n)
+			pv.Prev = listPageURL(u, n-1)
+		}
+		if n < len(lp) {
+			pv.Next = listPageURL(u, n+1)
+		}
+		pu := listPageURL(u, n)
+		jobs = append(jobs, func() error { return b.render(pu, name, &pv) })
 	}
-	q.Set("q", repo.PackagePrefix+key)
-	names := make([]item, len(e.pages))
-	for i, pi := range e.pages {
-		names[i] = item{Name: pages[pi].Pointer.Name, Section: pages[pi].Pointer.Section}
-	}
-	sort.Slice(names, func(i, j int) bool {
-		return manpage.ListingLess(names[i].Name, names[i].Section, names[j].Name, names[j].Section)
-	})
-	var some []string
-	for _, n := range names[:min(len(names), packageSample)] {
-		some = append(some, n.Name+"("+n.Section+")")
-	}
-	desc := pluralOf(len(names), "page") + ": " + strings.Join(some, ", ")
-	if len(names) > packageSample {
-		desc += ", …"
-	}
-	return item{Name: e.name, Desc: desc, URL: b.o.Base + "search/?" + q.Encode()}
+	return jobs
 }
 
 // packageChips lead to the lists of packages from each source, as
 // sourceChips lead to their pages.
 func (b *builder) packageChips(on string) []sourceMenu {
+	return b.chipsFor(on, func(src string) string { return b.packagesURL(src) }, nil, "✨ every source")
+}
+
+// packageSourceChips lead to a package's pages from each source it's in.
+func (b *builder) packageSourceChips(r repo.PackageRow) []sourceMenu {
+	return b.chipsFor("", func(src string) string { return b.packageURL(r.Name, src) },
+		func(src string) bool { return r.Sources[src] > 0 }, "✨ every source")
+}
+
+// chipsFor makes chips for the sources (those has takes, if it's given),
+// linking to url(src), with on's on, everything first.
+func (b *builder) chipsFor(on string, url func(src string) string, has func(string) bool, all string) []sourceMenu {
 	if len(b.m.Sources) == 0 {
 		return nil
 	}
-	out := []sourceMenu{{Label: "✨ every source", URL: b.packageListsURL(""), On: on == ""}}
+	out := []sourceMenu{{Label: all, URL: url(""), On: on == ""}}
 	byDistro := map[string]int{}
 	for _, src := range b.m.Sources {
-		u := b.packageListsURL(src.Key())
+		if has != nil && !has(src.Key()) {
+			continue
+		}
+		u := url(src.Key())
 		i, ok := byDistro[src.Distro]
 		if !ok {
 			i = len(out)

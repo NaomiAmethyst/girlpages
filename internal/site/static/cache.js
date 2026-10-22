@@ -7,7 +7,7 @@
 // longer use.
 
 import { chapter } from "./manual.js";
-import { namePath, listingPath, variantPath, shardsOf, chapterShardsOf, chapterFile, sectionShard, indexPagesOf } from "./format.js";
+import { namePath, listingPath, variantPath, shardsOf, chapterShardsOf, chapterFile, sectionShard, indexPagesOf, rows, packageIndexFile, packageShard, packageList, packageRowsOf } from "./format.js";
 
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Naomi Persephone Amethyst <naomi@amethyst.name>
@@ -309,6 +309,17 @@ export class RepoCache {
       live.add(path);
       const text = await this.store.get(path);
       if (text !== null) for (const r of chapterShardsOf(JSON.parse(text))) live.add(sectionShard(r.sha256));
+    }
+    if (ix.packages) {
+      // The package index, its chunks, and the packages' lists those that
+      // are kept name.
+      live.add(packageIndexFile(ix.packages));
+      const text = await this.store.get(packageIndexFile(ix.packages));
+      for (const c of text === null ? [] : rows(JSON.parse(text).chunks, { hashes: ["sha256"] })) {
+        live.add(packageShard(c.sha256));
+        const sh = await this.store.get(packageShard(c.sha256));
+        if (sh !== null) for (const r of packageRowsOf(JSON.parse(sh).packages)) live.add(packageList(r.list));
+      }
     }
     let removed = 0;
     for (const p of await this.store.paths()) {

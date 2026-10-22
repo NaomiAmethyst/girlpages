@@ -23,7 +23,7 @@
 import { Router } from "./router.js";
 import { repoCache, errorKind } from "./cache.js";
 import { namePath, listingPath, variantPath } from "./format.js";
-import { pageURL, listingURL as listingAt, browseURL, setVoice } from "./urls.js";
+import { pageURL, listingURL as listingAt, browseURL, setVoice, packageURL } from "./urls.js";
 import { viewOf, parse, legacyRoute } from "./routes.js";
 import { createListings } from "./listing.js";
 import { createViews } from "./views.js";
@@ -45,21 +45,24 @@ function createApp(el) {
 
   /** @type {Router} */
   let router;
-  const listings = createListings({ cache, manifest, browse, staticPage, router: { followStatic: (from, to) => router.followStatic(from, to) } });
+  const listings = createListings({ cache, manifest, browse, staticPage, packageURL: (name) => packageURL(base, name), router: { followStatic: (from, to) => router.followStatic(from, to) } });
   const views = createViews({ el, base, cache, manifest, browse, listingURL, listings });
-  const { sourceHome, sourceSection, searchView, oops } = views;
+  const { sourceHome, sourceSection, packagesView, packageView, searchView, oops } = views;
   const { loadPage, pageView } = createPageView({ el, base, listing, findName: listings.findName, variant, browse, staticPage, listingURL, oops });
 
   // route shows the view for nav's address.
   async function route(nav) {
     const v = viewOf(new URL(nav.url), base);
     setVoice(v ? v.voice : "");
+    markNav(v ? v.kind : "route");
     if (v) {
       switch (v.kind) {
         case "home": return sourceHome(nav, "");
         case "page": return pageView(nav, v.name, v.sec, [], "", v.voice);
         case "search": return searchView(nav, v.params);
         case "section": return sourceSection(nav, "", v.key, v.sub, { start: v.page, pageURL: (n) => listingURL(v.key, v.sub, n) });
+        case "packages": return packagesView(nav, v.src, { start: v.page });
+        case "package": return packageView(nav, v.name, "", { start: v.page });
       }
     }
     const r = await parse(new URL(nav.url).hash, async () => (await manifest()).sources);
@@ -67,6 +70,7 @@ function createApp(el) {
       case "source": return sourceHome(nav, r.src);
       case "section": return sourceSection(nav, r.src, r.key, r.sub);
       case "page": return pageView(nav, r.name, r.sec, r.rest, r.src);
+      case "package": markNav("package"); return packageView(nav, r.name, r.src);
     }
     return oops(nav, r.kind === "bad" ? "there's nothing here 🤔" : "that link's broken 🤔");
   }
@@ -112,6 +116,17 @@ function createApp(el) {
     },
     handles: (href) => !!viewOf(new URL(href, location.href), base),
   };
+}
+
+// markNav marks the header's link to where a view is: sections (home and
+// section listings) or packages.
+function markNav(kind) {
+  const on = { home: "sections", section: "sections", packages: "packages", package: "packages" }[kind] || "";
+  for (const a of document.querySelectorAll(".topnav a")) {
+    const mine = (a.getAttribute("title") || "") === on;
+    if (mine) a.setAttribute("aria-current", "page");
+    else a.removeAttribute("aria-current");
+  }
 }
 
 // The app's element: #app, which every page has.
