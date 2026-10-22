@@ -468,3 +468,11 @@ footer .get a { font-weight: 700; }
 footer .keys { margin: 0.5rem 0 0; }
 footer kbd { font: inherit; font-size: 0.8em; padding: 0 0.35em; border: 1px solid var(--card-edge); border-radius: 0.35em; background: var(--card); }
 @media (hover: none) { footer .keys { display: none; } }
+
+/* Drawn edge to edge (viewport-fit=cover): on a phone, an installed app's
+   gesture bar (and, sideways, a notch) shows the page beneath it, in its
+   own colours, rather than a colour of the system's; so nothing that
+   matters sits under them. */
+body { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
+.top { padding-top: max(0.5rem, env(safe-area-inset-top)); }
+footer { padding-bottom: calc(2rem + env(safe-area-inset-bottom)); }

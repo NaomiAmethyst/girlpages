@@ -3,7 +3,7 @@
 <html lang="en" data-base="{{.Base}}" data-repo="{{.Base}}repo/"{{if .Shell}} data-shell{{end}}>
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
 <meta name="generator" content="girlpages {{.Version}}">
 <title>{{.Title}} · girlpages 💅</title>
@@ -33,7 +33,8 @@
 <meta name="theme-color" content="#ff3e9a" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#170d22" media="(prefers-color-scheme: dark)">
 <meta name="apple-mobile-web-app-title" content="girlpages">
-<script>try{var t=localStorage.getItem("girlpages-theme");if(t)document.documentElement.dataset.theme=t}catch(e){}if(location.pathname==="{{.Base}}"&&/^#\/./.test(location.hash){{if .Shell}}||true{{end}})document.documentElement.classList.add("routed")
+<script>function girlThemeColor(t){document.querySelectorAll('meta[name="theme-color"]').forEach(function(m){m.removeAttribute("media");m.content=t==="dark"?"#170d22":"#ff3e9a"})}
+try{var t=localStorage.getItem("girlpages-theme");if(t){document.documentElement.dataset.theme=t;girlThemeColor(t)}}catch(e){}if(location.pathname==="{{.Base}}"&&/^#\/./.test(location.hash){{if .Shell}}||true{{end}})document.documentElement.classList.add("routed")
 try{var v=localStorage.getItem("girlpages:variant"),g="{{.Base}}girl/",p=location.pathname;if(v&&v!=="girl"&&p.indexOf(g)===0)location.replace("{{.Base}}"+encodeURIComponent(v)+"/"+p.slice(g.length)+location.search+location.hash)}catch(e){}</script>
 <script type="speculationrules">{"prerender":[{"where":{"and":[{"href_matches":"{{.Base}}*"},{"not":{"href_matches":"{{.Base}}repo/*"}},{"not":{"selector_matches":"a[href*='#']"}}]},"eagerness":"moderate"}]}</script>
 <link rel="stylesheet" href="{{.Base}}static/style.css?v={{.Version}}">
@@ -54,7 +55,7 @@ try{var v=localStorage.getItem("girlpages:variant"),g="{{.Base}}girl/",p=locatio
 <p class="get"><a href="https://github.com/NaomiAmethyst/girlpages">💻 girlpages on GitHub</a>: <code>girl</code> and <code>girlc</code> for your terminal, or publish your own</p>
 <p class="keys"><kbd>/</kbd> search · <kbd>Ctrl</kbd>+<kbd>Enter</kbd> go to a page · type a name to jump to it in a listing · <kbd>j</kbd> <kbd>k</kbd> <kbd>g</kbd> <kbd>G</kbd> <kbd>q</kbd> like less · <kbd>?</kbd> all the keys</p></footer>
 <script type="module" src="{{.Base}}static/girlpages.js"></script>
-<script>function girlTheme(){var r=document.documentElement,c=r.dataset.theme,d=c?c==="dark":matchMedia("(prefers-color-scheme: dark)").matches,n=d?"light":"dark";r.dataset.theme=n;try{localStorage.setItem("girlpages-theme",n)}catch(e){}}</script>
+<script>function girlTheme(){var r=document.documentElement,c=r.dataset.theme,d=c?c==="dark":matchMedia("(prefers-color-scheme: dark)").matches,n=d?"light":"dark";r.dataset.theme=n;girlThemeColor(n);try{localStorage.setItem("girlpages-theme",n)}catch(e){}}</script>
 </body>
 </html>
 {{end}}
