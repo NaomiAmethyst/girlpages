@@ -747,8 +747,10 @@ Versions replaced are kept (at least
 of them, and any newer than
 .BR \-\-keep\-for ),
 for servers still on one, and then they, and the segments only they used, go.
-When less than half of the segments' bytes are in use, it's compacted: what
-is, is copied into new segments.
+The repository's contents and what's generated from them (its indexes and
+the website, which change each publish) are kept in segments of their own,
+and when less than half of either's bytes are in use, it's compacted: what
+is, is copied into new segments, and the other's left alone.
 One
 .B archive
 (or
