@@ -411,6 +411,13 @@ async def main():
             check(path(page) != before and path(page) == f"/girl/8/{bare}/", f"q goes back: {before} → {path(page)}")
             await ctx.close()
 
+            print("typing a section on the home page goes to it")
+            ctx, page = await fresh("/", width=1100)
+            await page.keyboard.type("8", delay=40)
+            await shown(page)
+            check(path(page) == "/section/8/", f"8 goes to section 8: {path(page)}")
+            await ctx.close()
+
             print("search by parts of words")
             ctx, page = await fresh("/girl/8/admin003/")
             part = target = sorted(NAMES["8"])[5]

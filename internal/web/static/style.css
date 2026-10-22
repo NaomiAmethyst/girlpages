@@ -492,3 +492,4 @@ footer { padding-bottom: calc(2rem + env(safe-area-inset-bottom)); }
   .topnav .button { width: 2.4rem; padding: 0; justify-content: center; }
   .topnav .button span { display: none; }
 }
+.section-card.found { outline: 2px solid var(--accent); outline-offset: 2px; }

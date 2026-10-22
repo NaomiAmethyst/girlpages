@@ -11,8 +11,9 @@
 //                Tab to pick one)
 //   ?            these keys
 //
-// On a listing, typing jumps to the names that start that way, picking
-// the first; ↑↓ pick the one before or after (or one on the screen, if
+// On the home page (or a source's), typing a section (1, 3, rfc) goes to
+// it, or picks the one it's the start of, for Enter. On a listing,
+// typing jumps to the names that start that way, picking the first; ↑↓ pick the one before or after (or one on the screen, if
 // none is), Enter goes to it, Esc lets it go. Anywhere else (a page,
 // search results), it's less: j k a line, d u half a screen, Space b a
 // screen, g G the top and bottom, q back.
@@ -123,6 +124,8 @@ export function keys({ go, base, repo }) {
       return;
     }
     const listing = [...document.querySelectorAll(".listing")].find(l => l.checkVisibility());
+    const sections = listing ? null : [...document.querySelectorAll(".sections")].find(s => s.checkVisibility());
+    if (sections && e.key.length === 1 && toSection(sections, e)) return;
     if ((e.key === "ArrowDown" || e.key === "ArrowUp") && !e.shiftKey && listing) {
       e.preventDefault();
       if (pickedNow()) step(e.key === "ArrowDown" ? 1 : -1);
@@ -156,6 +159,40 @@ export function keys({ go, base, repo }) {
     seekTimer = setTimeout(() => toSeek?.(), 150);
   });
 
+  // toSection handles a key typed on a page of sections: one that starts
+  // a section's key (with what was typed just before) picks it, or if it's
+  // the whole of the only one, goes there. Digits always do; letters only
+  // if they start a section, so less's keys still scroll. It reports
+  // whether it took the key.
+  /** @param {Element} sections @param {KeyboardEvent} e */
+  function toSection(sections, e) {
+    const cards = [.../** @type {NodeListOf<HTMLAnchorElement>} */ (sections.querySelectorAll("a.section-card"))];
+    const keyOf = (a) => (a.querySelector(".num")?.textContent || "").trim().toLowerCase();
+    const k = e.key.toLowerCase();
+    const next = performance.now() - typedAt > TYPED_FOR ? k : typed + k;
+    let matches = cards.filter(a => keyOf(a).startsWith(next));
+    let text = next;
+    if (!matches.length && next !== k) {
+      // Not carrying on: a fresh start.
+      text = k;
+      matches = cards.filter(a => keyOf(a).startsWith(k));
+    }
+    if (!matches.length) return false;
+    e.preventDefault();
+    typed = text;
+    typedAt = performance.now();
+    show(typed);
+    const exact = matches.find(a => keyOf(a) === typed);
+    if (exact && matches.length === 1) {
+      pick(null);
+      go(exact.href);
+      return true;
+    }
+    pick(exact || matches[0]);
+    (exact || matches[0]).scrollIntoView({ block: "nearest" });
+    return true;
+  }
+
   // follow goes to the entry picked, once what's been typed is sought.
   async function follow() {
     if (toSeek) {
@@ -163,7 +200,9 @@ export function keys({ go, base, repo }) {
       toSeek();
     }
     await seekDone;
-    pickedNow()?.querySelector("a")?.click();
+    const p = pickedNow();
+    if (p?.matches("a")) p.click();
+    else p?.querySelector("a")?.click();
   }
 
   // step picks the entry by (1 or -1) from the one picked, in what's on
@@ -242,6 +281,8 @@ function help() {
       ${row(["Ctrl+Enter"], "go to a page by name")}
       ${row(["Esc"], "close, or go back")}
       ${row(["?"], "these keys")}
+      <tr><th colspan="2">on the home page</th></tr>
+      ${row(["1", "3", "rfc"], "go to that section")}
       <tr><th colspan="2">on a listing</th></tr>
       ${row(["a–z"], "jump to the names that start that way")}
       ${row(["↑", "↓"], "pick the one before or after")}
