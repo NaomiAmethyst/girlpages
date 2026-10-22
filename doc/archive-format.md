@@ -61,6 +61,18 @@ concatenated, in whatever order they were added. Nothing in a segment says
 what its bytes are: indexes do. A writer starts a new segment when one would
 pass a size limit (by default 1 GiB).
 
+Each segment has a *class*, which its index records:
+
+| Class | Holds |
+| --- | --- |
+| `contents` | The repository's contents: `repo/contents/`, `repo/page/` and `repo/packs/` (but `repo/packs/index.json`): big, and seldom changed |
+| `generated` | Everything a publish makes from them: indexes, the website, `manifest.json`: smaller, but what changes each time |
+
+A writer puts each file's bytes in a segment of its class, and compacts each
+class on its own, so the churn of what's generated never means copying the
+contents. (Archives written before there were classes have segments of no
+class, which compacting sorts into them.)
+
 ## Indexes
 
 An index file is the 8 bytes `GPAIDX1\n`, then one zstd frame of:
@@ -76,7 +88,7 @@ An index file is the 8 bytes `GPAIDX1\n`, then one zstd frame of:
 {
   "format": 1,
   "generated": "2026-10-21T20:08:25Z",
-  "segments": [{"sha256": "f369…", "bytes": 1073741824}, …],
+  "segments": [{"sha256": "f369…", "bytes": 1073741824, "class": "contents"}, …],
   "entries": 221589,
   "live": 7340032000
 }
@@ -86,7 +98,7 @@ An index file is the 8 bytes `GPAIDX1\n`, then one zstd frame of:
 | --- | --- |
 | `format` | 1 |
 | `generated` | When the version was written. |
-| `segments` | The segments records' bytes are in (each by hash, with its size); records refer to them by their place in this list. |
+| `segments` | The segments records' bytes are in (each by hash, with its size and [class](#segments)); records refer to them by their place in this list. |
 | `entries` | How many records there are. |
 | `live` | How many bytes of the segments the records use (each range once). |
 
@@ -128,10 +140,11 @@ A writer, holding `.lock`:
    (`index.html.br`), as the archive makes its own;
 3. for content it doesn't have, compresses it (if it's a kind worth it:
    HTML, JSON, JavaScript, CSS, XML, SVG, text, web manifests, of at least
-   256 bytes) and appends its forms to new segments, which are synced and
-   named by their hashes when they're finished;
-4. if less than half of the bytes of the segments the new version uses are
-   in use, compacts: copies what's used into new segments;
+   256 bytes) and appends its forms to new segments of its class, which are
+   synced and named by their hashes when they're finished;
+4. for each class, if less than half of the bytes of its segments the new
+   version uses are in use, compacts it: copies what's used into new
+   segments of that class;
 5. writes the new index (synced, then renamed into place), then `current`.
 
 Then it collects garbage: it keeps the current index, the newest few
