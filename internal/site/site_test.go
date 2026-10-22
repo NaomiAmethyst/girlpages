@@ -21,6 +21,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NaomiAmethyst/girlpages/internal/llm"
+	"github.com/NaomiAmethyst/girlpages/internal/manpage"
 	"github.com/NaomiAmethyst/girlpages/internal/precompress"
 	"github.com/NaomiAmethyst/girlpages/internal/render"
 	"github.com/NaomiAmethyst/girlpages/internal/repo"
@@ -132,19 +134,25 @@ func TestBuild(t *testing.T) {
 			t.Errorf("home page lacks %q", want)
 		}
 	}
-	ls := read(t, filepath.Join(out, "man", "1", "ls", "index.html"))
+	ls := read(t, filepath.Join(out, "girl", "1", "ls", "index.html"))
 	for _, want := range []string{"<title>ls(1) — list directory contents, newer · girlpages 💅</title>",
-		`<link rel="canonical" href="https://example.test/girlpages/man/1/ls/">`,
-		`<meta property="og:type" content="article">`, `<meta property="og:url" content="https://example.test/girlpages/man/1/ls/">`,
+		`<link rel="canonical" href="https://example.test/girlpages/girl/1/ls/">`,
+		`<meta property="og:type" content="article">`, `<meta property="og:url" content="https://example.test/girlpages/girl/1/ls/">`,
 		`<meta property="og:image" content="https://example.test/girlpages/static/icon-512.png">`,
 		`<meta name="twitter:card" content="summary">`, `<meta property="article:modified_time"`,
-		`<code>ls</code> slays, see <a href="/girlpages/man/1/ls/">ls(1)</a> and nope(1)`, // only real pages are links
-		`href="/girlpages/#/1/ls/man"`, "girlified by fake-1",
+		`<code>ls</code> slays, see <a href="/girlpages/girl/1/ls/">ls(1)</a> and nope(1)`, // only real pages are links
+		`href="/girlpages/man/1/ls/" rel="nofollow" data-variant="man"`, "girlified by fake-1",
 		`<details class="versions" id="versions"><summary>version 10 <span class="n">· 2 versions</span></summary>`,
 		`<strong>10 · debian trixie (latest)</strong>`, `<a href="/girlpages/#/1/ls/0">0 · debian trixie</a>`, "</details>, in",
 		`href="/girlpages/#/debian/trixie/1/ls"`, `data-keep-page="ls" data-keep-section="1"`} {
 		if !strings.Contains(ls, want) {
 			t.Errorf("ls page lacks %q", want)
+		}
+	}
+	shell := read(t, filepath.Join(out, "static", "shell.html"))
+	for _, want := range []string{"data-shell", `name="robots" content="noindex`, `id="app"`} {
+		if !strings.Contains(shell, want) {
+			t.Errorf("the shell lacks %q", want)
 		}
 	}
 	if strings.Contains(ls, "noindex") {
@@ -162,7 +170,7 @@ func TestBuild(t *testing.T) {
 		t.Fatalf("JSON-LD: %v %s", err, m[1])
 	}
 	art := ldata.Graph[0]
-	if art["@type"] != "TechArticle" || art["url"] != "https://example.test/girlpages/man/1/ls/" ||
+	if art["@type"] != "TechArticle" || art["url"] != "https://example.test/girlpages/girl/1/ls/" ||
 		art["about"].(map[string]any)["softwareVersion"] != "10" || ldata.Graph[1]["@type"] != "BreadcrumbList" {
 		t.Errorf("JSON-LD: %s", m[1])
 	}
@@ -175,7 +183,7 @@ func TestBuild(t *testing.T) {
 	}
 
 	// Not girlified: the page is the original.
-	gc := read(t, filepath.Join(out, "man", "1", "git-commit", "index.html"))
+	gc := read(t, filepath.Join(out, "girl", "1", "git-commit", "index.html"))
 	if !strings.Contains(gc, "hasn't gotten to this one yet") || !strings.Contains(gc, "&lt;b&gt;record changes to the repository&lt;/b&gt; &amp; more") {
 		t.Error("ungirlified page should show the original, escaped")
 	}
@@ -185,13 +193,13 @@ func TestBuild(t *testing.T) {
 
 	// Odd names.
 	sec1 := read(t, filepath.Join(out, "section", "1", "index.html"))
-	if !strings.Contains(sec1, `href="/girlpages/man/1/%5B/"`) || !strings.Contains(sec1, `"@type":"CollectionPage"`) {
+	if !strings.Contains(sec1, `href="/girlpages/girl/1/%5B/"`) || !strings.Contains(sec1, `"@type":"CollectionPage"`) {
 		t.Error("section 1 should link [ as %5B, and say it's a collection")
 	}
-	if _, err := os.Stat(filepath.Join(out, "man", "1", "[", "index.html")); err != nil {
+	if _, err := os.Stat(filepath.Join(out, "girl", "1", "[", "index.html")); err != nil {
 		t.Error(err)
 	}
-	if _, err := os.Stat(filepath.Join(out, "man", "7", "%2Ehidden", "index.html")); err != nil {
+	if _, err := os.Stat(filepath.Join(out, "girl", "7", "%2Ehidden", "index.html")); err != nil {
 		t.Error("dot names should be escaped on disk: ", err)
 	}
 	sec3 := read(t, filepath.Join(out, "section", "3", "index.html"))
@@ -200,7 +208,7 @@ func TestBuild(t *testing.T) {
 	}
 
 	sitemap := read(t, filepath.Join(out, "sitemap.xml"))
-	if !strings.Contains(sitemap, "<loc>https://example.test/girlpages/man/1/%5B/</loc>") || strings.Contains(sitemap, "browse") ||
+	if !strings.Contains(sitemap, "<loc>https://example.test/girlpages/girl/1/%5B/</loc>") || strings.Contains(sitemap, "browse") ||
 		!strings.Contains(sitemap, "<lastmod>") {
 		t.Errorf("sitemap:\n%s", sitemap)
 	}
@@ -218,7 +226,7 @@ func TestBuild(t *testing.T) {
 	}
 	// Every page can become the app in place, and prerenders the static
 	// pages it links to (but not routes, or the repository).
-	if ls := read(t, filepath.Join(out, "man", "1", "ls", "index.html")); !strings.Contains(ls, `<div class="static-view">`) ||
+	if ls := read(t, filepath.Join(out, "girl", "1", "ls", "index.html")); !strings.Contains(ls, `<div class="static-view">`) ||
 		!strings.Contains(ls, `<div id="app" data-repo="/girlpages/repo/" data-base="/girlpages/" hidden>`) ||
 		!strings.Contains(ls, `<script type="speculationrules">`) || !strings.Contains(ls, `repo/*`) {
 		t.Error("ls page should be able to host the app, and prerender links")
@@ -234,7 +242,7 @@ func TestBuild(t *testing.T) {
 func TestNoURL(t *testing.T) {
 	out := t.TempDir()
 	build(t, out, specs, Options{})
-	ls := read(t, filepath.Join(out, "man", "1", "ls", "index.html"))
+	ls := read(t, filepath.Join(out, "girl", "1", "ls", "index.html"))
 	if strings.Contains(ls, "og:url") || strings.Contains(ls, "canonical") || strings.Contains(ls, `"url"`) {
 		t.Error("without a site URL there should be no absolute URLs")
 	}
@@ -785,11 +793,11 @@ func TestSources(t *testing.T) {
 		}
 	}
 	// Static pages link into the browse app for sources.
-	page := read(t, filepath.Join(out, "man", "1", "ls", "index.html"))
+	page := read(t, filepath.Join(out, "girl", "1", "ls", "index.html"))
 	if !strings.Contains(page, "<summary>version 9.7 <span") || !strings.Contains(page, `href="/#/debian/trixie/1/ls"`) {
 		t.Error("ls page should say where it's from")
 	}
-	if tp := read(t, filepath.Join(out, "man", "8", "tool", "index.html")); !strings.Contains(tp, `href="/#/upstream/8/tool">upstream</a>`) {
+	if tp := read(t, filepath.Join(out, "girl", "8", "tool", "index.html")); !strings.Contains(tp, `href="/#/upstream/8/tool">upstream</a>`) {
 		t.Error("git page should say it's upstream")
 	}
 	sec1 := read(t, filepath.Join(out, "section", "1", "index.html"))
@@ -821,7 +829,7 @@ func TestHandler(t *testing.T) {
 	}
 	// The smallest copy the client accepts is sent.
 	size := func(ext string) int64 {
-		fi, err := os.Stat(filepath.Join(out, "man", "1", "ls", "index.html"+ext))
+		fi, err := os.Stat(filepath.Join(out, "girl", "1", "ls", "index.html"+ext))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -841,7 +849,7 @@ func TestHandler(t *testing.T) {
 		{"zstd, br, gzip", smallest("zstd", "br", "gzip")}, {"gzip, br", smallest("br", "gzip")}, {"gzip", "gzip"},
 		{"br;q=0, gzip", "gzip"}, {"", ""}, {"*", smallest("zstd", "br", "gzip")},
 	} {
-		resp := get("/man/1/ls/", c.accept)
+		resp := get("/girl/1/ls/", c.accept)
 		if got := resp.Header.Get("Content-Encoding"); got != c.want || resp.Header.Get("Content-Type") != "text/html; charset=utf-8" ||
 			resp.Header.Get("Vary") != "Accept-Encoding" {
 			t.Errorf("Accept-Encoding %q: got %q, %q", c.accept, got, resp.Header.Get("Content-Type"))
@@ -856,7 +864,7 @@ func TestHandler(t *testing.T) {
 		"/repo/manifest.json": CachePointer,
 		"/repo/" + repo.SectionIndexPath("1", m.Chapters[0].SHA256): CacheImmutable,
 		"/repo/" + repo.NamePath("ls", "1"):                         CachePointer,
-		"/man/1/ls/":                                                CacheSite,
+		"/girl/1/ls/":                                               CacheSite,
 		"/sw.js":                                                    CacheRevalidate,
 	} {
 		if got := get(path, "br").Header.Get("Cache-Control"); got != want {
@@ -866,7 +874,7 @@ func TestHandler(t *testing.T) {
 	if resp := get("/nope/", ""); resp.StatusCode != 404 {
 		t.Errorf("missing page: %d", resp.StatusCode)
 	}
-	if resp := get("/man/1/ls", ""); resp.StatusCode != 301 {
+	if resp := get("/girl/1/ls", ""); resp.StatusCode != 301 {
 		t.Errorf("directory without slash: %d", resp.StatusCode)
 	}
 	// The repository client negotiates and decodes.
@@ -1052,5 +1060,22 @@ console.log(JSON.stringify(%s.map(e => decode91(e))));`, staticFile(t, "format.j
 		if !ok {
 			t.Errorf("%x encoded %q, decoded %v", b, enc[i], dec[i])
 		}
+	}
+}
+
+// No variant girlrepo makes may be named as one of the site's own
+// directories, or every page in it would be one of those.
+func TestReservedNames(t *testing.T) {
+	reserved := map[string]bool{}
+	for _, r := range Reserved {
+		reserved[r] = true
+	}
+	for _, v := range llm.Variants() {
+		if reserved[v.Name] || manpage.IsSeries(v.Name) && v.Name == "rfc" {
+			t.Errorf("the %s variant is named as a reserved directory", v.Name)
+		}
+	}
+	if reserved["girl"] || reserved["man"] {
+		t.Error("girl and man are variants")
 	}
 }

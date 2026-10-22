@@ -96,10 +96,11 @@ type Options struct {
 // Handler serves a site from src.
 func Handler(src Source, o Options) http.Handler {
 	var logMu sync.Mutex
+	infos := &siteInfos{}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		rw := &recorder{ResponseWriter: w, status: http.StatusOK}
-		serveFile(rw, r, src)
+		serveFile(rw, r, src, infos)
 		d := time.Since(start)
 		if o.Metrics != nil {
 			o.Metrics.observe(rw.status, rw.bytes, d)
@@ -118,7 +119,7 @@ func Handler(src Source, o Options) http.Handler {
 	})
 }
 
-func serveFile(w http.ResponseWriter, r *http.Request, src Source) {
+func serveFile(w http.ResponseWriter, r *http.Request, src Source, infos *siteInfos) {
 	h := w.Header()
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
@@ -154,6 +155,24 @@ func serveFile(w http.ResponseWriter, r *http.Request, src Source) {
 		}
 	}
 	status := http.StatusOK
+	if !ok {
+		// Not a file: a voice's address (the app shows it), or a series'
+		// old one.
+		shell, redirect := infos.get(src).route(rel)
+		switch {
+		case redirect != "":
+			target := "/" + redirect
+			if r.URL.RawQuery != "" {
+				target += "?" + r.URL.RawQuery
+			}
+			http.Redirect(w, r, target, http.StatusMovedPermanently)
+			return
+		case shell:
+			if f, ok = src.Find(ShellPath); ok {
+				rel = ShellPath
+			}
+		}
+	}
 	if !ok {
 		if f, ok = src.Find("404.html"); !ok {
 			http.Error(w, "not found", http.StatusNotFound)

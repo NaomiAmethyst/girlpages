@@ -536,10 +536,41 @@ the screen), and each page's current version, girlified if it
 has been (otherwise the original), with canonical links, OpenGraph and Twitter
 card tags, JSON-LD (TechArticle and BreadcrumbList for pages, WebSite with a
 SearchAction for the home page, CollectionPage for listings) and a sitemap.
+.PP
+Each page's static page is at
+.IB girl / section / name /
+.RB ( girl/1/ls/ ,
+.B girl/rfc/9110/
+for a series' document), girlified (or the original, until it is).
+In any other variant it's at
+.IB variant / section / name /
+.RB ( man/1/ls/
+for the original,
+.BR pirate/1/ls/ ):
+nothing's pre-rendered there, and servers send those (and listings,
+searches and the home page in a variant:
+.BR pirate/section/1/ ,
+.BR pirate/ )
+the app's shell,
+.BR static/shell.html ,
+which the app draws the page in; listings are at
+.IB section / key /
+.RB ( section/1/ ,
+.BR section/rfc/ ).
+.B serve
+and
+.BR girlserve (1)
+know a site's variants from its manifest, and send a series' old addresses
+.RB ( rfc/9110/ ,
+.BR rfc/ )
+where they are now;
+.B dist/hosting/
+has the same rules for nginx and static-web-server.
+A reader can make a variant their default: pages linked to (and girly pages
+opened) are in it from then on, where they have it.
+.PP
 Everything else happens in the browser, read straight from the repository by
 an app in the home page's hash:
-originals
-.RB ( #/1/ls/man ),
 older versions
 .RB ( #/1/ls/9.4 ,
 by upstream version or the start of a source hash),

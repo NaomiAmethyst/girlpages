@@ -5,6 +5,17 @@
 
 import { escapeName } from "./format.js";
 import { isSeries } from "./manual.js";
+import { preferredVariant } from "./prefs.js";
+
+// The voice (variant) the app's showing, from its address (pirate/…), or
+// "" for none: links follow it.
+let voice = "";
+/** @param {string} v */
+export const setVoice = (v) => { voice = v; };
+export const currentVoice = () => voice;
+// linkVoice is the variant pages are linked to in: the one shown, or the
+// reader's default, or girly.
+export const linkVoice = () => voice || preferredVariant() || "girl";
 
 // segmentName matches site.SegmentName: the directory a name gets.
 export function segmentName(s) {
@@ -21,20 +32,24 @@ export const pathEscape = (s) => encodeURIComponent(s)
 
 const seg = (s) => pathEscape(segmentName(s));
 
-// pageURL is a page's static address: man/<sec>/<name>/, or
-// <series>/<name>/.
-export function pageURL(base, name, sec) {
-  return isSeries(sec) ? `${base}${seg(sec)}/${seg(name)}/` : `${base}man/${seg(sec)}/${seg(name)}/`;
+// pageURL is a page's address in a variant: <variant>/<sec>/<name>/
+// (girl/1/ls/, the static page; pirate/1/ls/, man/1/ls/ the app's).
+export function pageURL(base, name, sec, variant = linkVoice()) {
+  return `${base}${seg(variant)}/${seg(sec)}/${seg(name)}/`;
 }
 
-// listingURL is page n of a static listing: a chapter's (section/3/, for
-// sub ""), one of its sections' (section/3/3ssl/, or section/3/3/ for just
-// 3), or a series' (rfc/).
-export function listingURL(base, key, sub = "", n = 1) {
-  const u = isSeries(key) ? `${base}${seg(key)}/`
-    : `${base}section/${seg(key)}/${sub ? seg(sub) + "/" : ""}`;
+// listingURL is page n of a listing: a chapter's (section/3/, for sub
+// ""), one of its sections' (section/3/3ssl/, or section/3/3/ for just 3),
+// or a series' (section/rfc/); in a voice (a variant, whose pages it links
+// to), under it (pirate/section/3/).
+export function listingURL(base, key, sub = "", n = 1, v = voice) {
+  const u = `${base}${v ? seg(v) + "/" : ""}section/${seg(key)}/${sub && !isSeries(key) ? seg(sub) + "/" : ""}`;
   return n > 1 ? `${u}page/${n}/` : u;
 }
+
+// homeURL and searchURL are the home and search pages, in a voice or not.
+export const homeURL = (base, v = voice) => `${base}${v ? seg(v) + "/" : ""}`;
+export const searchURL = (base, v = voice) => `${homeURL(base, v)}search/`;
 
 // browseURL is a view in the browse app, which lives in the home page's
 // hash: #/[<source>/]<sec>/<name>[/<version>][/<variant>][/mono] for a page

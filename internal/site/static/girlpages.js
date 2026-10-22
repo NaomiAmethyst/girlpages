@@ -64,6 +64,11 @@ function startApp(base) {
     const u = new URL(a.href, location.href);
     if (u.origin !== location.origin) return null;
     if (u.pathname === base && isRoute(u.hash)) return u;
+    // A variant chosen (a page's pill) is shown as chosen, by the app.
+    if (a.hasAttribute("data-variant") && u.pathname.startsWith(base)) return u;
+    // A girly page, for a reader whose default is another variant: in that.
+    const pref = preferredVariant(), girl = base + "girl/";
+    if (pref && pref !== "girl" && u.pathname.startsWith(girl)) u.pathname = base + pref + "/" + u.pathname.slice(girl.length);
     if (u.hash && u.pathname === location.pathname && u.search === location.search) return null;
     return app && app.handles(u.href) ? u : null;
   };
@@ -141,9 +146,15 @@ function boot() {
   // A static page read (or listing seen) is kept, so the browse app can
   // show it offline.
   const page = /** @type {HTMLElement | null} */ (document.querySelector("[data-keep-page]"));
-  // A reader who'd rather read another variant than the girly one a page
-  // shows by default gets it from the app, at the same address.
-  if (page && preferredVariant() && preferredVariant() !== "girl" && !outdated()) {
+  // The app's shell (a page in another variant than girly: pirate/1/ls/)
+  // is the app's to show, at its own address; its header's links stay in
+  // its voice.
+  if (root.dataset.shell !== undefined) {
+    const voice = location.pathname.slice(base.length).split("/")[0];
+    if (voice) {
+      for (const a of /** @type {NodeListOf<HTMLAnchorElement>} */ (document.querySelectorAll(`header a[href="${base}"]`))) a.href = base + voice + "/";
+      for (const f of /** @type {NodeListOf<HTMLFormElement>} */ (document.querySelectorAll(`header form[action="${base}search/"]`))) f.action = base + voice + "/search/";
+    }
     import(new URL(base + "static/app.js", location.href).href).then(m => m.takeOver()).catch(() => {});
   }
   if (page) idle(() => cache.keepPage(page.dataset.keepPage, page.dataset.keepSection).catch(() => {}));

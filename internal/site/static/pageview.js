@@ -8,7 +8,7 @@ import { renderHTML, renderOriginalHTML } from "./render.js";
 import { errorKind } from "./cache.js";
 import { Drawer } from "./draw.js";
 import { Spy } from "./spy.js";
-import { pathEscape, segmentName } from "./urls.js";
+import { pathEscape, segmentName, pageURL, homeURL } from "./urls.js";
 import { preferredVariant, setPreferredVariant } from "./prefs.js";
 import { chapter, isSeries, sectionLabel, sourceLabel, variantLabelOf } from "./manual.js";
 
@@ -84,7 +84,7 @@ export function createPageView({ el: app, base, listing, findName, variant, brow
   // loadPage fetches what a page view needs; rest is what follows its name
   // in the route: [version] [variant] [mono] [versions]. It resolves to the
   // view's data, or {error} to show instead.
-  async function loadPage(name, sec, rest, src) {
+  async function loadPage(name, sec, rest, src, voice = "") {
     let l;
     try {
       l = await listing(name, sec);
@@ -129,14 +129,16 @@ export function createPageView({ el: app, base, listing, findName, variant, brow
     // this version has it.
     const pref = preferredVariant();
     const def = pref && has(pref) ? pref : variants[0] || "man";
+    // The address's voice (pirate/1/ls/), if this version has it.
+    if (!which && voice && has(voice)) which = voice;
     if (!which || !has(which)) which = def;
     const doc = await variant(ver.source, which, ver.variants[which].sha256);
     return { l, ver, which, variants, def, versions, slug, doc, at, mono };
   }
 
   // pageView shows a page.
-  async function pageView(nav, name, sec, rest, src) {
-    const d = await loadPage(name, sec, rest, src);
+  async function pageView(nav, name, sec, rest, src, voice = "") {
+    const d = await loadPage(name, sec, rest, src, voice);
     if ("moved" in d) {
       const u = new URL(location.href);
       const seg = (n) => `/${pathEscape(segmentName(n))}/`;
@@ -175,8 +177,11 @@ export function createPageView({ el: app, base, listing, findName, variant, brow
     const pills = [];
     if (variants.length > 1) {
       for (const k of variants) {
+        // The latest version's variants have addresses of their own
+        // (pirate/1/ls/); others', routes.
+        const href = latest && !src ? pageURL(base, name, sec, k) : here({ variant: k === def ? "" : k });
         pills.push(k === which ? html`<span class="pill on">${variantLabel(k)}</span>`
-          : html`<a class="pill" href="${here({ variant: k === def ? "" : k })}">${variantLabel(k)}</a>`);
+          : html`<a class="pill" href="${href}" data-variant="${k}">${variantLabel(k)}</a>`);
       }
       // Making the one read the default (or, if it's the one chosen,
       // going back to girlpages' own).
@@ -214,7 +219,7 @@ export function createPageView({ el: app, base, listing, findName, variant, brow
       which === "man" && variants.length === 1 && html`<div class="notice">💤 she hasn't gotten to this version yet, so here's the original.</div>`,
     ];
     const sub = chapter(sec) !== sec ? sec : "";
-    const crumbs = html`<nav class="crumbs"><a href="${base}">home</a> › ${src
+    const crumbs = html`<nav class="crumbs"><a href="${homeURL(base)}">home</a> › ${src
       ? html`<a href="${browse({ src })}">${sourceLabel(src)}</a> › <a href="${browse({ src, section: chapter(sec), sub })}">${sectionLabel(sec)}</a>`
       : html`<a href="${listingURL(chapter(sec), sub, 1)}">${sectionLabel(sec)}</a>`} › ${title}</nav>`;
     const contents = toc.length > 0 && html`<nav class="toc card" aria-label="Contents"><h2>✨ contents</h2><ul>${
@@ -232,11 +237,16 @@ export function createPageView({ el: app, base, listing, findName, variant, brow
       pills.length > 0 && html`<div class="meta">${pills}</div>`}${notices}${body}${provenance}</article>${contents}</div>`)) return;
     // Choosing a default: the same page, at the address that shows the
     // same variant under the new choice.
-    app.querySelector("[data-prefer]")?.addEventListener("click", (e) => {
-      const v = /** @type {HTMLElement} */ (e.currentTarget).dataset.prefer || "";
+    // Choosing a default (or undoing it), in place: the page's address
+    // already says which variant it's in.
+    const prefer = /** @type {HTMLButtonElement | null} */ (app.querySelector("[data-prefer]"));
+    prefer?.addEventListener("click", () => {
+      const v = prefer.dataset.prefer || "";
       setPreferredVariant(v);
-      const nextDef = v && variants.includes(v) ? v : variants[0] || "man";
-      nav.redirect(here({ variant: which === nextDef ? "" : which, mono }));
+      const chosen = v !== "";
+      prefer.classList.toggle("on", chosen);
+      prefer.dataset.prefer = chosen ? "" : which;
+      prefer.textContent = chosen ? "★ my default" : `☆ make ${variantLabel(which).replace(/^\S+ /, "")} my default`;
     });
     // Drawn ahead of scrolling (see draw.js).
     nav.own(new Drawer()).watch(app.querySelectorAll(".content > *, .original > *"));

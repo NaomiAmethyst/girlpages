@@ -25,6 +25,32 @@ cache-control-headers = false
 
 [advanced]
 
+# Pages in a variant other than girly (pirate/1/ls/; man/1/ls/, the
+# original) are drawn by the app: they get its shell. (Rewrites come before
+# files are looked for, so girl/, whose pages are files, can't be one: its
+# home, listings and searches, girl/section/1/, aren't served here.) List
+# the variants your site has; girlserve reads them from its manifest.
+[[advanced.rewrites]]
+source = "/{man,boy,femboy,lolcat,pirate,eli5,woman,witch,bofh}/**"
+destination = "/static/shell.html"
+
+# A series' old addresses (rfc/9110/, rfc/, rfc/page/2/): where they are now.
+# (Each * is a $n in the destination; check yours supports that.)
+[[advanced.redirects]]
+source = "/rfc/page/*/"
+destination = "/section/rfc/page/$1/"
+kind = 301
+
+[[advanced.redirects]]
+source = "/rfc/"
+destination = "/section/rfc/"
+kind = 301
+
+[[advanced.redirects]]
+source = "/rfc/*/"
+destination = "/girl/rfc/$1/"
+kind = 301
+
 # Every matching rule applies, in order, later ones winning: general first.
 
 # The website: pages, scripts, styles.

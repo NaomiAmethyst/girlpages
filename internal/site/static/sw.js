@@ -4,9 +4,9 @@
 // girlpages service worker: keeps the app shell (the scripts, styles, and
 // the home, search and offline pages) for offline use. Repository files
 // aren't touched here; the pages cache those themselves
-// (static/cache.js). Static pages aren't kept either: offline, they're
-// sent to the browse app, which renders the same thing from the cached
-// repository.
+// (static/cache.js). Static pages aren't kept either: offline, they (and
+// pages in other variants, and listings) get the app's shell, which shows
+// the same thing from the cached repository.
 
 const BASE = /*BASE*/"/";
 const VERSION = /*VERSION*/"dev";
@@ -46,50 +46,36 @@ self.addEventListener("fetch", (event) => {
   }
 });
 
-// page tries the network (briefly). Failing that, a man page or section
-// listing goes to the browse app, the home page comes from the shell, and
-// anything else gets the offline page.
+// page tries the network (briefly). Failing that, the home page comes from
+// the shell, and a page or listing (in a variant or not: girl/1/ls/,
+// pirate/1/ls/, section/1/) gets the app's shell, which shows it from the
+// repository the pages have cached; anything else gets the offline page.
 async function page(req, url) {
   try {
     return await withTimeout(fetch(req), NETWORK_TIMEOUT);
   } catch {
-    const there = offlineView(url);
-    if (there) return Response.redirect(there, 302);
     if (url.pathname === BASE) {
       const home = await caches.match(BASE);
       if (home) return home;
+    }
+    if (appView(url)) {
+      const shell = await caches.match(BASE + "static/shell.html");
+      if (shell) return shell;
     }
     return (await caches.match(BASE + "offline/")) || Response.error();
   }
 }
 
-// offlineView is the browse app's view of a static page, if it has one:
-// man/<sec>/<name>/ is a page, section/<key>/ and section/<key>/<sec>/ a
-// listing. The app lives in the home page, which the shell has.
-function offlineView(url) {
-  let parts;
-  try {
-    parts = url.pathname.slice(BASE.length).split("/").filter(Boolean).map(decodeURIComponent).map(unsegment);
-  } catch {
-    return "";
-  }
-  let route;
-  if (parts[0] === "man" && parts.length === 3) route = [parts[1], parts[2]];
-  else if (parts[0] === "section" && (parts.length === 2 || parts.length === 3)) route = parts;
-  // A series (rfc/9110/, rfc/): anything else that isn't one of the site's own.
-  else if (isSeries(parts[0]) && !RESERVED.includes(parts[0]) && parts.length === 2) route = [parts[0], parts[1]];
-  else if (isSeries(parts[0]) && !RESERVED.includes(parts[0]) && parts.length === 1) route = ["section", parts[0]];
-  else return "";
-  return BASE + "#/" + route.map(encodeURIComponent).join("/");
-}
+// The site's top-level directories (and files) that aren't variants (as
+// routes.js's RESERVED): anything else at the top is a variant.
+const RESERVED = ["section", "search", "browse", "offline", "static", "repo", "src",
+  "404.html", "index.html", "sw.js", "sitemap.xml", "robots.txt", "manifest.webmanifest"];
 
-const isSeries = (sec) => sec.length > 1 && !/^[0-9]/.test(sec);
-const RESERVED = ["man", "section", "search", "browse", "offline", "static", "repo", "src"];
-
-// unsegment undoes site.SegmentName, which escapes names starting with a
-// dot as file names are.
-function unsegment(s) {
-  return s.startsWith("%") ? decodeURIComponent(s) : s;
+// appView reports whether the app's shell shows an address: a listing,
+// or anything in a variant.
+function appView(url) {
+  const first = url.pathname.slice(BASE.length).split("/")[0];
+  return first === "section" || (first !== "" && !RESERVED.includes(first) && /^[a-z][a-z0-9-]{0,31}$/.test(first));
 }
 
 // asset serves the shell from its cache (it's refreshed whenever the site

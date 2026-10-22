@@ -4,12 +4,13 @@
 // The app's addresses: what each shows.
 
 import { browseURL } from "./urls.js";
-import { isSeries } from "./manual.js";
 
 export const isRoute = (h) => /^#\/./.test(h);
 
-// Top-level directories of the site that aren't series.
-const RESERVED = new Set(["man", "section", "search", "browse", "offline", "static", "repo", "src"]);
+// The site's top-level directories (and files) that aren't variants (as
+// site.Reserved): anything else at the top is a variant (a voice).
+export const RESERVED = new Set(["section", "search", "browse", "offline", "static", "repo", "src",
+  "404.html", "index.html", "sw.js", "sitemap.xml", "robots.txt", "manifest.webmanifest"]);
 
 // unsegment undoes site.SegmentName (names starting with a dot are escaped).
 const unsegment = (s) => (s.startsWith("%") ? decodeURIComponent(s) : s);
@@ -18,37 +19,41 @@ const unsegment = (s) => (s.startsWith("%") ? decodeURIComponent(s) : s);
 // of the static site's pages (which, once the app is running, it shows
 // itself), or null if it's not one of the site's.
 /**
- * What an address shows.
- * @typedef {{kind: "route", hash: string}
- *   | {kind: "home"}
- *   | {kind: "page", sec: string, name: string}
- *   | {kind: "section", key: string, sub: string, page: number}
- *   | {kind: "search", params: URLSearchParams}} View
+ * What an address shows, and the voice (variant) it's in: "" for none.
+ * @typedef {{kind: "route", hash: string, voice: string}
+ *   | {kind: "home", voice: string}
+ *   | {kind: "page", sec: string, name: string, voice: string}
+ *   | {kind: "section", key: string, sub: string, page: number, voice: string}
+ *   | {kind: "search", params: URLSearchParams, voice: string}} View
  */
 
+// viewOf is the view an address (a URL) shows in the app: a route, or one
+// of the site's pages (which, once the app is running, it shows itself),
+// in a voice (girl/1/ls/, pirate/section/1/) or not; null if it's not one
+// of the site's.
 /** @param {URL} u @param {string} base @param {string} [origin] @returns {View | null} */
 export function viewOf(u, base, origin = globalThis.location?.origin) {
   if (u.origin !== origin || !u.pathname.startsWith(base)) return null;
-  if (u.pathname === base && isRoute(u.hash)) return { kind: "route", hash: u.hash };
-  if (u.pathname === base) return { kind: "home" };
+  if (u.pathname === base && isRoute(u.hash)) return { kind: "route", hash: u.hash, voice: "" };
+  if (u.pathname === base) return { kind: "home", voice: "" };
   let parts;
   try {
     parts = u.pathname.slice(base.length).split("/").filter(Boolean).map(decodeURIComponent).map(unsegment);
   } catch {
     return null;
   }
-  if (parts[0] === "man" && parts.length === 3) return { kind: "page", sec: parts[1], name: parts[2] };
-  if (isSeries(parts[0]) && !RESERVED.has(parts[0])) {
-    // A series: rfc/9110/, or its listing, rfc/ or rfc/page/2/.
-    if (parts.length === 2 && parts[1] !== "page") return { kind: "page", sec: parts[0], name: parts[1] };
-    if (parts.length === 1) return { kind: "section", key: parts[0], sub: "", page: 1 };
-    if (parts.length === 3 && parts[1] === "page") return { kind: "section", key: parts[0], sub: "", page: +parts[2] || 1 };
+  let voice = "";
+  if (!RESERVED.has(parts[0])) {
+    if (!/^[a-z][a-z0-9-]{0,31}$/.test(parts[0])) return null;
+    voice = parts.shift() || "";
+    if (parts.length === 0) return { kind: "home", voice };
+    if (parts.length === 2 && parts[0] !== "section") return { kind: "page", sec: parts[0], name: parts[1], voice };
   }
-  if (parts[0] === "search" && parts.length === 1) return { kind: "search", params: u.searchParams };
+  if (parts[0] === "search" && parts.length === 1) return { kind: "search", params: u.searchParams, voice };
   if (parts[0] === "section") {
     let page = 1;
     if (parts.length >= 4 && parts[parts.length - 2] === "page") page = +parts.splice(-2)[1] || 1;
-    if (parts.length === 2 || parts.length === 3) return { kind: "section", key: parts[1], sub: parts[2] || "", page };
+    if (parts.length === 2 || parts.length === 3) return { kind: "section", key: parts[1], sub: parts[2] || "", page, voice };
   }
   return null;
 }

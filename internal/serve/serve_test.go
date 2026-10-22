@@ -46,8 +46,9 @@ func TestArchiveSource(t *testing.T) {
 	sha := strings.Repeat("b", 64)
 	put(t, site, "index.html", page)
 	put(t, site, "404.html", "<!doctype html><p>not here, bestie</p>")
-	put(t, site, "man/1/ls/index.html", page+"ls")
-	put(t, site, "repo/manifest.json", `{"format":1}`)
+	put(t, site, "girl/1/ls/index.html", page+"ls")
+	put(t, site, "repo/manifest.json", `{"format":1,"variants":{"girl":1,"man":1,"pirate":1},"sections":[{"section":"1"},{"section":"rfc"}]}`)
+	put(t, site, "static/shell.html", "<!doctype html><html data-shell>")
 	put(t, site, "repo/contents/ab/"+sha+"/man-"+sha+".json", `{"variant":"man"}`)
 	if _, err := build.Write(context.Background(), site, dir, build.Options{}); err != nil {
 		t.Fatal(err)
@@ -62,7 +63,7 @@ func TestArchiveSource(t *testing.T) {
 	var log bytes.Buffer
 	h := Handler(src, Options{Metrics: m, AccessLog: &log})
 
-	w := get(t, h, "GET", "/man/1/ls/", map[string]string{"Accept-Encoding": "gzip, br;q=0.9, zstd;q=0"})
+	w := get(t, h, "GET", "/girl/1/ls/", map[string]string{"Accept-Encoding": "gzip, br;q=0.9, zstd;q=0"})
 	if w.Code != 200 || w.Header().Get("Content-Encoding") != "br" || w.Header().Get("Cache-Control") != CacheSite ||
 		w.Header().Get("X-Content-Type-Options") != "nosniff" || !strings.HasPrefix(w.Header().Get("Content-Type"), "text/html") {
 		t.Fatalf("page: %d %v", w.Code, w.Header())
@@ -75,10 +76,10 @@ func TestArchiveSource(t *testing.T) {
 	if !strings.HasSuffix(tag, `-br"`) {
 		t.Errorf("etag %q", tag)
 	}
-	if w := get(t, h, "GET", "/man/1/ls/", map[string]string{"Accept-Encoding": "br", "If-None-Match": tag}); w.Code != 304 {
+	if w := get(t, h, "GET", "/girl/1/ls/", map[string]string{"Accept-Encoding": "br", "If-None-Match": tag}); w.Code != 304 {
 		t.Errorf("conditional: %d", w.Code)
 	}
-	if w := get(t, h, "GET", "/man/1/ls", nil); w.Code != 301 || w.Header().Get("Location") != "/man/1/ls/" {
+	if w := get(t, h, "GET", "/girl/1/ls", nil); w.Code != 301 || w.Header().Get("Location") != "/girl/1/ls/" {
 		t.Errorf("directory: %d %q", w.Code, w.Header().Get("Location"))
 	}
 	if w := get(t, h, "GET", "/", nil); w.Code != 200 || w.Body.String() != page || w.Header().Get("Content-Encoding") != "" {
@@ -87,6 +88,21 @@ func TestArchiveSource(t *testing.T) {
 	w = get(t, h, "GET", "/repo/contents/ab/"+sha+"/man-"+sha+".json", map[string]string{"Range": "bytes=1-9"})
 	if w.Code != 206 || w.Body.String() != `"variant"` || w.Header().Get("Cache-Control") != CacheImmutable {
 		t.Errorf("range: %d %q %q", w.Code, w.Body.String(), w.Header().Get("Cache-Control"))
+	}
+	// A variant's address is the app's: it gets the shell. An old series
+	// address goes where it is now.
+	for _, p := range []string{"/pirate/1/ls/", "/man/1/ls/", "/pirate/", "/pirate/section/1/", "/girl/section/1/"} {
+		if w := get(t, h, "GET", p, nil); w.Code != 200 || !strings.Contains(w.Body.String(), "data-shell") {
+			t.Errorf("%s: %d %.40q", p, w.Code, w.Body.String())
+		}
+	}
+	if w := get(t, h, "GET", "/witch/1/ls/", nil); w.Code != 404 {
+		t.Errorf("a variant there isn't: %d", w.Code)
+	}
+	for from, to := range map[string]string{"/rfc/9110/": "/girl/rfc/9110/", "/rfc/": "/section/rfc/", "/rfc/page/2/": "/section/rfc/page/2/"} {
+		if w := get(t, h, "GET", from, nil); w.Code != 301 || w.Header().Get("Location") != to {
+			t.Errorf("%s: %d to %q, want %q", from, w.Code, w.Header().Get("Location"), to)
+		}
 	}
 	if w := get(t, h, "GET", "/nope", nil); w.Code != 404 || !strings.Contains(w.Body.String(), "not here") {
 		t.Errorf("404: %d %q", w.Code, w.Body.String())
@@ -113,7 +129,7 @@ func TestArchiveSource(t *testing.T) {
 		t.Errorf("after reload: %q", w.Body.String())
 	}
 
-	if !strings.Contains(log.String(), `"path":"/man/1/ls/"`) || !strings.Contains(log.String(), `"status":304`) {
+	if !strings.Contains(log.String(), `"path":"/girl/1/ls/"`) || !strings.Contains(log.String(), `"status":304`) {
 		t.Errorf("access log: %s", log.String())
 	}
 	adm := Admin(src, m, a)
@@ -121,8 +137,8 @@ func TestArchiveSource(t *testing.T) {
 		t.Errorf("readyz: %d", w.Code)
 	}
 	w = get(t, adm, "GET", "/metrics", nil)
-	for _, want := range []string{`girlpages_http_requests_total{code="200"}`, `girlpages_http_requests_total{code="404"} 2`,
-		"girlpages_archive_reloads_total 1", "girlpages_archive_files 5", `girlpages_http_request_duration_seconds_bucket{le="+Inf"}`} {
+	for _, want := range []string{`girlpages_http_requests_total{code="200"}`, `girlpages_http_requests_total{code="404"} 3`,
+		"girlpages_archive_reloads_total 1", "girlpages_archive_files 6", `girlpages_http_request_duration_seconds_bucket{le="+Inf"}`} {
 		if !strings.Contains(w.Body.String(), want) {
 			t.Errorf("metrics lack %q:\n%s", want, w.Body.String())
 		}

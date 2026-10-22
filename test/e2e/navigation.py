@@ -188,30 +188,30 @@ async def main():
             print("back and forward between the static page and the app")
             ctx, page = await fresh("/section/1/")
             steps = []
-            for href in ["/man/1/atool0000/", "/", "/section/8/", "/man/8/admin001/"]:
+            for href in ["/girl/1/atool0000/", "/", "/section/8/", "/girl/8/admin001/"]:
                 await tap(page, base + href)
                 steps.append((href, await shown(page)))
             for href, s in steps:
                 check(s[0] == "app", f"{href} shown by the app")
-            want = ["/section/8/", "/", "/man/1/atool0000/", "/section/1/"]
+            want = ["/section/8/", "/", "/girl/1/atool0000/", "/section/1/"]
             for w in want:
                 await page.go_back()
                 s = await shown(page)
                 check(path(page) == w and (s[0] == "static") == (w == "/section/1/"), f"back to {w}: {path(page)} {s}")
-            for w in reversed(["/man/8/admin001/", "/section/8/", "/", "/man/1/atool0000/"]):
+            for w in reversed(["/girl/8/admin001/", "/section/8/", "/", "/girl/1/atool0000/"]):
                 await page.go_forward()
                 s = await shown(page)
                 check(path(page) == w and s[0] == "app", f"forward to {w}: {path(page)} {s}")
             await ctx.close()
 
             print("going back lands where the view was scrolled to")
-            ctx, page = await fresh("/man/1/atool0000/")
+            ctx, page = await fresh("/girl/1/atool0000/")
             await tap(page, base + "/section/8/")
             await shown(page)
             await page.mouse.wheel(0, 900)
             await page.wait_for_timeout(500)
             y = await page.evaluate("scrollY")
-            await tap(page, base + "/man/8/admin002/")
+            await tap(page, base + "/girl/8/admin002/")
             await shown(page)
             check(await page.evaluate("scrollY") < 50, "a new view starts at the top")
             await page.go_back()
@@ -221,7 +221,7 @@ async def main():
             await ctx.close()
 
             print("quick taps: the last one wins")
-            ctx, page = await fresh("/man/1/atool0000/")
+            ctx, page = await fresh("/girl/1/atool0000/")
             for href in ["/section/8/", "/section/1/1ssl/", "/", "/section/1/", "/section/8/"]:
                 await tap(page, base + href)
                 await page.wait_for_timeout(60)
@@ -243,13 +243,13 @@ async def main():
                 await route.continue_()
             await page.route("**/repo/**", slow)
             target = next(n for n in NAMES["1"] if n.startswith("b"))
-            await tap(page, base + f"/man/1/{target}/")
+            await tap(page, base + f"/girl/1/{target}/")
             for _ in range(5):
                 await page.mouse.wheel(0, 2500)
                 await page.wait_for_timeout(60)
             await page.wait_for_timeout(2500)
             s = await shown(page)
-            check(path(page) == f"/man/1/{target}/" and s[0] == "app" and target.upper() in s[1], f"landed on the page: {path(page)} {s}")
+            check(path(page) == f"/girl/1/{target}/" and s[0] == "app" and target.upper() in s[1], f"landed on the page: {path(page)} {s}")
             await ctx.close()
 
             print("listings follow the address as they scroll")
@@ -264,7 +264,7 @@ async def main():
             s = await shown(page)
             check(s[0] == "static", "the page's own listing is the static one again")
             await ctx.close()
-            ctx, page = await fresh("/man/1/atool0000/")
+            ctx, page = await fresh("/girl/1/atool0000/")
             await tap(page, base + "/#/section/1")
             await shown(page)
             for _ in range(12):
@@ -297,7 +297,7 @@ async def main():
             await ctx.close()
 
             print("letters jump")
-            ctx, page = await fresh("/man/1/atool0000/")
+            ctx, page = await fresh("/girl/1/atool0000/")
             await tap(page, base + "/section/1/")
             await shown(page)
             await page.locator("#app .letters a", has_text="M").first.click()
@@ -308,14 +308,14 @@ async def main():
             await ctx.close()
 
             print("search goes straight to a page it names, and back comes back")
-            ctx, page = await fresh("/man/8/admin003/")
+            ctx, page = await fresh("/girl/8/admin003/")
             await tap(page, base + "/search/?q=" + "1+atool0000")
             await page.wait_for_timeout(1500)
             s = await shown(page)
-            check(path(page) == "/man/1/atool0000/" and "ATOOL0000" in s[1], f"straight to the page: {path(page)} {s}")
+            check(path(page) == "/girl/1/atool0000/" and "ATOOL0000" in s[1], f"straight to the page: {path(page)} {s}")
             await page.go_back()
             s = await shown(page)
-            check(path(page) == "/man/8/admin003/" and s[0] == "static", f"back past the search: {path(page)} {s}")
+            check(path(page) == "/girl/8/admin003/" and s[0] == "static", f"back past the search: {path(page)} {s}")
             await ctx.close()
 
             print("keys: /, Esc, typing to jump, Ctrl+Enter")
@@ -340,7 +340,7 @@ async def main():
             nxt = await page.evaluate(picked)
             await page.keyboard.press("Enter")
             s = await shown(page)
-            check(path(page) == f"/man/1/{nxt}/", f"Enter goes to the one picked, {nxt}: {path(page)} {s}")
+            check(path(page) == f"/girl/1/{nxt}/", f"Enter goes to the one picked, {nxt}: {path(page)} {s}")
             await page.go_back()
             await shown(page)
             await page.wait_for_timeout(300)
@@ -356,7 +356,7 @@ async def main():
             await page.keyboard.type(target[:5], delay=20)
             await page.keyboard.press("Enter")
             s = await shown(page)
-            check(path(page) == f"/man/1/{target}/", f"Enter right after typing goes to {target}: {path(page)} {s}")
+            check(path(page) == f"/girl/1/{target}/", f"Enter right after typing goes to {target}: {path(page)} {s}")
             await page.go_back()
             await shown(page)
             await page.wait_for_timeout(300)
@@ -371,14 +371,14 @@ async def main():
             await page.keyboard.type("admin003(8)")
             await page.keyboard.press("Enter")
             s = await shown(page)
-            check(path(page) == "/man/8/admin003/" and "ADMIN003" in s[1], f"and goes there: {path(page)} {s}")
+            check(path(page) == "/girl/8/admin003/" and "ADMIN003" in s[1], f"and goes there: {path(page)} {s}")
             bare = sorted(NAMES["8"])[4]
             await page.keyboard.press("Control+Enter")
             await page.wait_for_timeout(200)
             await page.keyboard.type(bare)
             await page.keyboard.press("Enter")
             await shown(page)
-            check(path(page) == f"/man/8/{bare}/", f"a name alone goes to its page, {bare}: {path(page)}")
+            check(path(page) == f"/girl/8/{bare}/", f"a name alone goes to its page, {bare}: {path(page)}")
             await page.keyboard.press("Control+Enter")
             await page.wait_for_timeout(200)
             await page.keyboard.type("admin00")
@@ -408,11 +408,11 @@ async def main():
             before = path(page)
             await page.keyboard.press("q")
             await shown(page)
-            check(path(page) != before and path(page) == f"/man/8/{bare}/", f"q goes back: {before} → {path(page)}")
+            check(path(page) != before and path(page) == f"/girl/8/{bare}/", f"q goes back: {before} → {path(page)}")
             await ctx.close()
 
             print("search by parts of words")
-            ctx, page = await fresh("/man/8/admin003/")
+            ctx, page = await fresh("/girl/8/admin003/")
             part = target = sorted(NAMES["8"])[5]
             part = target[2:]
             await tap(page, base + "/search/?" + f"q={part}&mode=ngrams")
@@ -429,7 +429,7 @@ async def main():
             await page.reload(wait_until="networkidle")  # loaded under the service worker
             await page.wait_for_timeout(1500)
             await page.evaluate("window.marked = 1")
-            await tap(page, base + "/man/8/admin001/")
+            await tap(page, base + "/girl/8/admin001/")
             s = await shown(page)
             check(await page.evaluate("window.marked") == 1 and s[0] == "app", f"before, links show in place: {s}")
             # Republishing changes sw.js (its VERSION).
@@ -447,17 +447,17 @@ async def main():
             })""")
             check(took, "the newer service worker took over")
             async with page.expect_navigation():
-                await tap(page, base + "/man/8/admin002/")
+                await tap(page, base + "/girl/8/admin002/")
             await page.wait_for_load_state("networkidle")
             s = await shown(page)
-            check(await page.evaluate("window.marked") is None and path(page) == "/man/8/admin002/" and s[0] == "static",
+            check(await page.evaluate("window.marked") is None and path(page) == "/girl/8/admin002/" and s[0] == "static",
                   f"after, the next link loads whole: {path(page)} {s}")
             await page.evaluate("window.marked = 1")
             await page.keyboard.press("Escape")
             await page.wait_for_timeout(1000)
             await page.wait_for_load_state("networkidle")
             s = await shown(page)
-            check(path(page) == "/man/8/admin001/" and "ADMIN001" in s[1], f"and back still works: {path(page)} {s}")
+            check(path(page) == "/girl/8/admin001/" and "ADMIN001" in s[1], f"and back still works: {path(page)} {s}")
             await ctx.close()
 
             print("the contents follow the reading")
@@ -473,7 +473,7 @@ async def main():
                     if (Math.abs(h.getBoundingClientRect().top - 120) < 2 || scrollY === y) break;
                 }
             }"""
-            ctx, page = await fresh("/man/8/zlongread/", width=1200)
+            ctx, page = await fresh("/girl/8/zlongread/", width=1200)
             for k in (3, 7, 11):
                 await page.evaluate(place, [".static-view", f"part{k:02d}"])
                 await page.wait_for_timeout(300)
@@ -482,8 +482,8 @@ async def main():
             await ctx.close()
             # In the app, over a static page with a heading or two of the
             # same names.
-            ctx, page = await fresh("/man/8/admin001/", width=1200)
-            await tap(page, base + "/man/8/zlongread/")
+            ctx, page = await fresh("/girl/8/admin001/", width=1200)
+            await tap(page, base + "/girl/8/zlongread/")
             s = await shown(page)
             check(s[0] == "app", f"zlongread in the app: {s}")
             await page.evaluate(place, ["#app", "part05"])
@@ -493,8 +493,8 @@ async def main():
             await ctx.close()
 
             print("a link in another case than its page's")
-            ctx, page = await fresh("/man/8/admin001/", width=1200)
-            for want, href in [("admin002", "/man/8/ADMIN002/"), ("SSL_thing001", "/man/1ssl/ssl_thing001/")]:
+            ctx, page = await fresh("/girl/8/admin001/", width=1200)
+            for want, href in [("admin002", "/girl/8/ADMIN002/"), ("SSL_thing001", "/girl/1ssl/ssl_thing001/")]:
                 await tap(page, base + href)
                 s = await shown(page)
                 check(s[0] == "app" and want.upper() in s[1].upper() and page.url.endswith(f"/{want}/"),
@@ -503,51 +503,81 @@ async def main():
             # Looking the name up as written first is a 404, which is expected.
             errors[:] = [e for e in errors if not ("404" in e and ("/ADMIN002/" in e or "/ssl_thing001/" in e))]
 
-            print("choosing a default variant")
-            ctx, page = await fresh("/man/8/admin050/", width=1200)
-            content = lambda: page.evaluate("""() => { const routed = document.documentElement.classList.contains('routed');
+            print("variants at their own addresses, and choosing a default")
+            content = lambda pg: pg.evaluate("""() => { const routed = document.documentElement.classList.contains('routed');
               const app = document.querySelector('#app'), sv = document.querySelector('.static-view');
               const v = (routed && app && !app.hidden ? app : sv); return v ? v.querySelector('.content, .original')?.textContent || '' : '' }""")
-            check("girly admin050" in await content(), f"girly first: {(await content())[:60]!r}")
+            ctx, page = await fresh("/girl/8/admin050/", width=1200)
+            check("girly admin050" in await content(page), f"girly at girl/: {(await content(page))[:60]!r}")
             row = page.locator(".static-view .meta[data-app-only]")
             check(await row.count() == 1 and await row.is_visible(), "the static page offers its variants, with the app")
             nf = await page.evaluate("[...document.querySelectorAll('.static-view .meta[data-app-only] a')].every(a => a.rel === 'nofollow')")
             check(nf, "their links are nofollow")
             await page.click("a.pill:has-text('pirate')")
             await shown(page)
-            check("pirate admin050" in await content(), "the pirate variant, picked")
+            check("pirate admin050" in await content(page) and page.url.endswith("/pirate/8/admin050/"),
+                  f"the pirate variant, at pirate/: {page.url}")
             await page.click("[data-prefer]")
-            s = await shown(page)
-            check("pirate admin050" in await content() and page.url.endswith("#/8/admin050"),
-                  f"made the default, at the plain address: {page.url}")
+            await page.wait_for_timeout(200)
             pref = await page.evaluate("localStorage.getItem('girlpages:variant')")
-            check(pref == "pirate", f"remembered: {pref!r}")
-            # The static page (girly) is shown as the pirate one, at its own address.
-            await page.goto(base + "/man/8/admin050/", wait_until="networkidle")
+            check(pref == "pirate" and page.url.endswith("/pirate/8/admin050/"), f"made the default, in place: {pref!r} {page.url}")
+            # Opening a girly page now goes to the pirate one, before anything girly shows.
+            seen = []
+            page.on("framenavigated", lambda f: f == page.main_frame and seen.append(f.url))
+            await page.goto(base + "/girl/8/admin050/", wait_until="networkidle")
             await page.wait_for_timeout(1500)
             s = await shown(page)
-            check(s[0] == "app" and "pirate admin050" in await content() and page.url.endswith("/man/8/admin050/"),
-                  f"the static page, in pirate: {s} {page.url} {(await content())[:40]!r}")
-            check(await page.locator("a.pill:has-text('girly')").count() == 1, "girly's still offered")
+            check(s[0] == "app" and "pirate admin050" in await content(page) and page.url.endswith("/pirate/8/admin050/"),
+                  f"girl/ in pirate: {s} {page.url}")
             # A page without that variant shows what it has.
-            await tap(page, base + "/man/8/admin051/")
+            await tap(page, base + "/girl/8/admin051/")
             s = await shown(page)
-            check(s[0] == "app" and "admin051" in await content(), f"a page without pirate: {s}")
-            # Undone: girly again.
-            await page.goto(base + "/man/8/admin050/", wait_until="networkidle")
-            await page.wait_for_timeout(1500)
-            await page.click("[data-prefer].on")
+            check(s[0] == "app" and "admin051" in await content(page) and page.url.endswith("/pirate/8/admin051/"),
+                  f"a page without pirate: {s} {page.url}")
+            # Choosing girly on a page is girly, default or not.
+            await tap(page, base + "/girl/8/admin050/")
             await shown(page)
+            await page.click("a.pill[data-variant='girl']")
+            await shown(page)
+            check("girly admin050" in await content(page) and page.url.endswith("/girl/8/admin050/"), f"girly, chosen: {page.url}")
+            # Undone: girl/ is girly again.
+            await page.click("a.pill[data-variant='pirate']")
+            await shown(page)
+            await page.click("[data-prefer].on")
+            await page.wait_for_timeout(200)
             pref = await page.evaluate("localStorage.getItem('girlpages:variant')")
+            await page.goto(base + "/girl/8/admin050/", wait_until="networkidle")
+            await page.wait_for_timeout(1000)
+            check(pref is None and "girly admin050" in await content(page) and page.url.endswith("/girl/8/admin050/"),
+                  f"back to girly: {pref!r} {page.url}")
+            await ctx.close()
+
+            print("a variant's address is the app's from the start")
+            ctx, page = await fresh("/pirate/8/admin050/", width=1200)
+            s = await shown(page)
+            check(s[0] == "app" and "pirate admin050" in await content(page), f"pirate/: {s}")
+            check(await page.evaluate("document.documentElement.dataset.shell !== undefined"), "it's the shell")
+            check(await page.evaluate("!document.querySelector('.static-view .content')"), "with no girly page in it")
+            home = await page.evaluate("document.querySelector('header a[href]').getAttribute('href')")
+            check(home == "/pirate/", f"its header stays in pirate: {home!r}")
+            await tap(page, base + "/pirate/section/8/")
+            s = await shown(page)
+            links = await page.evaluate("[...document.querySelectorAll('#app a[href*=\"admin05\"]')].map(a => a.getAttribute('href'))")
+            check(s[0] == "app" and links and all(l.startswith("/pirate/8/") for l in links), f"its listing links pirate pages: {links[:2]}")
             await page.goto(base + "/man/8/admin050/", wait_until="networkidle")
             await page.wait_for_timeout(1500)
-            check(pref is None and "girly admin050" in await content(), f"back to girly: {pref!r}")
+            s = await shown(page)
+            check(s[0] == "app" and "admin050" in await content(page) and "slay bestie" not in await content(page) and "original" in s[1],
+                  f"man/ is the original: {s}")
+            r = await page.goto(base + "/witch/8/admin050/")
+            check(r.status == 404, f"a variant there isn't: {r.status}")
             await ctx.close()
+            errors[:] = [e for e in errors if not ("404" in e and "/witch/" in e)]  # (meant)
 
             print("without JavaScript, no links only the app can follow")
             nojs = await browser.new_context(java_script_enabled=False)
             p2 = await nojs.new_page()
-            await p2.goto(base + "/man/8/admin050/")
+            await p2.goto(base + "/girl/8/admin050/")
             check(not await p2.locator(".meta[data-app-only]").is_visible(), "the variants are hidden")
             check("girly admin050" in await p2.locator(".content").text_content(), "the girly page is there")
             await nojs.close()

@@ -68,7 +68,7 @@ func init() {
 		}
 		return fmt.Sprintf("%d pages", n)
 	}}
-	for _, name := range []string{"home", "list", "page", "search", "browse", "notfound", "offline"} {
+	for _, name := range []string{"home", "list", "page", "search", "browse", "notfound", "offline", "shell"} {
 		templates[name] = template.Must(template.New(name).Funcs(funcs).ParseFS(templateFS,
 			"templates/layout.html", "templates/"+name+".html"))
 	}
@@ -151,6 +151,7 @@ func Build(s *repo.Store, pages []repo.PageRef, m *repo.Manifest, o Options) (St
 		func() error { return b.pages(pages) },
 		b.search,
 		b.browse,
+		b.shell,
 		func() error { return b.sitemap(pages) },
 	}
 	for _, step := range steps {
@@ -166,6 +167,8 @@ type view struct {
 	Title, Description, Canonical string
 	Base, Version, Query          string
 	NoIndex                       bool
+	// Shell is the app's shell, which the app takes over at once.
+	Shell bool
 	// OpenGraph: the kind of thing ("website", "article"), an absolute
 	// image URL, and when an article changed.
 	OGType, OGImage, Modified string
@@ -337,7 +340,9 @@ type pageView struct {
 	SectionURL, URL                   string
 	// BrowseURL is the page in the browser app, for originals and other
 	// versions.
-	BrowseURL       string
+	BrowseURL string
+	// OriginalURL is the original's page (man/<sec>/<name>/).
+	OriginalURL     string
 	Body            template.HTML
 	TOC             []render.Heading
 	Girlified       bool
@@ -395,23 +400,26 @@ func SegmentName(s string) string {
 	return s
 }
 
-// pageURL is a page's: man/<sec>/<name>/, or <series>/<name>/ for a
-// series of documents (rfc/9110/).
-func (b *builder) pageURL(name, sec string) string {
-	if manpage.IsSeries(sec) {
-		return b.url(sec, name)
-	}
-	return b.url("man", sec, name)
-}
+// pageURL is a page's static page: girl/<sec>/<name>/ (girl/rfc/9110/
+// for a series' document), girly. Its other variants are at
+// <variant>/<sec>/<name>/ (see variantURL).
+func (b *builder) pageURL(name, sec string) string { return b.variantURL(repo.VariantGirl, name, sec) }
+
+// variantURL is a page in a variant: <variant>/<sec>/<name>/. Only girly
+// ones are made here; servers send the others the app's shell
+// (static/shell.html), which shows them (see package serve).
+func (b *builder) variantURL(variant, name, sec string) string { return b.url(variant, sec, name) }
+
+// Reserved are the site's top-level directories (and files) that aren't
+// variants: no variant may be named one of these, or a series.
+var Reserved = []string{"section", "search", "browse", "offline", "static", "repo", "src",
+	"404.html", "index.html", "sw.js", "sitemap.xml", "robots.txt", "manifest.webmanifest"}
 
 // listURL is a listing: a chapter's (section/3/, for sec ""), one of its
 // sections' (section/3/3ssl/, or section/3/3/ for just 3), or a series'
-// (rfc/).
+// (section/rfc/).
 func (b *builder) listURL(key, sec string) string {
-	switch {
-	case manpage.IsSeries(key):
-		return b.url(key)
-	case sec != "":
+	if sec != "" && !manpage.IsSeries(key) {
 		return b.url("section", key, sec)
 	}
 	return b.url("section", key)
@@ -528,7 +536,7 @@ func (b *builder) static() error {
 	}
 	// What the service worker keeps for offline use. Changing any of it
 	// changes its version, so browsers fetch the new ones.
-	shell := []string{"", "search/", "browse/", "offline/", "manifest.webmanifest"}
+	shell := []string{"", "search/", "browse/", "offline/", "manifest.webmanifest", "static/shell.html"}
 	h := sha256.New()
 	io.WriteString(h, b.o.Version)
 	sw := staticJS("sw.js")
@@ -976,7 +984,8 @@ func (b *builder) page(p repo.PageRef) error {
 	}
 	pv := &pageView{Name: name, Section: sec, Title: title, Description: ver.Description,
 		SectionURL: b.sectionURL(sec), URL: u, BrowseURL: b.browseURL("", sec, name),
-		Versions: len(p.Listing.Versions), Version: ver.Upstream(),
+		OriginalURL: b.variantURL(repo.VariantMan, name, sec),
+		Versions:    len(p.Listing.Versions), Version: ver.Upstream(),
 		SectionLabel: sectionTitle(sec), Series: manpage.IsSeries(sec)}
 	if pv.Series && len(ver.Packages) > 0 {
 		pv.Published = published(ver.Packages[0].Version)
@@ -998,7 +1007,7 @@ func (b *builder) page(p repo.PageRef) error {
 	}
 	sort.Strings(others)
 	for _, v := range others {
-		pv.Others = append(pv.Others, chip{Label: variantLabel(v), URL: b.browseURL("", sec, name, v)})
+		pv.Others = append(pv.Others, chip{Label: variantLabel(v), URL: b.variantURL(v, name, sec)})
 	}
 
 	man, err := b.s.Variant(ver.Source, repo.VariantMan)
@@ -1074,6 +1083,21 @@ func pageTitle(name, sec, desc string) string {
 		t += " — " + desc
 	}
 	return t
+}
+
+// shell is the app's shell (static/shell.html): what a server sends for
+// a page in a variant other than girly (pirate/1/ls/, man/1/ls/: see
+// package serve), and for listings and searches in one, which the app
+// shows. Nothing's pre-rendered for those, so there's no page in the
+// wrong variant to see before the app shows the right one.
+func (b *builder) shell() error {
+	v := &view{Title: "girlpages", NoIndex: true, Shell: true, Base: b.o.Base, Version: b.o.Version,
+		OGType: "website", OGImage: b.abs(b.o.Base + "static/icon-512.png")}
+	var buf bytes.Buffer
+	if err := templates["shell"].ExecuteTemplate(&buf, "layout", v); err != nil {
+		return err
+	}
+	return b.write(filepath.Join(b.o.Out, "static", "shell.html"), buf.Bytes())
 }
 
 func (b *builder) search() error {
@@ -1152,7 +1176,9 @@ func (b *builder) prune() error {
 	if b.o.Files != nil {
 		return nil // (nothing was there before)
 	}
-	dirs := []string{"man", "section", "src"}
+	// (man/ and series' own directories held pages before they moved to
+	// girl/; whatever's left there goes.)
+	dirs := []string{"girl", "man", "section", "src"}
 	for _, e := range b.m.Sections {
 		if manpage.IsSeries(e.Section) {
 			dirs = append(dirs, SegmentName(e.Section))

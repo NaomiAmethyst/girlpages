@@ -1,6 +1,6 @@
 {{define "sources"}}{{if .}}<nav class="chips sources" aria-label="Browse by source">{{range .}}{{if .Items}}<details class="source"><summary class="pill{{if .On}} on{{end}}">{{.Label}}</summary><div class="menu">{{range .Items}}<a class="pill{{if .On}} on{{end}}" href="{{.URL}}">{{.Label}}</a>{{end}}</div></details>{{else}}<a class="pill{{if .On}} on{{end}}" href="{{.URL}}">{{.Label}}</a>{{end}}{{end}}</nav>{{end}}{{end}}
 {{define "layout"}}<!doctype html>
-<html lang="en" data-base="{{.Base}}" data-repo="{{.Base}}repo/">
+<html lang="en" data-base="{{.Base}}" data-repo="{{.Base}}repo/"{{if .Shell}} data-shell{{end}}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -33,7 +33,8 @@
 <meta name="theme-color" content="#ff3e9a" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#170d22" media="(prefers-color-scheme: dark)">
 <meta name="apple-mobile-web-app-title" content="girlpages">
-<script>try{var t=localStorage.getItem("girlpages-theme");if(t)document.documentElement.dataset.theme=t}catch(e){}if(location.pathname==="{{.Base}}"&&/^#\/./.test(location.hash))document.documentElement.classList.add("routed")</script>
+<script>try{var t=localStorage.getItem("girlpages-theme");if(t)document.documentElement.dataset.theme=t}catch(e){}if(location.pathname==="{{.Base}}"&&/^#\/./.test(location.hash){{if .Shell}}||true{{end}})document.documentElement.classList.add("routed")
+try{var v=localStorage.getItem("girlpages:variant"),g="{{.Base}}girl/",p=location.pathname;if(v&&v!=="girl"&&p.indexOf(g)===0)location.replace("{{.Base}}"+encodeURIComponent(v)+"/"+p.slice(g.length)+location.search+location.hash)}catch(e){}</script>
 <script type="speculationrules">{"prerender":[{"where":{"and":[{"href_matches":"{{.Base}}*"},{"not":{"href_matches":"{{.Base}}repo/*"}},{"not":{"selector_matches":"a[href*='#']"}}]},"eagerness":"moderate"}]}</script>
 <link rel="stylesheet" href="{{.Base}}static/style.css?v={{.Version}}">
 </head>

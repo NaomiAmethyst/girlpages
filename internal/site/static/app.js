@@ -23,7 +23,7 @@
 import { Router } from "./router.js";
 import { repoCache, errorKind } from "./cache.js";
 import { namePath, listingPath, variantPath } from "./format.js";
-import { pageURL, listingURL as listingAt, browseURL } from "./urls.js";
+import { pageURL, listingURL as listingAt, browseURL, setVoice } from "./urls.js";
 import { viewOf, parse, legacyRoute } from "./routes.js";
 import { createListings } from "./listing.js";
 import { createViews } from "./views.js";
@@ -53,10 +53,11 @@ function createApp(el) {
   // route shows the view for nav's address.
   async function route(nav) {
     const v = viewOf(new URL(nav.url), base);
+    setVoice(v ? v.voice : "");
     if (v) {
       switch (v.kind) {
         case "home": return sourceHome(nav, "");
-        case "page": return pageView(nav, v.name, v.sec, [], "");
+        case "page": return pageView(nav, v.name, v.sec, [], "", v.voice);
         case "search": return searchView(nav, v.params);
         case "section": return sourceSection(nav, "", v.key, v.sub, { start: v.page, pageURL: (n) => listingURL(v.key, v.sub, n) });
       }
