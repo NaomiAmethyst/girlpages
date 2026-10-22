@@ -43,7 +43,7 @@ try{var v=localStorage.getItem("girlpages:variant"),g="{{.Base}}girl/",p=locatio
 <header class="top">
 <a class="logo" href="{{.Base}}">girl<span>✿</span>pages</a>
 <form class="search" action="{{.Base}}search/" role="search"><input type="search" name="q" value="{{.Query}}" placeholder="search pages, bestie… 🔎" aria-label="Search manual pages"></form>
-<nav class="topnav" aria-label="Browse"><a href="{{.Base}}" title="sections"{{if eq .Nav "sections"}} aria-current="page"{{end}}>📚<span> sections</span></a>{{if .Packages}}<a href="{{.Base}}packages/" title="packages"{{if eq .Nav "packages"}} aria-current="page"{{end}}>📦<span> packages</span></a>{{end}}</nav>
+<nav class="topnav" aria-label="Browse"><a class="button" href="{{.Base}}" title="sections">📚<span> sections</span></a>{{if .Packages}}<a class="button" href="{{.Base}}packages/" title="packages">📦<span> packages</span></a>{{end}}</nav>
 <button class="theme" type="button" onclick="girlTheme()" aria-label="Switch light or dark theme" title="switch theme">🌗</button>
 </header>
 <main>

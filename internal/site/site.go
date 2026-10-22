@@ -187,10 +187,8 @@ type view struct {
 	// Sources lead to browsing by distribution or release.
 	Sources []sourceMenu
 	// Packages says there are lists of packages, for the header to link
-	// to, and Nav which of its links is to where the page is ("sections",
-	// "packages").
+	// to.
 	Packages bool
-	Nav      string
 	// ListSource, on a list of packages, is the source it's of ("" for
 	// all), and ListPackage, on a package's listing, its name: for the
 	// browse app to make them again from the repository.
@@ -685,7 +683,6 @@ func (b *builder) home(pages []repo.PageRef) error {
 	v := &view{Title: "the manual, but make it girly",
 		Description: "Every Unix man page, rewritten by an LLM in the voice of a Gen Z girl, with every detail kept. 💅",
 		Generated:   b.m.Generated.Format(time.DateOnly), Sources: b.sourceChips("")}
-	v.Nav = "sections"
 	for _, p := range pages {
 		key := mainKey(p.Pointer.Section)
 		c := cards[key]
@@ -762,7 +759,6 @@ func (b *builder) sections(pages []repo.PageRef) error {
 				Chips:       chipsFor(sec),
 				Sources:     b.sourceChips(key),
 				SaveSection: label,
-				Nav:         "sections",
 			}
 			var items []item
 			for _, p := range ps {

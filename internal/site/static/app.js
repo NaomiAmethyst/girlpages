@@ -54,7 +54,6 @@ function createApp(el) {
   async function route(nav) {
     const v = viewOf(new URL(nav.url), base);
     setVoice(v ? v.voice : "");
-    markNav(v ? v.kind : "route");
     if (v) {
       switch (v.kind) {
         case "home": return sourceHome(nav, "");
@@ -70,7 +69,7 @@ function createApp(el) {
       case "source": return sourceHome(nav, r.src);
       case "section": return sourceSection(nav, r.src, r.key, r.sub);
       case "page": return pageView(nav, r.name, r.sec, r.rest, r.src);
-      case "package": markNav("package"); return packageView(nav, r.name, r.src);
+      case "package": return packageView(nav, r.name, r.src);
     }
     return oops(nav, r.kind === "bad" ? "there's nothing here 🤔" : "that link's broken 🤔");
   }
@@ -116,17 +115,6 @@ function createApp(el) {
     },
     handles: (href) => !!viewOf(new URL(href, location.href), base),
   };
-}
-
-// markNav marks the header's link to where a view is: sections (home and
-// section listings) or packages.
-function markNav(kind) {
-  const on = { home: "sections", section: "sections", packages: "packages", package: "packages" }[kind] || "";
-  for (const a of document.querySelectorAll(".topnav a")) {
-    const mine = (a.getAttribute("title") || "") === on;
-    if (mine) a.setAttribute("aria-current", "page");
-    else a.removeAttribute("aria-current");
-  }
 }
 
 // The app's element: #app, which every page has.

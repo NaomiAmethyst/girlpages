@@ -87,7 +87,6 @@ func (b *builder) packages() error {
 			Sub:         fmt.Sprintf("%s from %s", pluralOf(len(items), "package"), from),
 			Sources:     b.packageChips(src),
 			ListSource:  src,
-			Nav:         "packages",
 		}
 		jobs = append(jobs, b.listPages(u, v, items, "packages")...)
 	}
@@ -120,7 +119,6 @@ func (b *builder) packagePage(r repo.PackageRow) error {
 		Sub:         pluralOf(len(items), "page"),
 		Sources:     b.packageSourceChips(r),
 		ListPackage: r.Name,
-		Nav:         "packages",
 		Parent:      &chip{Label: "📦 packages", URL: b.packagesURL("")},
 	}
 	for _, job := range b.listPages(u, v, items, "list") {

@@ -477,17 +477,18 @@ body { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-ins
 .top { padding-top: max(0.5rem, env(safe-area-inset-top)); }
 footer { padding-bottom: calc(2rem + env(safe-area-inset-bottom)); }
 
-/* Sections and packages, beside the search box: just their emoji on
-   narrow screens. */
-.topnav { display: flex; gap: 0.25rem; flex-shrink: 0; }
-.topnav a {
-  padding: 0.35rem 0.7rem; border-radius: 999px; text-decoration: none; color: var(--text);
-  border: 2px solid transparent; white-space: nowrap;
+/* Sections and packages: buttons on the right, with the theme's. */
+.topnav { display: flex; gap: 0.5rem; flex-shrink: 0; margin-left: auto; }
+.topnav + .theme { margin-left: 0; }
+.topnav .button {
+  display: inline-flex; align-items: center; gap: 0.4rem; height: 2.4rem; padding: 0 0.9rem;
+  border: 2px solid var(--card-edge); background: var(--card); border-radius: 999px;
+  color: var(--text); text-decoration: none; white-space: nowrap;
 }
-.topnav a:hover { border-color: var(--card-edge); color: var(--accent); }
-.topnav a[aria-current="page"] { border-color: var(--accent); background: var(--accent-soft); }
+.topnav .button:hover { border-color: var(--accent); color: var(--accent); }
 @media (max-width: 40rem) {
   .top { gap: 0.5rem; }
-  .topnav a { padding: 0.35rem 0.45rem; }
-  .topnav a span { display: none; }
+  .topnav { gap: 0.35rem; }
+  .topnav .button { width: 2.4rem; padding: 0; justify-content: center; }
+  .topnav .button span { display: none; }
 }

@@ -1112,7 +1112,7 @@ func TestPackageLists(t *testing.T) {
 		`<h1>📦 packages</h1>`, `7 packages from every source`, `data-packages=""`,
 		`<li data-name="coreutils"><a href="/package/coreutils/"><span class="name">coreutils</span></a><span class="desc">2 pages: cat(1), tac(1)</span>`,
 		`<li data-name="ls"><a href="/package/ls/"><span class="name">ls</span></a><span class="desc">1 page: ls(1)</span>`,
-		`href="/packages/debian/trixie/"`, `href="/packages/arch/"`, `aria-current="page">📦`,
+		`href="/packages/debian/trixie/"`, `href="/packages/arch/"`,
 	} {
 		if !strings.Contains(all, want) {
 			t.Errorf("packages/ lacks %s", want)
@@ -1134,7 +1134,7 @@ func TestPackageLists(t *testing.T) {
 		}
 	}
 	// The header links to them, and a page's packages to theirs.
-	if !strings.Contains(read(t, filepath.Join(out, "index.html")), `<a href="/packages/" title="packages">📦<span> packages</span></a>`) {
+	if !strings.Contains(read(t, filepath.Join(out, "index.html")), `<a class="button" href="/packages/" title="packages">📦<span> packages</span></a>`) {
 		t.Error("the header doesn't link to the packages")
 	}
 	if !strings.Contains(read(t, filepath.Join(out, "girl", "1", "cat", "index.html")), `<a href="/package/coreutils/"`) {
