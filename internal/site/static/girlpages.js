@@ -133,6 +133,9 @@ function boot() {
     return;
   }
   keys({ go: startApp(base), base, repo });
+  // What only the app can show (a page's other variants: links to its
+  // routes) is offered once it can be.
+  for (const el of /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll("[data-app-only]"))) el.hidden = false;
   const cache = repoCache(repo);
   cache.watch();
   // A static page read (or listing seen) is kept, so the browse app can

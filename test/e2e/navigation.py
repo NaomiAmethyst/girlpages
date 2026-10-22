@@ -509,6 +509,10 @@ async def main():
               const app = document.querySelector('#app'), sv = document.querySelector('.static-view');
               const v = (routed && app && !app.hidden ? app : sv); return v ? v.querySelector('.content, .original')?.textContent || '' : '' }""")
             check("girly admin050" in await content(), f"girly first: {(await content())[:60]!r}")
+            row = page.locator(".static-view .meta[data-app-only]")
+            check(await row.count() == 1 and await row.is_visible(), "the static page offers its variants, with the app")
+            nf = await page.evaluate("[...document.querySelectorAll('.static-view .meta[data-app-only] a')].every(a => a.rel === 'nofollow')")
+            check(nf, "their links are nofollow")
             await page.click("a.pill:has-text('pirate')")
             await shown(page)
             check("pirate admin050" in await content(), "the pirate variant, picked")
@@ -539,6 +543,14 @@ async def main():
             await page.wait_for_timeout(1500)
             check(pref is None and "girly admin050" in await content(), f"back to girly: {pref!r}")
             await ctx.close()
+
+            print("without JavaScript, no links only the app can follow")
+            nojs = await browser.new_context(java_script_enabled=False)
+            p2 = await nojs.new_page()
+            await p2.goto(base + "/man/8/admin050/")
+            check(not await p2.locator(".meta[data-app-only]").is_visible(), "the variants are hidden")
+            check("girly admin050" in await p2.locator(".content").text_content(), "the girly page is there")
+            await nojs.close()
 
             print("no script errors")
             for e in errors:

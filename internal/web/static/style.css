@@ -405,7 +405,7 @@ button.pill:disabled { cursor: progress; opacity: 0.8; }
 .listing .edge-msg { margin: 0; color: var(--muted); }
 .listing .edge-msg:not(:empty) { padding: 1rem; }
 /* display rules would otherwise show what's hidden */
-.pager[hidden], .pill[hidden] { display: none; }
+.pager[hidden], .pill[hidden], [data-app-only][hidden] { display: none; }
 .listing .earlier { margin: 0.5rem auto; }
 
 /* Long pages: only what's near the screen is laid out and painted, and
