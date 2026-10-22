@@ -749,7 +749,7 @@ func (b *builder) sections(pages []repo.PageRef) error {
 			var items []item
 			for _, p := range ps {
 				cur := p.Current()
-				items = append(items, item{Name: p.Pointer.Name, Section: p.Pointer.Section, Desc: cur.Description,
+				items = append(items, item{Name: p.Pointer.Name, Section: p.Pointer.Section, Desc: repo.ShortDescription(cur.Description),
 					Series: manpage.IsSeries(p.Pointer.Section), Prefix: seriesPrefix(p.Pointer.Section),
 					URL: b.pageURL(p.Pointer.Name, p.Pointer.Section), Girlified: p.Girlified()})
 			}
@@ -982,7 +982,7 @@ func (b *builder) page(p repo.PageRef) error {
 	if title == "" {
 		title = strings.ToUpper(name) + "(" + sec + ")"
 	}
-	pv := &pageView{Name: name, Section: sec, Title: title, Description: ver.Description,
+	pv := &pageView{Name: name, Section: sec, Title: title, Description: repo.ShortDescription(ver.Description),
 		SectionURL: b.sectionURL(sec), URL: u, BrowseURL: b.browseURL("", sec, name),
 		OriginalURL: b.variantURL(repo.VariantMan, name, sec),
 		Versions:    len(p.Listing.Versions), Version: ver.Upstream(),
@@ -1042,12 +1042,12 @@ func (b *builder) page(p repo.PageRef) error {
 	if !modified.IsZero() {
 		pv.Modified = modified.UTC().Format(time.DateOnly)
 	}
-	desc := ver.Description
+	desc := repo.ShortDescription(ver.Description)
 	if desc == "" {
 		desc = "the " + title + " man page"
 	}
 	desc = name + "(" + sec + "): " + desc + ", rewritten in the voice of a Gen Z girl with every detail kept 💅"
-	v := &view{Title: pageTitle(name, sec, ver.Description), Description: desc, Page: pv, OGType: "article"}
+	v := &view{Title: pageTitle(name, sec, repo.ShortDescription(ver.Description)), Description: desc, Page: pv, OGType: "article"}
 	if !modified.IsZero() {
 		v.Modified = modified.UTC().Format(time.RFC3339)
 	}

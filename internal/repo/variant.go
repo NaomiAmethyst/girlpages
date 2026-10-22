@@ -5,6 +5,7 @@ package repo
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	"github.com/NaomiAmethyst/girlpages/internal/manpage"
 )
@@ -108,20 +109,54 @@ func splitSections(lines []string, heading func(string) (string, bool)) []Sectio
 }
 
 // Description pulls the one-line summary out of a man page's NAME section
-// ("ls - list directory contents" gives "list directory contents").
+// ("ls - list directory contents" gives "list directory contents"). Only
+// its first paragraph: some pages (npm's) have the whole manual in NAME,
+// as subsections.
 func Description(v *Variant) string {
 	for _, s := range v.Sections {
 		h := strings.ToUpper(strings.TrimSpace(s.Heading))
 		if h != "NAME" && h != "NOM" && h != "NOMBRE" {
 			continue
 		}
-		body := strings.Join(strings.Fields(s.Body), " ")
+		var para []string
+		for _, l := range strings.Split(s.Body, "\n") {
+			if strings.TrimSpace(l) == "" {
+				if len(para) > 0 {
+					break
+				}
+				continue
+			}
+			para = append(para, l)
+		}
+		body := strings.Join(strings.Fields(strings.Join(para, " ")), " ")
 		for _, sep := range []string{" - ", " — ", " -- ", " – ", "\\- "} {
 			if _, d, ok := strings.Cut(body, sep); ok {
-				return strings.TrimSpace(d)
+				return ShortDescription(d)
 			}
 		}
 		return ""
 	}
 	return ""
+}
+
+// MaxDescription is how long a description may be, in bytes: a NAME line
+// is meant to fit on one.
+const MaxDescription = 200
+
+// ShortDescription trims a description, and cuts one too long (as
+// repositories made before Description took only NAME's first paragraph
+// have) at a word, with an ellipsis.
+func ShortDescription(d string) string {
+	d = strings.TrimSpace(d)
+	if len(d) <= MaxDescription {
+		return d
+	}
+	cut := strings.LastIndexByte(d[:MaxDescription], ' ')
+	if cut <= 0 {
+		cut = MaxDescription
+		for cut > 0 && !utf8.RuneStart(d[cut]) {
+			cut--
+		}
+	}
+	return strings.TrimRight(d[:cut], " ,;:.") + "…"
 }

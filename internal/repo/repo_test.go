@@ -16,6 +16,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/NaomiAmethyst/girlpages/internal/precompress"
 )
@@ -54,6 +55,18 @@ func TestManVariant(t *testing.T) {
 	}
 	if d := Description(v); d != "list directory contents" {
 		t.Errorf("Description = %q", d)
+	}
+	// npm's pages have the whole manual in NAME, under subsections: only
+	// its first paragraph is the description.
+	npm := "NPM-JSON(5)  File Formats  NPM-JSON(5)\n\nNAME\n       package.json - Specifics of npm's\n       package.json handling\n\n   Description\n       This document is all you need to know.\n\nnpm  2026  NPM-JSON(5)\n"
+	if d := Description(ManVariant("n", npm)); d != "Specifics of npm's package.json handling" {
+		t.Errorf("npm Description = %q", d)
+	}
+	if d := ShortDescription(strings.Repeat("word ", 100)); len(d) > MaxDescription+len("…") || !strings.HasSuffix(d, "word…") {
+		t.Errorf("ShortDescription = %q", d)
+	}
+	if d := ShortDescription(strings.Repeat("é", 150)); !utf8.ValidString(d) || !strings.HasSuffix(d, "é…") {
+		t.Errorf("ShortDescription without spaces = %q", d)
 	}
 	// Text without man's header and footer still round-trips.
 	for _, s := range []string{"just some text\n", "A\n  b\n\nC\n", "\n\nX\n"} {

@@ -111,14 +111,14 @@ func (s *Store) PublishContext(ctx context.Context, pages []PageRef) (*Manifest,
 		}
 		p := pages[i]
 		keys, _ := p.Listing.SourceKeys()
-		d := IndexDoc{ID: ids[i], Name: p.Pointer.Name, Section: p.Pointer.Section, Description: p.Current().Description,
+		d := IndexDoc{ID: ids[i], Name: p.Pointer.Name, Section: p.Pointer.Section, Description: ShortDescription(p.Current().Description),
 			Sources: keys}
 		var body strings.Builder
 		descs := map[string]bool{d.Description: true}
 		for _, v := range p.Listing.Versions {
-			if v.Description != "" && !descs[v.Description] {
-				descs[v.Description] = true
-				body.WriteString(v.Description)
+			if d := ShortDescription(v.Description); d != "" && !descs[d] {
+				descs[d] = true
+				body.WriteString(d)
 				body.WriteByte('\n')
 			}
 			variant := VariantMan
@@ -172,7 +172,7 @@ func (s *Store) PublishContext(ctx context.Context, pages []PageRef) (*Manifest,
 		sec := p.Pointer.Section
 		keys, girl := p.Listing.SourceKeys()
 		ip := IndexPage{
-			Name: p.Pointer.Name, Section: sec, Title: v.Title, Description: v.Description,
+			Name: p.Pointer.Name, Section: sec, Title: v.Title, Description: ShortDescription(v.Description),
 			Page: p.Pointer.SHA256, Version: v.Upstream(), Variants: variantNames(v), Sources: keys, Girl: girl,
 		}
 		if n := len(p.Listing.Versions); n > 1 {
