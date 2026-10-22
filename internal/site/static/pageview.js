@@ -8,7 +8,7 @@ import { renderHTML, renderOriginalHTML } from "./render.js";
 import { errorKind } from "./cache.js";
 import { Drawer } from "./draw.js";
 import { Spy } from "./spy.js";
-import { pathEscape, segmentName, pageURL, homeURL } from "./urls.js";
+import { pathEscape, segmentName, pageURL, homeURL, searchURL } from "./urls.js";
 import { preferredVariant, setPreferredVariant } from "./prefs.js";
 import { chapter, isSeries, sectionLabel, sourceLabel, variantLabelOf } from "./manual.js";
 
@@ -67,6 +67,14 @@ export function createPageView({ el: app, base, listing, findName, variant, brow
     if (p.distro) parts.push(p.release ? `${p.distro} ${p.release}` : p.distro);
     if (p.name) parts.push(p.version ? `${p.name} ${p.version}` : p.name);
     return parts.join(": ") + (p.url ? ` from ${p.url}` : "");
+  }
+
+  // packageKey is what a package's pages are searched for by
+  // (pkg:debian/coreutils), as repo.PackageKeys: "" without a name.
+  function packageKey(p) {
+    const n = (p.name || "").toLowerCase();
+    if (!n || /\s/.test(n)) return "";
+    return p.distro ? `${p.distro.toLowerCase()}/${n}` : n;
   }
 
   // publishedLabel is a "2022-06" date as "June 2022", as site.published.
@@ -228,7 +236,10 @@ export function createPageView({ el: app, base, listing, findName, variant, brow
     // Where it's from: its packages, and what made it.
     const g = doc.generator, made = g && (g.generated && !g.generated.startsWith("0001") ? g.generated.slice(0, 10) : "");
     const from = [
-      ...(ver.packages || []).map(p => html`<li>${packageLabel(p)}</li>`),
+      ...(ver.packages || []).map(p => {
+        const k = packageKey(p);
+        return html`<li>${k ? html`<a href="${searchURL(base)}?${new URLSearchParams({ q: "pkg:" + k })}" title="every page from it">${packageLabel(p)}</a>` : packageLabel(p)}</li>`;
+      }),
       g && html`<li>💖 ${which === "girl" ? "girlified" : "rewritten"} by ${g.model || g.backend || "a model"}${made && ` on ${made}`}</li>`,
     ].filter(Boolean);
     const provenance = from.length > 0 && html`<div class="provenance"><details><summary>📦 where this page comes from</summary><ul>${from}</ul></details></div>`;

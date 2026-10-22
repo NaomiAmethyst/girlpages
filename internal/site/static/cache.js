@@ -207,6 +207,18 @@ export class RepoCache {
     return text;
   }
 
+  // peek returns the parsed JSON of a file named after its hash, from the
+  // store if it's there, but without keeping it if it isn't: for reading
+  // many pages' text once (looking for a phrase), not to fill the store.
+  async peek(path) {
+    const text = (await this.store.get(path)) ?? await this.fetch(path);
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      throw new RepoError("broken", `${path}: ${e.message}`, { cause: e });
+    }
+  }
+
   // mutable files come straight from the store if they're there, while
   // they're refreshed in the background; otherwise from the network.
   // fresh asks the network first (giving up quickly if there's a copy).

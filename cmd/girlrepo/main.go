@@ -1022,15 +1022,22 @@ func (a *app) search(ctx context.Context, args []string) error {
 	if *ngrams {
 		sr.Mode = repo.ModeNgrams
 	}
-	hits, err := sr.Search(ctx, strings.Join(fs.Args(), " "), *limit)
+	r, err := sr.Find(ctx, strings.Join(fs.Args(), " "), "", *limit)
 	if err != nil {
 		return err
 	}
-	if len(hits) == 0 {
+	if r.Partial {
+		fmt.Fprintln(os.Stderr, "the words in quotes are in so many pages that only the likeliest were looked through")
+	}
+	if r.TooCommon {
+		fmt.Fprintln(os.Stderr, "every word in those quotes is in nearly every page, so there's nothing to go on 😭 add a rarer one?")
+		return nil
+	}
+	if len(r.Hits) == 0 {
 		fmt.Fprintln(os.Stderr, "nothing found, bestie 😭")
 		return nil
 	}
-	for _, h := range hits {
+	for _, h := range r.Hits {
 		fmt.Printf("%-28s %s\n", h.Name+" ("+h.Section+")", h.Description)
 	}
 	return nil

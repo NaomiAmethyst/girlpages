@@ -5,6 +5,7 @@ package repo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -67,7 +68,8 @@ const (
 )
 
 // Search finds up to limit pages for a query. Pages matching every word
-// come first; if none do, pages matching any word are returned.
+// come first; if none do, pages matching any word are returned. Phrases in
+// quotes and pkg: filters keep to pages with them (see ParseQuery).
 func (s *Searcher) Search(ctx context.Context, query string, limit int) ([]Hit, error) {
 	return s.SearchIn(ctx, query, "", limit)
 }
@@ -76,99 +78,363 @@ func (s *Searcher) Search(ctx context.Context, query string, limit int) ([]Hit, 
 // through for ones from that source.
 const maxFiltered = 2000
 
+// maxPhraseChecks is how many ranked pages a search for a phrase reads
+// the text of, looking for it: each is a file or two to fetch.
+const maxPhraseChecks = 500
+
+// phraseJobs is how many pages' text are read at once.
+const phraseJobs = 16
+
 // SearchIn is Search limited to pages from one source (a key such as
 // "debian" or "debian/trixie"; "" for all).
 func (s *Searcher) SearchIn(ctx context.Context, query, source string, limit int) ([]Hit, error) {
+	r, err := s.Find(ctx, query, source, limit)
+	if err != nil {
+		return nil, err
+	}
+	return r.Hits, nil
+}
+
+// Results are what Find found.
+type Results struct {
+	Hits []Hit
+	// Partial says a phrase's words are each in so many pages that only
+	// the pages they matter most in were looked through for it.
+	Partial bool
+	// TooCommon says the query is only phrases of words too common to
+	// search by (stopwords, and words nearly every page has).
+	TooCommon bool
+}
+
+// Find is SearchIn, saying how complete the search was.
+func (s *Searcher) Find(ctx context.Context, query, source string, limit int) (*Results, error) {
 	if err := s.load(ctx); err != nil {
 		return nil, err
 	}
-	terms := dedupe(SeriesTerms(Tokens(query), s.man))
-	whole := strings.ToLower(strings.TrimSpace(query))
-	if len(terms) == 0 && whole == "" {
-		return nil, nil
+	rk, err := s.rank(ctx, query)
+	if err != nil {
+		return nil, err
 	}
-
-	perTerm := make([]map[int]float64, len(terms))
-	for i, t := range terms {
-		m, err := s.term(ctx, t)
-		if err != nil {
+	out := &Results{Partial: rk.partial, TooCommon: rk.tooCommon}
+	max := len(rk.ids)
+	switch {
+	case len(rk.phrases) > 0:
+		max = min(max, maxPhraseChecks)
+		out.Partial = out.Partial || len(rk.ids) > maxPhraseChecks
+	case source != "":
+		max = min(max, maxFiltered)
+	}
+	// A batch at a time, each page's checked at once, kept in order.
+	batch := 1
+	if len(rk.phrases) > 0 {
+		batch = phraseJobs
+	}
+	for i := 0; i < max && (limit <= 0 || len(out.Hits) < limit); i += batch {
+		ids := rk.ids[i:min(i+batch, max)]
+		hits := make([]*Hit, len(ids))
+		errs := make([]error, len(ids))
+		var wg sync.WaitGroup
+		for j, r := range ids {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				hits[j], errs[j] = s.check(ctx, r, source, rk.phrases)
+			}()
+		}
+		wg.Wait()
+		if err := errors.Join(errs...); err != nil {
 			return nil, err
 		}
-		perTerm[i] = m
-	}
-	// The whole query as a page name ("git-commit", "[") is a bonus.
-	bonus := map[int]float64{}
-	if whole != "" && !strings.ContainsAny(whole, " \t") {
-		ps, err := s.postings(ctx, whole)
-		if err != nil {
-			return nil, err
-		}
-		for _, p := range ps {
-			addBest(bonus, p[0], float64(p[1]))
-		}
-	}
-
-	combine := func(all bool) map[int]float64 {
-		out := map[int]float64{}
-		for id, sc := range bonus {
-			out[id] = sc
-		}
-		seen := map[int]bool{}
-		for _, pt := range perTerm {
-			for id := range pt {
-				if seen[id] {
-					continue
-				}
-				seen[id] = true
-				total, n := 0.0, 0
-				for _, other := range perTerm {
-					if sc, ok := other[id]; ok {
-						total += sc
-						n++
-					}
-				}
-				if all && n < len(perTerm) {
-					continue
-				}
-				out[id] = total + bonus[id]
+		for _, h := range hits {
+			if h != nil && (limit <= 0 || len(out.Hits) < limit) {
+				out.Hits = append(out.Hits, *h)
 			}
 		}
-		return out
 	}
-	res := combine(true)
-	if len(res) == len(bonus) {
-		res = combine(false)
+	return out, nil
+}
+
+// check looks up a ranked page, giving its Hit if it's from source (if
+// that's not "") and has the phrases, nil if not.
+func (s *Searcher) check(ctx context.Context, r idScore, source string, phrases [][]string) (*Hit, error) {
+	d, err := s.doc(ctx, r.id)
+	if err != nil {
+		return nil, err
 	}
-	type idScore struct {
-		id    int
-		score float64
+	srcs := strings.Fields(d[3])
+	if source != "" && !contains(srcs, source) {
+		return nil, nil
 	}
-	ranked := make([]idScore, 0, len(res))
-	for id, sc := range res {
-		ranked = append(ranked, idScore{id, sc})
-	}
-	sort.Slice(ranked, func(i, j int) bool {
-		if ranked[i].score != ranked[j].score {
-			return ranked[i].score > ranked[j].score
-		}
-		return ranked[i].id < ranked[j].id
-	})
-	var hits []Hit
-	for i, r := range ranked {
-		if limit > 0 && len(hits) >= limit || source != "" && i >= maxFiltered {
-			break
-		}
-		d, err := s.doc(ctx, r.id)
-		if err != nil {
+	if len(phrases) > 0 {
+		ok, err := s.hasPhrases(ctx, d[0], d[1], phrases)
+		if err != nil || !ok {
 			return nil, err
 		}
-		srcs := strings.Fields(d[3])
-		if source != "" && !contains(srcs, source) {
+	}
+	return &Hit{Name: d[0], Section: d[1], Description: d[2], Sources: srcs, Score: r.score}, nil
+}
+
+type idScore struct {
+	id    int
+	score float64
+}
+
+// ranking is a query's pages, best first, before any are looked at: the
+// phrases are still to check in their text.
+type ranking struct {
+	ids                []idScore
+	phrases            [][]string
+	partial, tooCommon bool
+}
+
+// rank scores the pages for a query, best first.
+func (s *Searcher) rank(ctx context.Context, query string) (*ranking, error) {
+	q := ParseQuery(query)
+	rk := &ranking{phrases: q.Phrases}
+	terms := dedupe(SeriesTerms(Tokens(q.Words), s.man))
+	whole := strings.ToLower(q.Words)
+
+	// Pages a phrase could be in (nil: any), and from the packages asked
+	// for (nil: any).
+	var must map[int]float64
+	if len(q.Phrases) > 0 {
+		var err error
+		if must, rk.partial, err = s.phrasePages(ctx, q.Phrases); err != nil {
+			return nil, err
+		}
+	}
+	var pkgs map[int]bool
+	if len(q.Packages) > 0 {
+		pkgs = map[int]bool{}
+		for _, k := range q.Packages {
+			ps, err := s.postings(ctx, PackagePrefix+k)
+			if err != nil {
+				return nil, err
+			}
+			for _, p := range ps {
+				pkgs[p[0]] = true
+			}
+		}
+	}
+	// A package's pages are all listed, so with one, every page from it
+	// can be looked through for the phrases: they score by the phrases'
+	// words, but needn't be among the best pages for them.
+	scores := must
+	if pkgs != nil && rk.partial {
+		must, rk.partial = nil, false
+	}
+	allowed := func(id int) bool {
+		if must != nil {
+			if _, ok := must[id]; !ok {
+				return false
+			}
+		}
+		return pkgs == nil || pkgs[id]
+	}
+
+	res := map[int]float64{}
+	if len(terms) == 0 && whole == "" {
+		switch {
+		case must != nil:
+			for id, sc := range must {
+				if allowed(id) {
+					res[id] = sc
+				}
+			}
+		case pkgs != nil:
+			// Just a package: its pages, in the page table's order (by
+			// section, then name), or by a phrase's words.
+			for id := range pkgs {
+				res[id] = scores[id]
+			}
+		default:
+			rk.tooCommon = len(q.Phrases) > 0
+			return rk, nil
+		}
+	} else {
+		perTerm := make([]map[int]float64, len(terms))
+		for i, t := range terms {
+			m, err := s.term(ctx, t)
+			if err != nil {
+				return nil, err
+			}
+			perTerm[i] = m
+		}
+		// The whole query as a page name ("git-commit", "[") is a bonus.
+		bonus := map[int]float64{}
+		if whole != "" && !strings.ContainsAny(whole, " \t") {
+			ps, err := s.postings(ctx, whole)
+			if err != nil {
+				return nil, err
+			}
+			for _, p := range ps {
+				if allowed(p[0]) {
+					addBest(bonus, p[0], float64(p[1]))
+				}
+			}
+		}
+		combine := func(all bool) map[int]float64 {
+			out := map[int]float64{}
+			for id, sc := range bonus {
+				out[id] = sc + scores[id]
+			}
+			seen := map[int]bool{}
+			for _, pt := range perTerm {
+				for id := range pt {
+					if seen[id] {
+						continue
+					}
+					seen[id] = true
+					if !allowed(id) {
+						continue
+					}
+					total, n := 0.0, 0
+					for _, other := range perTerm {
+						if sc, ok := other[id]; ok {
+							total += sc
+							n++
+						}
+					}
+					if all && n < len(perTerm) {
+						continue
+					}
+					out[id] = total + bonus[id] + scores[id]
+				}
+			}
+			return out
+		}
+		res = combine(true)
+		if len(res) == len(bonus) {
+			res = combine(false)
+		}
+	}
+	rk.ids = make([]idScore, 0, len(res))
+	for id, sc := range res {
+		rk.ids = append(rk.ids, idScore{id, sc})
+	}
+	sort.Slice(rk.ids, func(i, j int) bool {
+		a, b := rk.ids[i], rk.ids[j]
+		if a.score != b.score {
+			return a.score > b.score
+		}
+		return a.id < b.id
+	})
+	return rk, nil
+}
+
+// phrasePages finds the pages phrases could be in, scored by their words:
+// those having every word of them the index can say where it is
+// (stopwords and words nearly every page has it can't). A word's postings
+// are its best maxPostings pages, so when there are fewer they're all of
+// them, and the pages having all those words are every page that could
+// have the phrases; if every word has more (partial), the pages having
+// most of them, of their best, are what can be looked through. nil means
+// any page could (no word can be searched by).
+func (s *Searcher) phrasePages(ctx context.Context, phrases [][]string) (map[int]float64, bool, error) {
+	common := map[string]bool{}
+	for _, w := range s.words.Common {
+		common[w] = true
+	}
+	var lists [][][2]int
+	seen := map[string]bool{}
+	for _, ph := range phrases {
+		for _, w := range ph {
+			if seen[w] || stopwords[w] || common[w] {
+				continue
+			}
+			seen[w] = true
+			ps, err := s.postings(ctx, w)
+			if err != nil {
+				return nil, false, err
+			}
+			if len(ps) == 0 {
+				return map[int]float64{}, false, nil
+			}
+			lists = append(lists, ps)
+		}
+	}
+	return phraseCandidates(lists)
+}
+
+// phraseCandidates is phrasePages' arithmetic, given each word's postings.
+func phraseCandidates(lists [][][2]int) (map[int]float64, bool, error) {
+	if len(lists) == 0 {
+		return nil, false, nil
+	}
+	score := map[int]float64{}
+	count := map[int]int{}
+	complete := 0
+	inAll := map[int]int{} // pages: how many complete lists have them
+	for _, ps := range lists {
+		whole := len(ps) < maxPostings
+		if whole {
+			complete++
+		}
+		for _, p := range ps {
+			score[p[0]] += float64(p[1])
+			count[p[0]]++
+			if whole {
+				inAll[p[0]]++
+			}
+		}
+	}
+	out := map[int]float64{}
+	if complete > 0 {
+		for id, n := range inAll {
+			if n == complete {
+				out[id] = score[id]
+			}
+		}
+		return out, false, nil
+	}
+	for id, n := range count {
+		if n == len(lists) {
+			out[id] = score[id]
+		}
+	}
+	if len(out) == 0 {
+		// None of the best pages for each word has them all: those with
+		// the most of them first.
+		for id, n := range count {
+			out[id] = score[id] * float64(n) / float64(len(lists))
+		}
+	}
+	return out, true, nil
+}
+
+// hasPhrases reports whether a page's text (any of its versions', as the
+// index has them all) has every phrase.
+func (s *Searcher) hasPhrases(ctx context.Context, name, section string, phrases [][]string) (bool, error) {
+	l, err := s.Client.Page(ctx, name, section)
+	if err != nil {
+		return false, err
+	}
+	var text strings.Builder
+	for _, v := range l.Versions {
+		variant := VariantMan
+		info, ok := v.Variants[variant]
+		if !ok {
+			variant = VariantGirl
+			if info, ok = v.Variants[variant]; !ok {
+				continue
+			}
+		}
+		doc, err := s.Client.VariantAt(ctx, v.Source, variant, info.SHA256)
+		if errors.Is(err, ErrNotFound) {
 			continue
 		}
-		hits = append(hits, Hit{Name: d[0], Section: d[1], Description: d[2], Sources: srcs, Score: r.score})
+		if err != nil {
+			return false, err
+		}
+		text.WriteString(doc.Text())
+		text.WriteString("\n\n")
 	}
-	return hits, nil
+	for _, ph := range phrases {
+		if !HasPhrase(text.String(), ph) {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // Named finds the pages called name (ignoring case), in man's order: by
@@ -400,7 +666,7 @@ func (s *Searcher) prefixWords(ctx context.Context, p string) ([]string, error) 
 		ws := sh.(*WordShard)
 		var keys []string
 		for w := range ws.Words {
-			if w != p && strings.HasPrefix(w, p) {
+			if w != p && strings.HasPrefix(w, p) && !strings.HasPrefix(w, PackagePrefix) {
 				keys = append(keys, w)
 			}
 		}

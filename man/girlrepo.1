@@ -585,7 +585,13 @@ for git repositories, each showing the version of every page that source
 has.
 .B /search/
 searches every page from every source, all of their versions' text, and can
-keep to one source; by words, or by parts of words.
+keep to one source; by words, or by parts of words, for phrases in double
+quotes, and within a package
+.RB ( pkg:coreutils
+or
+.BR pkg:debian/coreutils ,
+which on its own lists every page from it, as each page's "where this page
+comes from" links to).
 Without
 .B \-\-url
 there are no absolute URLs, so no canonical links, OpenGraph URLs or sitemap.
@@ -719,6 +725,10 @@ finds
 .BR mkdir ),
 as the website's "parts of words" does, rather than only the words they
 start.
+Words in double quotes are a phrase, which pages must have as it is (bar
+case and punctuation), and
+.BI pkg: name
+keeps to pages from a package, as on the website.
 .SS "archive \fIarchive\fR"
 Adds the website in
 .I dir

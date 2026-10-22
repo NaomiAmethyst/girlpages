@@ -6,7 +6,7 @@
 // algorithm as Searcher in internal/repo/search.go; keep them in step.
 
 import { repoCache, errorKind } from "./cache.js";
-import { shardsOf, rows, namePath } from "./format.js";
+import { shardsOf, rows, namePath, listingPath, variantPath } from "./format.js";
 import { browseURL, pageURL } from "./urls.js";
 import { chapter } from "./manual.js";
 import { sourceNav } from "./widgets.js";
@@ -20,6 +20,80 @@ const MAX_FUZZY_WORDS = 5;
 // In ngrams mode (see search.go), words a query word is inside of.
 const INFIX_WEIGHT = PREFIX_WEIGHT;
 const MAX_INFIX_WORDS = 100;
+
+// MAX_POSTINGS is how many pages the index lists per word (repo's
+// maxPostings): a word listing fewer is listed for every page with it.
+const MAX_POSTINGS = 400;
+// PACKAGE_PREFIX starts a package's key in the words index, as in Go.
+const PACKAGE_PREFIX = "pkg:";
+// STOPWORDS are left out of the index, as in Go's index.go.
+const STOPWORDS = new Set(`a an and are as at be but by for from has have if in into is it its
+  no not of on or so such that the their then there these they this to was were will with you your
+  can may must should which when where who also only than other any all each more most some`.split(/\s+/));
+
+// parseQuery is repo.ParseQuery: {words, phrases, packages}. Phrases are in
+// double quotes (an unclosed one runs to the end), as their tokens; a
+// package is pkg:name or package:name (or distro/name).
+export function parseQuery(q) {
+  const phrases = [], packages = [];
+  q = q.replace(/"([^"]*)("|$)/g, (_, p) => {
+    const ts = tokens(p);
+    if (ts.length) phrases.push(ts);
+    return " ";
+  });
+  q = q.replace(/(^|\s)(?:pkg|package):(\S+)/gi, (_m, _sp, k) => {
+    k = k.toLowerCase();
+    if (!packages.includes(k)) packages.push(k);
+    return " ";
+  });
+  return { words: q.trim(), phrases, packages };
+}
+
+// hasPhrase is repo.HasPhrase: whether text's tokens have phrase's in a
+// row, words man broke across lines with a hyphen found either way.
+export function hasPhrase(text, phrase) {
+  if (!phrase.length) return true;
+  if (inRow(tokens(text), phrase)) return true;
+  const joined = text.replace(/(\p{L})-\n\s*(\p{L})/gu, "$1$2");
+  return joined !== text && inRow(tokens(joined), phrase);
+}
+
+function inRow(words, phrase) {
+  outer: for (let i = 0; i + phrase.length <= words.length; i++) {
+    for (let j = 0; j < phrase.length; j++) if (words[i + j] !== phrase[j]) continue outer;
+    return true;
+  }
+  return false;
+}
+
+// phraseCandidates is repo's: given each searchable phrase word's postings
+// ([id, score] pairs), the pages the phrases could be in, scored, and
+// whether that's partial (every word too common to list every page). A
+// null set means any page could be.
+export function phraseCandidates(lists) {
+  if (!lists.length) return { pages: null, partial: false };
+  const score = new Map(), count = new Map(), inAll = new Map();
+  let complete = 0;
+  for (const ps of lists) {
+    const whole = ps.length < MAX_POSTINGS;
+    if (whole) complete++;
+    for (const [id, sc] of ps) {
+      score.set(id, (score.get(id) || 0) + sc);
+      count.set(id, (count.get(id) || 0) + 1);
+      if (whole) inAll.set(id, (inAll.get(id) || 0) + 1);
+    }
+  }
+  const pages = new Map();
+  if (complete) {
+    for (const [id, n] of inAll) if (n === complete) pages.set(id, score.get(id));
+    return { pages, partial: false };
+  }
+  for (const [id, n] of count) if (n === lists.length) pages.set(id, score.get(id));
+  if (!pages.size) {
+    for (const [id, n] of count) pages.set(id, score.get(id) * n / lists.length);
+  }
+  return { pages, partial: true };
+}
 
 // Search modes, as search.go's: words, or ngrams (parts of words too).
 export const MODES = ["words", "ngrams"];
@@ -108,6 +182,16 @@ export class Searcher {
     this.names = [];
     /** @type {any[]} */
     this.docs = [];
+    // Words the index lists only some pages for (see repo.BuiltIndex.Common).
+    /** @type {string[]} */
+    this.wordsCommon = [];
+    // What the last rank left to check, and how it went (see rank).
+    /** @type {string[][]} */
+    this.phrases = [];
+    this.partial = false;
+    this.tooCommon = false;
+    this.missedPhrases = false;
+    this.missedTypos = false;
     // The page table's shards, as they're read.
     /** @type {Map<string, Promise<{first: number, rows: any[]}>>} */
     this.tables = new Map();
@@ -127,6 +211,7 @@ export class Searcher {
           this.get(`index/docs/manifest-${ix.docs}.json`),
         ]);
         this.words = shardsOf(words);
+        this.wordsCommon = words.common || [];
         this.grams = shardsOf(grams);
         this.names = shardsOf(names);
         this.docs = shardsOf(docs);
@@ -204,7 +289,7 @@ export class Searcher {
     for (const r of this.words) {
       if (cmp(r.last, p) < 0 || (!r.first.startsWith(p) && cmp(r.first, p) > 0)) continue;
       const sh = await this.shard("words", r.sha256);
-      const keys = Object.keys(sh.words).filter(w => w !== p && w.startsWith(p)).sort(cmp);
+      const keys = Object.keys(sh.words).filter(w => w !== p && w.startsWith(p) && !w.startsWith(PACKAGE_PREFIX)).sort(cmp);
       out.push(...keys);
       if (out.length >= MAX_PREFIX_WORDS) return out.slice(0, MAX_PREFIX_WORDS);
     }
@@ -309,11 +394,12 @@ export class Searcher {
   // given, to hits it resolves true for.
   async search(query, limit = 50, source = "", accept = null, mode = "words") {
     const ranked = await this.rank(query, mode);
+    accept = this.withPhrases(accept);
     if (!source && !accept) {
       const top = limit > 0 ? ranked.slice(0, limit) : ranked;
       return Promise.all(top.map(async ([id, score]) => hit(await this.doc(id), score)));
     }
-    return (await this.filtered(ranked, 0, limit, source, accept)).hits;
+    return (await this.filtered(ranked, 0, limit, source, accept, this.maxChecks())).hits;
   }
 
   // filtered walks down the ranking from start, a batch at a time, for up
@@ -321,61 +407,160 @@ export class Searcher {
   // {hits, next}: where to go on from (-1 at the end).
   /**
    * @param {any[]} ranked @param {number} start @param {number} limit @param {string} [source]
-   * @param {((h: any) => boolean | Promise<boolean>) | null} [accept]
+   * @param {((h: any) => boolean | Promise<boolean>) | null} [accept] @param {number} [max]
    */
-  async filtered(ranked, start, limit, source = "", accept = null) {
+  async filtered(ranked, start, limit, source = "", accept = null, max = MAX_FILTERED) {
     const hits = [];
     let i = start;
-    for (; i < ranked.length && i < MAX_FILTERED && (limit <= 0 || hits.length < limit); i += 64) {
-      const batch = ranked.slice(i, Math.min(i + 64, MAX_FILTERED));
+    for (; i < ranked.length && i < max && (limit <= 0 || hits.length < limit); i += 64) {
+      const batch = ranked.slice(i, Math.min(i + 64, max));
       const docs = await Promise.all(batch.map(([id]) => this.doc(id)));
       const ok = await Promise.all(docs.map(d => (!source || d[3].split(" ").includes(source)) && (!accept || accept(hit(d, 0)))));
       docs.forEach((d, j) => {
         if ((limit <= 0 || hits.length < limit) && ok[j]) hits.push(hit(d, batch[j][1]));
       });
     }
-    return { hits, next: i < ranked.length && i < MAX_FILTERED ? i : -1 };
+    return { hits, next: i < ranked.length && i < max ? i : -1 };
   }
 
-  // rank finds the pages for a query, best first, as [doc id, score]
-  // pairs: everything but what doc says about each.
+  // maxChecks is how far down the last ranking filtered should look: not
+  // so far, when each page's text is to be read for a phrase.
+  maxChecks() { return this.phrases.length ? MAX_PHRASE_CHECKS : MAX_FILTERED; }
+
   // rank scores pages for a query, best first, as [id, score]s; mode is
-  // words or ngrams.
+  // words or ngrams. It leaves what's still to check in this.phrases (the
+  // query's phrases, to look for in the pages' text: see withPhrases),
+  // and says in this.partial whether they were looked for in only some
+  // pages, and in this.tooCommon whether nothing in the query could be.
   async rank(query, mode = "words") {
     this.missedTypos = false;
     await this.load();
-    const terms = [...new Set(seriesTerms(tokens(query), this.manifest))];
-    const whole = query.trim().toLowerCase();
-    if (!terms.length && !whole) return [];
-    const perTerm = await Promise.all(terms.map(t => this.term(t, mode)));
-    const bonus = new Map();
-    if (whole && !/[ \t]/.test(whole)) {
-      for (const [id, sc] of await this.postings(whole)) addBest(bonus, id, sc);
+    const q = parseQuery(query);
+    this.phrases = q.phrases;
+    this.partial = false;
+    this.tooCommon = false;
+    const terms = [...new Set(seriesTerms(tokens(q.words), this.manifest))];
+    const whole = q.words.toLowerCase();
+
+    // Pages a phrase could be in, and from the packages asked for (null:
+    // any).
+    /** @type {Map<number, number> | null} */
+    let must = null;
+    if (q.phrases.length) {
+      const r = await this.phrasePages(q.phrases);
+      must = r.pages;
+      this.partial = r.partial;
     }
-    const combine = (all) => {
-      const out = new Map(bonus);
-      const seen = new Set();
-      for (const pt of perTerm) {
-        for (const id of pt.keys()) {
-          if (seen.has(id)) continue;
-          seen.add(id);
-          let total = 0, n = 0;
-          for (const other of perTerm) {
-            if (other.has(id)) { total += other.get(id); n++; }
-          }
-          if (all && n < perTerm.length) continue;
-          out.set(id, total + (bonus.get(id) || 0));
-        }
+    /** @type {Set<number> | null} */
+    let pkgs = null;
+    if (q.packages.length) {
+      pkgs = new Set();
+      for (const k of q.packages) for (const [id] of await this.postings(PACKAGE_PREFIX + k)) pkgs.add(id);
+    }
+    // A package's pages are all listed, so with one, every page from it
+    // can be looked through for the phrases, as in Go.
+    const scores = must;
+    if (pkgs && this.partial) {
+      must = null;
+      this.partial = false;
+    }
+    const allowed = (id) => (!must || must.has(id)) && (!pkgs || pkgs.has(id));
+    const extra = (id) => (scores && scores.get(id)) || 0;
+
+    let res = new Map();
+    if (!terms.length && !whole) {
+      if (must) {
+        for (const [id, sc] of must) if (allowed(id)) res.set(id, sc);
+      } else if (pkgs) {
+        // Just a package: its pages, in the page table's order.
+        for (const id of pkgs) res.set(id, extra(id));
+      } else {
+        this.tooCommon = q.phrases.length > 0;
+        return [];
       }
-      return out;
-    };
-    let res = combine(true);
-    if (res.size === bonus.size) res = combine(false);
+    } else {
+      const perTerm = await Promise.all(terms.map(t => this.term(t, mode)));
+      const bonus = new Map();
+      if (whole && !/[ \t]/.test(whole)) {
+        for (const [id, sc] of await this.postings(whole)) if (allowed(id)) addBest(bonus, id, sc);
+      }
+      const combine = (all) => {
+        const out = new Map();
+        for (const [id, sc] of bonus) out.set(id, sc + extra(id));
+        const seen = new Set();
+        for (const pt of perTerm) {
+          for (const id of pt.keys()) {
+            if (seen.has(id)) continue;
+            seen.add(id);
+            if (!allowed(id)) continue;
+            let total = 0, n = 0;
+            for (const other of perTerm) {
+              if (other.has(id)) { total += other.get(id); n++; }
+            }
+            if (all && n < perTerm.length) continue;
+            out.set(id, total + (bonus.get(id) || 0) + extra(id));
+          }
+        }
+        return out;
+      };
+      res = combine(true);
+      if (res.size === bonus.size) res = combine(false);
+    }
+    if (q.phrases.length && res.size > MAX_PHRASE_CHECKS) this.partial = true;
     return [...res].sort((a, b) => b[1] - a[1] || a[0] - b[0]);
+  }
+
+  // phrasePages is repo's: the pages phrases could be in, by the words of
+  // them the index can say where they are.
+  async phrasePages(phrases) {
+    const common = new Set(this.wordsCommon || []);
+    const words = [...new Set(phrases.flat())].filter(w => !STOPWORDS.has(w) && !common.has(w));
+    const lists = await Promise.all(words.map(w => this.postings(w)));
+    if (lists.some(ps => !ps.length)) return { pages: new Map(), partial: false };
+    return phraseCandidates(lists);
+  }
+
+  // hasPhrases reports whether a page's text (any version's) has every
+  // phrase. The text is read without keeping it, unless it's kept already.
+  async hasPhrases(name, sec, phrases) {
+    const ptr = await this.cache.get(namePath(name, sec));
+    const l = await this.cache.get(listingPath(ptr.sha256));
+    const texts = await Promise.all((l.versions || []).map(async v => {
+      const vs = v.variants || {};
+      const which = vs.man ? "man" : vs.girl ? "girl" : "";
+      if (!which) return "";
+      const path = variantPath(v.source, which, vs[which].sha256);
+      const doc = this.cache.peek ? await this.cache.peek(path) : await this.cache.get(path);
+      return (doc.sections || []).map(s => (s.heading || "") + "\n" + (s.body || "")).join("");
+    }));
+    const text = texts.join("\n\n");
+    return phrases.every(p => hasPhrase(text, p));
+  }
+
+  // withPhrases is accept (a hit filter, or null) also keeping to hits
+  // with the last ranked query's phrases. A page that can't be read (being
+  // offline) is left out, and said in this.missedPhrases.
+  withPhrases(accept) {
+    const phrases = this.phrases || [];
+    if (!phrases.length) return accept;
+    this.missedPhrases = false;
+    return async (h) => {
+      if (accept && !(await accept(h))) return false;
+      try {
+        return await this.hasPhrases(h.name, h.section, phrases);
+      } catch (e) {
+        if (errorKind(e) === "offline") this.missedPhrases = true;
+        else if (errorKind(e) !== "missing") throw e;
+        return false;
+      }
+    };
   }
 }
 
 const MAX_FILTERED = 2000;
+// MAX_PHRASE_CHECKS is how many pages' text a phrase is looked for in, as
+// repo's maxPhraseChecks.
+const MAX_PHRASE_CHECKS = 500;
 
 // seriesTerms is repo.SeriesTerms: "rfc 9110" is searched as rfc9110.
 function seriesTerms(terms, m) {
@@ -503,11 +688,13 @@ export async function searchPage(box, params, { current = () => true, signal = n
   }
   if (!q.trim()) return;
   const where = src ? ` in ${src.replace("/", " ")}` : "";
+  // The query as it's shown: in quotes, unless it has its own.
+  const said = q.includes('"') ? q : `“${q}”`;
   if (current()) document.title = `${q}${where} · search · girlpages 💅`;
   status.textContent = "looking… 🔎";
   const saved = savedOnly ? " saved" : "";
   try {
-    const accept = savedOnly ? (h) => s.cache.hasPage(h.name, h.section, src) : null;
+    const keepSaved = savedOnly ? (h) => s.cache.hasPage(h.name, h.section, src) : null;
     s.prefetchNames().catch(() => {});
     const direct = await directPage(q, s).catch(() => null);
     if (direct && current()) {
@@ -515,10 +702,20 @@ export async function searchPage(box, params, { current = () => true, signal = n
     }
     const ranked = await s.rank(q, mode);
     if (!current()) return;
+    // Phrases in quotes are looked for in each page's text as it comes.
+    const accept = s.withPhrases(keepSaved);
     list.replaceChildren();
     const typos = () => (!s.missedTypos ? "" : mode === "ngrams"
       ? " (typo matching isn't saved, so it's whole words only)" : " (typo matching isn't saved, so typos won't be caught)");
-    const none = () => { status.textContent = `nothing${saved} for “${q}”${where}, bestie 😭 try another word?${typos()}`; };
+    // What a phrase search couldn't do.
+    const notes = () => typos()
+      + (s.partial ? " (the words in quotes are in so many pages that only the likeliest were looked through)" : "")
+      + (s.missedPhrases ? " (some pages aren't saved, so they couldn't be looked through offline)" : "");
+    const none = () => {
+      status.textContent = s.tooCommon
+        ? `every word in those quotes is in nearly every page, so there's nothing to go on 😭 add a rarer one?`
+        : `nothing${saved} for ${said}${where}, bestie 😭 try another word?${notes()}`;
+    };
     if (!ranked.length) return none();
     const plural = (n) => `${n.toLocaleString()}${saved} page${n === 1 ? "" : "s"}`;
     // Results show a screenful at a time, each as soon as what it says
@@ -526,8 +723,8 @@ export async function searchPage(box, params, { current = () => true, signal = n
     // so the first appear long before the rest would have.
     const filter = Boolean(src || accept);
     let shown = 0, next = 0, more = true, busy = false;
-    status.textContent = filter ? `looking through ${plural(ranked.length).replace(saved, "")} for “${q}”${where}… 🔎${typos()}`
-      : `${plural(ranked.length)} for “${q}”${where} ✨${typos()}`;
+    status.textContent = filter ? `looking through ${plural(Math.min(ranked.length, s.maxChecks())).replace(saved, "")} for ${said}${where}… 🔎${notes()}`
+      : `${plural(ranked.length)} for ${said}${where} ✨${typos()}`;
     const row = () => {
       const li = document.createElement("li");
       li.className = "loading";
@@ -572,13 +769,13 @@ export async function searchPage(box, params, { current = () => true, signal = n
           }));
           shown += batch.length;
         } else {
-          const r = await s.filtered(ranked, next, PAGE, src, accept);
+          const r = await s.filtered(ranked, next, PAGE, src, accept, s.maxChecks());
           if (!current()) return;
           for (const h of r.hits) fill(row(), h);
           shown += r.hits.length;
           next = r.next;
           more = next >= 0;
-          status.textContent = shown ? `${more ? "the top " : ""}${plural(shown)} for “${q}”${where} ✨${typos()}` : "";
+          status.textContent = shown ? `${more ? "the top " : ""}${plural(shown)} for ${said}${where} ✨${notes()}` : "";
           if (!shown && !more) none();
         }
       } finally {

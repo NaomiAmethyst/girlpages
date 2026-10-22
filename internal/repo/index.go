@@ -157,6 +157,8 @@ type IndexDoc struct {
 	// Sources are the keys of the sources the page comes from, for
 	// searching within one.
 	Sources []string
+	// Packages are its PackageKeys, for keeping to a package.
+	Packages []string
 	// Body is the page's text (the original, not the girly one: it's what
 	// people search for).
 	Body string
@@ -169,6 +171,10 @@ type BuiltIndex struct {
 	WordRanges []ShardRange // SHA256 left for the writer
 	Grams      []GramShard
 	GramRanges []ShardRange
+	// Common are the words in so many pages' text that only pages with
+	// them in their names or descriptions are listed: a phrase search
+	// can't go by them.
+	Common []string
 }
 
 var stopwords = map[string]bool{}
@@ -250,6 +256,11 @@ func BuildIndex(docs []IndexDoc) *BuiltIndex {
 			scores[t] += min(s, scoreBodyMax)
 			flags[t] |= inBody
 		}
+		// Packages are filters, not scores: every page from one is listed,
+		// whatever its score.
+		for _, k := range d.Packages {
+			scores[PackagePrefix+k] = 1
+		}
 		out := make([][]term, parts)
 		for t, s := range scores {
 			p := partOf(t)
@@ -268,6 +279,7 @@ func BuildIndex(docs []IndexDoc) *BuiltIndex {
 		df         int
 	}
 	words := make([][]wordEntry, parts)
+	common := make([][]string, parts)
 	gramsOut := make([][][]gramWord, parts) // word part → gram part → …
 	limit := int(commonBody * float64(len(docs)))
 	parallel(parts, func(p int) {
@@ -295,6 +307,7 @@ func BuildIndex(docs []IndexDoc) *BuiltIndex {
 				if df <= limit {
 					continue
 				}
+				common[p] = append(common[p], t)
 				ps := postings[t][:0]
 				for _, p := range postings[t] {
 					if p.score > scoreBodyMax {
@@ -324,7 +337,7 @@ func BuildIndex(docs []IndexDoc) *BuiltIndex {
 				}
 				return ps[i].doc < ps[j].doc
 			})
-			if len(ps) > maxPostings {
+			if len(ps) > maxPostings && !strings.HasPrefix(t, PackagePrefix) {
 				ps = ps[:maxPostings]
 				postings[t] = ps
 			}
@@ -377,7 +390,8 @@ func BuildIndex(docs []IndexDoc) *BuiltIndex {
 	})
 	gramsOut = nil
 
-	bi := &BuiltIndex{}
+	bi := &BuiltIndex{Common: slices.Concat(common...)}
+	slices.Sort(bi.Common)
 
 	allWords := slices.Concat(words...)
 	sort.Slice(allWords, func(i, j int) bool { return allWords[i].word < allWords[j].word })

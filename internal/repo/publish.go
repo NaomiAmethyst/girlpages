@@ -112,7 +112,7 @@ func (s *Store) PublishContext(ctx context.Context, pages []PageRef) (*Manifest,
 		p := pages[i]
 		keys, _ := p.Listing.SourceKeys()
 		d := IndexDoc{ID: ids[i], Name: p.Pointer.Name, Section: p.Pointer.Section, Description: ShortDescription(p.Current().Description),
-			Sources: keys}
+			Sources: keys, Packages: PackageKeys(p.Listing)}
 		var body strings.Builder
 		descs := map[string]bool{d.Description: true}
 		for _, v := range p.Listing.Versions {
@@ -235,10 +235,10 @@ func (s *Store) PublishContext(ctx context.Context, pages []PageRef) (*Manifest,
 	}
 	s.counter("writing the search index", 0)
 	var err error
-	if m.Index.Words, err = s.writeShards("words", bi.WordRanges, func(i int) any { return &bi.Words[i] }); err != nil {
+	if m.Index.Words, err = s.writeShards("words", bi.WordRanges, bi.Common, func(i int) any { return &bi.Words[i] }); err != nil {
 		return nil, err
 	}
-	if m.Index.Grams, err = s.writeShards("grams", bi.GramRanges, func(i int) any { return &bi.Grams[i] }); err != nil {
+	if m.Index.Grams, err = s.writeShards("grams", bi.GramRanges, nil, func(i int) any { return &bi.Grams[i] }); err != nil {
 		return nil, err
 	}
 	if m.Index.Names, m.Index.Docs, err = s.writePageTable(docs, count); err != nil {
@@ -417,8 +417,8 @@ func (s *Store) writeVariantIndexes(pages []PageRef) (map[string]string, error) 
 	return out, nil
 }
 
-func (s *Store) writeShards(kind string, ranges []ShardRange, shard func(int) any) (string, error) {
-	sm := ShardManifest{Format: Format, Shards: make([]ShardRange, len(ranges))}
+func (s *Store) writeShards(kind string, ranges []ShardRange, common []string, shard func(int) any) (string, error) {
+	sm := ShardManifest{Format: Format, Shards: make([]ShardRange, len(ranges)), Common: common}
 	errs := make([]error, len(ranges))
 	parallel(len(ranges), func(i int) {
 		r := ranges[i]

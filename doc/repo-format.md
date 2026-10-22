@@ -617,10 +617,10 @@ An unused id has the name `""`.
 [shard manifest](#variant-indexes) of word ranges, its shards small (about
 64 KB: a search fetches the ones its words are in); each
 `index/words/shard-ab/<sha>.json` maps words to postings, doc id and score
-in turn, best first (at most 400 per word):
+in turn, best first (at most 400 per word, but every page for a package):
 
 ```json
-{"format": 1, "words": {"directory": [4120, 140, 5121, 61, …], …}}
+{"format": 1, "words": {"directory": [4120, 140, 5121, 61, …], "pkg:coreutils": [12, 1, 15, 1, …], …}}
 ```
 
 Words are *tokens*: runs of Unicode letters, decimal digits and `_`,
@@ -634,10 +634,12 @@ lower-cased, of 2 to 40 characters. A page's score for a word adds up:
 | A token of the name without a version number stuck on its end (`libssl` for `libssl3` in `libssl3-dev`), as above | 100 |
 | A token of the description (not a stopword) | 60 |
 | A token of the text (not a stopword) | 1 + 4 × log₂(times it appears), at most 20 |
+| `pkg:` and the name of a package it's from, and `pkg:` and its distribution's name for it (`pkg:coreutils`, `pkg:debian/coreutils`), lower-cased | 1, every page listed |
 
 Words of the text that are in more than 30% of pages (with at least 20
 pages) only keep postings that score more than 20 (from the name or
-description). Stopwords: `a an and are as at be but by for from has have if
+description); the manifest lists them, as `"common": ["about", …]`, as a
+phrase can't be searched for by them. Stopwords: `a an and are as at be but by for from has have if
 in into is it its no not of on or so such that the their then there these
 they this to was were will with you your can may must should which when
 where who also only than other any all each more most some`.
@@ -676,6 +678,27 @@ scores are only advice):
    and that score added (this finds `git-commit`).
 4. Order by score, then doc id. To keep to one source, skip pages without
    it among their source keys (looking at most 2000 pages down).
+
+A query can have **phrases**, in double quotes (an unclosed one runs to
+the end), and **packages**, `pkg:name` or `package:name` (`name` or
+`distro/name`), which are taken out of it before the rest is searched as
+above. A package keeps to pages in its postings (any of them, for more
+than one); on its own, it lists them all, in doc id order. A phrase keeps
+to pages whose text has its tokens in a row:
+
+1. Its tokens but stopwords and the manifest's common words are looked up.
+   One with no postings means no page has the phrase. Those with fewer
+   than 400 are every page with them, so the pages in all of those are
+   the candidates; if every one has 400 (so isn't every page with it), the
+   pages in all of them are, or failing that the pages in any, scored by
+   how many they're in: say the search is *partial*. With no tokens left,
+   any page is a candidate if the rest of the query finds it; if there is
+   no rest, nothing can be found.
+2. Candidates' scores add their tokens' postings' scores to the rest's.
+3. Going down the order (at most 2000 pages), each page's text (every
+   version's: the man variant, or the girl one without) is read, and kept
+   if its tokens have every phrase's in a row (also with words broken
+   across lines with a hyphen joined).
 
 The website shows the count at once, and the results a screenful at a
 time, each named as soon as its names shard is in and described when its

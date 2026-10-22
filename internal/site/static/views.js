@@ -99,7 +99,7 @@ export function createViews({ el: app, base, cache, manifest, browse, listingURL
     nav.setTitle("search · girlpages 💅");
     nav.render(html`<div class="card" id="search" data-repo="${app.dataset.repo}" data-base="${base}">
       <div class="crumbs"><a href="${base}">home</a> › search</div>
-      <div class="pagehead"><h1>🔎 search</h1><p class="sub" id="search-status">type something up there, bestie</p>
+      <div class="pagehead"><h1>🔎 search</h1><p class="sub" id="search-status">type something up there, bestie: “in quotes” for a phrase, pkg:coreutils for a package’s pages</p>
       ${"caches" in globalThis && html`<p class="save"><button type="button" class="pill" data-save-search="words"></button><button type="button" class="pill" data-save-search="typos"></button><a class="pill" id="search-saved" hidden></a></p>`}</div>
       <nav class="chips modes" id="search-mode" aria-label="How words match"></nav>
       <nav class="chips sources" id="search-sources" aria-label="Search within a source"></nav><ul class="pages" id="search-results"></ul></div>`);

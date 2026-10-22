@@ -10,7 +10,7 @@
 {{end}}<div class="content{{if not .Girlified}} reflowed{{end}}">
 {{.Body}}
 </div>
-{{if or .Packages .Model}}<div class="provenance"><details><summary>📦 where this page comes from</summary><ul>{{range .Packages}}<li>{{.}}</li>{{end}}{{if .Model}}<li>💖 girlified by {{.Model}}{{if .Modified}} on <time datetime="{{.Modified}}">{{.Modified}}</time>{{end}}</li>{{end}}</ul></details></div>{{end}}
+{{if or .Packages .Model}}<div class="provenance"><details><summary>📦 where this page comes from</summary><ul>{{range .Packages}}<li>{{if .URL}}<a href="{{.URL}}" rel="nofollow" title="every page from it">{{.Label}}</a>{{else}}{{.Label}}{{end}}</li>{{end}}{{if .Model}}<li>💖 girlified by {{.Model}}{{if .Modified}} on <time datetime="{{.Modified}}">{{.Modified}}</time>{{end}}</li>{{end}}</ul></details></div>{{end}}
 </article>
 {{if .TOC}}<nav class="toc card" aria-label="Contents"><h2>✨ contents</h2><ul>
 {{range .TOC}}<li{{if eq .Level 2}} class="sub"{{end}}><a href="#{{.ID}}">{{.Text}}</a></li>

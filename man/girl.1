@@ -271,7 +271,12 @@ search the repository rather than the system's
 database:
 .B \-k
 searches for each argument, by the words in pages' names, descriptions and
-text (a quoted argument of several words finds pages with all of them first).
+text (a quoted argument of several words finds pages with all of them first;
+double quotes inside one make a phrase, which pages must have as it is, as in
+.BR "girl \-k \(aq\(dqmultiple urls\(dq\(aq" ,
+and
+.BI pkg: name
+keeps to pages from a package).
 If the latest version isn't girlified yet, its original is shown, saying
 which version is, if any.
 .TP

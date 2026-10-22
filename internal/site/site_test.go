@@ -323,7 +323,12 @@ func TestSearchJS(t *testing.T) {
 		{"lists page", "", ""}, {"filler", "arch/rolling", ""}, {"filler", "arch", ""}, {"filler", "debian/trixie", ""}, {"ls", "arch", ""},
 		// Parts of words.
 		{"ill", "", "ngrams"}, {"ommit", "", "ngrams"}, {"rintf", "", "ngrams"}, {"list", "", "ngrams"}, {"ls", "", "ngrams"},
-		{"ectory cont", "", "ngrams"}, {"ill", "arch", "ngrams"}, {"ectory", "", ""}}
+		{"ectory cont", "", "ngrams"}, {"ill", "arch", "ngrams"}, {"ectory", "", ""},
+		// Phrases and packages.
+		{`"directory contents"`, "", ""}, {`"contents directory"`, "", ""}, {`"record changes" commit`, "", ""},
+		{`filler03 "filler page about"`, "arch", ""}, {`"page about lists" pkg:x`, "", ""}, {`"the and"`, "", ""},
+		{"pkg:x", "", ""}, {"pkg:arch/x", "", ""}, {"pkg:debian/printf", "", ""}, {"pkg:x filler06", "", ""}, {"pkg:x filler07", "", ""},
+		{`pkg:ls "list directory"`, "", "ngrams"}}
 	sr := &repo.Searcher{Client: repo.NewClient(srv.URL+"/repo", 5*time.Second)}
 	var want []string
 	for _, q := range queries {
@@ -346,6 +351,18 @@ func TestSearchJS(t *testing.T) {
 	if !strings.Contains(want[19], "filler") || !strings.Contains(want[20], "git-commit(1)") || !strings.Contains(want[21], "printf") ||
 		want[26] != "ectory@/: " {
 		t.Fatalf("ngrams found the wrong things: %q", want[19:])
+	}
+
+	// Phrases are looked for in pages' text; packages keep to theirs.
+	for i, w := range []string{
+		`"directory contents"@/: ls(1)`, `"contents directory"@/: `, `"record changes" commit@/: git-commit(1)`,
+		`filler03 "filler page about"@arch/: filler03(3)`, `"page about lists" pkg:x@/: filler00(3)`, `"the and"@/: `,
+		`pkg:x@/: filler00(3)`, `pkg:arch/x@/: filler00(3)`, `pkg:debian/printf@/: printf(3)`, `pkg:x filler06@/: filler06(3)`, `pkg:x filler07@/: `,
+		`pkg:ls "list directory"@/ngrams: ls(1)`,
+	} {
+		if g := want[27+i]; !strings.HasPrefix(g, w) {
+			t.Errorf("Go search: %s, want it to start %s", g, w)
+		}
 	}
 
 	qs, _ := json.Marshal(queries)

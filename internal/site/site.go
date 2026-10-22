@@ -347,7 +347,7 @@ type pageView struct {
 	TOC             []render.Heading
 	Girlified       bool
 	Model, Modified string
-	Packages        []string
+	Packages        []chip // each linking to a search for its pages
 	// In lists the sources this version is in, each linking to the page as
 	// that source has it; Versions is how many versions there are.
 	In []chip
@@ -991,7 +991,7 @@ func (b *builder) page(p repo.PageRef) error {
 		pv.Published = published(ver.Packages[0].Version)
 	}
 	for _, pk := range ver.Packages {
-		pv.Packages = append(pv.Packages, pk.String())
+		pv.Packages = append(pv.Packages, chip{Label: pk.String(), URL: b.packageURL(pk)})
 	}
 	for _, src := range sourcesIn(ver) {
 		pv.In = append(pv.In, chip{Label: src.Label(), URL: b.browseURL(src.Key(), sec, name)})
@@ -1053,6 +1053,19 @@ func (b *builder) page(p repo.PageRef) error {
 	}
 	v.JSONLD = b.ldArticle(ver, pv, v, modified)
 	return b.render(u, "page", v)
+}
+
+// packageURL is the search for a package's pages (pkg:debian/coreutils),
+// or "" for a package without a name.
+func (b *builder) packageURL(p repo.Package) string {
+	k := strings.ToLower(p.Name)
+	if k == "" || strings.ContainsAny(k, " \t\n") {
+		return ""
+	}
+	if p.Distro != "" {
+		k = strings.ToLower(p.Distro) + "/" + k
+	}
+	return b.o.Base + "search/?" + url.Values{"q": {repo.PackagePrefix + k}}.Encode()
 }
 
 // sourcesIn lists the distribution releases (or upstream) a version came

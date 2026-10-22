@@ -329,6 +329,10 @@ type Generator struct {
 type ShardManifest struct {
 	Format int    `json:"format"`
 	Shards Shards `json:"shards"`
+	// Common is, for the words index, the words in so many pages' text
+	// that pages with them only there aren't listed (see
+	// BuiltIndex.Common).
+	Common []string `json:"common,omitempty"`
 }
 
 // ShardRange is one shard in a ShardManifest.
