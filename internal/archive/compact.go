@@ -228,7 +228,7 @@ func (w *tableWriter) add(path string, blobs [4]Blob) error {
 	} else {
 		w.t.restarts = append(w.t.restarts, uint32(len(w.buf)))
 	}
-	if len(w.buf) > 1<<32-1<<20 {
+	if uint64(len(w.buf)) > 1<<32-1<<20 {
 		return fmt.Errorf("%w: too big to keep", errBadIndex)
 	}
 	w.buf = binary.AppendUvarint(w.buf, uint64(shared))

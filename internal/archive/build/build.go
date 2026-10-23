@@ -21,10 +21,10 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/NaomiAmethyst/girlpages/internal/archive"
+	"github.com/NaomiAmethyst/girlpages/internal/flock"
 	"github.com/NaomiAmethyst/girlpages/internal/precompress"
 )
 
@@ -912,7 +912,7 @@ func lockFile(path string) (func(), error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+	if err := flock.Lock(f); err != nil {
 		f.Close()
 		return nil, err
 	}

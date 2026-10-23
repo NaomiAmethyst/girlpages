@@ -19,8 +19,9 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
+
+	"github.com/NaomiAmethyst/girlpages/internal/flock"
 )
 
 // Store is a repository on the local disk, for building and publishing.
@@ -226,7 +227,7 @@ func LockFile(path string) (func(), error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+	if err := flock.Lock(f); err != nil {
 		f.Close()
 		return nil, err
 	}
