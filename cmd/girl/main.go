@@ -50,17 +50,17 @@ const (
 func main() { os.Exit(run(os.Args[1:])) }
 
 type flags struct {
-	all, apropos, whatis, where, local                     bool
-	sections, manPath, locale, pager, configFile           string
-	help, version                                          bool
-	bulk, update, force, dryRun, prune, quiet              bool
-	noWait, noBatch, reprompt                              bool
-	jobs, limit                                            int
-	refresh, noCache, cachedOnly, raw, doctor, html, serve bool
-	color, backend, model, listen, repo, batch, provider   string
-	importSrc, exportDir                                   string
-	remote, versions, ngrams                               bool
-	pageVersion, variant                                   string
+	all, apropos, whatis, where, local                               bool
+	sections, manPath, locale, pager, configFile                     string
+	help, version                                                    bool
+	bulk, update, force, dryRun, prune, quiet                        bool
+	noWait, noBatch, reprompt                                        bool
+	jobs, limit                                                      int
+	refresh, noCache, cachedOnly, raw, markdown, doctor, html, serve bool
+	color, backend, model, listen, repo, batch, provider             string
+	importSrc, exportDir                                             string
+	remote, versions, ngrams                                         bool
+	pageVersion, variant                                             string
 }
 
 func newFlagSet(f *flags) *pflag.FlagSet {
@@ -101,6 +101,7 @@ func newFlagSet(f *flags) *pflag.FlagSet {
 	fs.BoolVar(&f.noCache, "no-cache", false, "")
 	fs.BoolVar(&f.cachedOnly, "cached-only", false, "")
 	fs.BoolVar(&f.raw, "raw", false, "")
+	fs.BoolVar(&f.markdown, "markdown", false, "")
 	fs.BoolVar(&f.doctor, "doctor", false, "")
 	fs.BoolVar(&f.html, "html", false, "")
 	fs.BoolVar(&f.serve, "serve", false, "")
@@ -161,6 +162,7 @@ girl options:
       --no-cache          always ask the LLM: skip the cache and repo, save nothing
       --cached-only       never call the LLM; only show cached (or repo) pages
       --raw               print the stored markup instead of rendering it
+      --markdown          print pages as Markdown (originals in a code block)
       --html              write the page as a standalone HTML document
       --color=WHEN        auto, always or never (default auto; NO_COLOR works)
       --provider=NAME     use this provider from the config's [providers.NAME]
@@ -241,6 +243,10 @@ func run(args []string) int {
 			fmt.Fprintln(os.Stderr, "girl: --no-cache is just for reading pages, bestie")
 			return exitUsage
 		}
+	}
+	if n := btoi(f.raw) + btoi(f.markdown) + btoi(f.html); n > 1 {
+		fmt.Fprintln(os.Stderr, "girl: one of --raw, --markdown or --html at a time, bestie")
+		return exitUsage
 	}
 
 	if f.pageVersion != "" || f.variant != "" || f.versions {
@@ -399,6 +405,8 @@ func run(args []string) int {
 		switch {
 		case f.raw:
 			out.WriteString(render.StripControls(r.Markup))
+		case f.markdown:
+			out.WriteString(render.Markdown(render.StripControls(r.Markup)))
 		case f.html:
 			docs = append(docs, web.DocPage{Page: p, Title: title, Markup: r.Markup, Entry: r.Entry, Stale: r.Stale})
 		default:
@@ -425,7 +433,7 @@ func run(args []string) int {
 		}
 		return status
 	}
-	if ui.tty && !f.raw {
+	if ui.tty && !f.raw && !f.markdown {
 		title := pages[0].Title()
 		if err := pager.Show(pager.Command(cfg.Pager), out.String(), "💅 girl page "+title); err != nil {
 			fmt.Fprintf(os.Stderr, "girl: %v\n", err)
@@ -478,17 +486,18 @@ func runRemote(ctx context.Context, f flags, cfg *config.Config, rest []string) 
 	}
 	ui := newUI(f)
 	rd := &remote.Reader{
-		Repo:    r,
-		Options: remote.Options{Sections: splitList(f.sections), All: f.all, Version: f.pageVersion, Variant: f.variant},
-		Prog:    "girl",
-		Width:   ui.width,
-		Color:   ui.color,
-		Footer:  "girlpages " + getVersion(),
-		Raw:     f.raw,
-		Page:    ui.tty,
-		Pager:   cfg.Pager,
-		Stdout:  os.Stdout,
-		Stderr:  os.Stderr,
+		Repo:     r,
+		Options:  remote.Options{Sections: splitList(f.sections), All: f.all, Version: f.pageVersion, Variant: f.variant},
+		Prog:     "girl",
+		Width:    ui.width,
+		Color:    ui.color,
+		Footer:   "girlpages " + getVersion(),
+		Raw:      f.raw,
+		Markdown: f.markdown,
+		Page:     ui.tty,
+		Pager:    cfg.Pager,
+		Stdout:   os.Stdout,
+		Stderr:   os.Stderr,
 	}
 	switch {
 	case f.apropos:
@@ -889,4 +898,11 @@ func getVersion() string {
 		return bi.Main.Version
 	}
 	return "dev"
+}
+
+func btoi(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }

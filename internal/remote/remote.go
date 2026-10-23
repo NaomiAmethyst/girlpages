@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -41,8 +42,9 @@ func (r *Repo) searcher() *repo.Searcher {
 	return r.search
 }
 
-// Request is a page asked for: its name, and section if one was given.
-type Request struct{ Name, Section string }
+// Request is a page asked for: its name, and section if one was given,
+// and the variant, if it was asked for by an address in one (pirate/1/ls/).
+type Request struct{ Name, Section, Variant string }
 
 func (q Request) String() string {
 	switch {
@@ -85,6 +87,62 @@ func Requests(args []string) []Request {
 		out = append(out, q)
 	}
 	return out
+}
+
+// PageURL reads a page's address on a girlpages site
+// (https://girlpages.dev/girl/1/ls/, …/man/1/ls/ for the original,
+// …/girl/rfc/9110/): the site (with the path it's under, if any), and the
+// page asked for, in the variant the address is in ("" for girl, the
+// default). ok is false if it isn't one.
+func PageURL(s string) (site string, q Request, ok bool) {
+	u, err := url.Parse(s)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "", Request{}, false
+	}
+	segs := strings.Split(strings.Trim(u.EscapedPath(), "/"), "/")
+	if len(segs) < 3 {
+		return "", Request{}, false
+	}
+	n := len(segs)
+	parts := make([]string, 3)
+	for i, seg := range segs[n-3:] {
+		p, err := url.PathUnescape(seg)
+		if err != nil {
+			return "", Request{}, false
+		}
+		// A name starting with a dot is escaped as a repository file name
+		// is, as well (see site.SegmentName).
+		if strings.HasPrefix(p, "%") {
+			if p, err = url.PathUnescape(p); err != nil {
+				return "", Request{}, false
+			}
+		}
+		parts[i] = p
+	}
+	variant, sec, name := parts[0], parts[1], parts[2]
+	// Not a listing, or a listing's later page (section/1/page/2/,
+	// package/coreutils/page/2/): no site's under those, and no variant
+	// is called them.
+	for _, seg := range append(segs[:n-3:n-3], variant) {
+		switch seg {
+		case "section", "package", "packages", "search", "browse", "offline", "static", "repo", "src":
+			return "", Request{}, false
+		}
+	}
+	if sec == "page" && number(name) {
+		return "", Request{}, false
+	}
+	if !repo.ValidVariant(variant) || name == "" || sec == "" {
+		return "", Request{}, false
+	}
+	if variant == repo.VariantGirl {
+		variant = ""
+	}
+	site = u.Scheme + "://" + u.Host
+	if pre := strings.Join(segs[:n-3], "/"); pre != "" {
+		site += "/" + pre
+	}
+	return site, Request{Name: name, Section: sec, Variant: variant}, true
 }
 
 func number(s string) bool {
@@ -138,6 +196,9 @@ func (r *Repo) Find(ctx context.Context, q Request, o Options) ([]Page, error) {
 	listings, err := r.Listings(ctx, q, o)
 	if err != nil {
 		return nil, err
+	}
+	if q.Variant != "" {
+		o.Variant = q.Variant
 	}
 	var out []Page
 	for _, l := range listings {

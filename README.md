@@ -201,6 +201,7 @@ girlc ls                # ls(1), girlified
 girlc -a printf         # printf(1), (3) and (3p)
 girlc -k compress       # search
 girlc rfc 9110          # an RFC
+girlc --markdown https://girlpages.dev/girl/1/ls/   # a page by its address, as Markdown
 ```
 
 ### Running one

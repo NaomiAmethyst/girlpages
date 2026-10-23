@@ -39,13 +39,14 @@ const timeout = 20 * time.Second
 func main() { os.Exit(run(os.Args[1:])) }
 
 type flags struct {
-	all, apropos, whatis, help, version, raw, versions, ngrams bool
-	sections, pager, repo, color                               string
-	pageVersion, variant                                       string
-	limit                                                      int
+	all, apropos, whatis, help, version, raw, markdown, versions, ngrams bool
+	sections, pager, repo, color                                         string
+	pageVersion, variant                                                 string
+	limit                                                                int
 }
 
 const usage = `usage: girlc [options] [section] page ...
+       girlc [options] URL ...  a page by its address (https://girlpages.dev/girl/1/ls/)
        girlc -k words ...      search the repo (like apropos)
        girlc -f page ...       one-line descriptions (like whatis)
        girlc --versions page   list a page's versions and variants
@@ -67,6 +68,7 @@ options:
       --variant=NAME      girl (the default), man (the original) or another
       --versions          list a page's versions and variants
       --raw               print the stored markup instead of rendering it
+      --markdown          print pages as Markdown (originals in a code block)
       --color=WHEN        auto, always or never (default auto; NO_COLOR works)
   -P, --pager=PAGER       page output with PAGER (default $GIRLPAGER, $PAGER, less)
       --repo=URL          the repository (or a site with one in repo/) to read
@@ -93,6 +95,7 @@ func newFlagSet(f *flags) *pflag.FlagSet {
 	fs.StringVar(&f.variant, "variant", "", "")
 	fs.BoolVar(&f.versions, "versions", false, "")
 	fs.BoolVar(&f.raw, "raw", false, "")
+	fs.BoolVar(&f.markdown, "markdown", false, "")
 	fs.StringVar(&f.color, "color", "auto", "")
 	fs.StringVarP(&f.pager, "pager", "P", "", "")
 	fs.StringVar(&f.repo, "repo", "", "")
@@ -128,6 +131,10 @@ func run(args []string) int {
 		return remote.ExitOK
 	}
 	rest := fs.Args()
+	if f.raw && f.markdown {
+		fmt.Fprintln(os.Stderr, "girlc: --raw or --markdown, bestie, not both")
+		return remote.ExitUsage
+	}
 	if n := countTrue(f.apropos, f.whatis, f.versions); n > 1 {
 		fmt.Fprintln(os.Stderr, "girlc: one of -k, -f or --versions at a time, bestie")
 		return remote.ExitUsage
@@ -144,7 +151,39 @@ func run(args []string) int {
 		return remote.ExitUsage
 	}
 
-	u := firstOf(f.repo, os.Getenv("GIRLC_REPO"), defaultRepo)
+	// Pages by their addresses on a site: read from that site's repository
+	// (unless another's asked for), in the variant they're in (unless
+	// another is).
+	var reqs []remote.Request
+	var site string
+	var plain []string
+	for _, a := range rest {
+		if !strings.HasPrefix(a, "http://") && !strings.HasPrefix(a, "https://") {
+			plain = append(plain, a)
+			continue
+		}
+		s, q, ok := remote.PageURL(a)
+		if !ok {
+			fmt.Fprintf(os.Stderr, "girlc: %s isn't a page's address, bestie (like https://girlpages.dev/girl/1/ls/)\n", a)
+			return remote.ExitUsage
+		}
+		if site != "" && s != site {
+			fmt.Fprintln(os.Stderr, "girlc: pages from one site at a time, bestie")
+			return remote.ExitUsage
+		}
+		site = s
+		if f.variant != "" {
+			q.Variant = ""
+		}
+		reqs = append(reqs, q)
+	}
+	if site != "" && (f.apropos || f.whatis) {
+		fmt.Fprintln(os.Stderr, "girlc: -k and -f take words and names, bestie, not addresses")
+		return remote.ExitUsage
+	}
+	reqs = append(reqs, remote.Requests(plain)...)
+
+	u := firstOf(f.repo, site, os.Getenv("GIRLC_REPO"), defaultRepo)
 	if u == "" {
 		fmt.Fprintln(os.Stderr, "girlc: which repo, bestie? use --repo=URL, or set GIRLC_REPO")
 		return remote.ExitUsage
@@ -152,7 +191,12 @@ func run(args []string) int {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	c, err := repo.Find(ctx, u, timeout, "girlc/"+getVersion())
+	// Agents and tools may say who they are, as llms.txt asks.
+	agent := "girlc/" + getVersion()
+	if a := strings.TrimSpace(os.Getenv("GIRLPAGES_AGENT")); a != "" {
+		agent += " " + a
+	}
+	c, err := repo.Find(ctx, u, timeout, agent)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "girlc: %v\n", err)
 		return remote.ExitFailed
@@ -163,27 +207,31 @@ func run(args []string) int {
 	}
 	t := remote.Detect(f.color)
 	rd := &remote.Reader{
-		Repo:    r,
-		Options: remote.Options{Sections: splitList(f.sections), All: f.all, Version: f.pageVersion, Variant: f.variant},
-		Prog:    "girlc",
-		Width:   t.Width,
-		Color:   t.Color,
-		Footer:  "girlpages " + getVersion(),
-		Raw:     f.raw,
-		Page:    t.TTY,
-		Pager:   f.pager,
-		Stdout:  os.Stdout,
-		Stderr:  os.Stderr,
+		Repo:     r,
+		Options:  remote.Options{Sections: splitList(f.sections), All: f.all, Version: f.pageVersion, Variant: f.variant},
+		Prog:     "girlc",
+		Width:    t.Width,
+		Color:    t.Color,
+		Footer:   "girlpages " + getVersion(),
+		Raw:      f.raw,
+		Markdown: f.markdown,
+		Page:     t.TTY,
+		Pager:    f.pager,
+		Stdout:   os.Stdout,
+		Stderr:   os.Stderr,
 	}
 	switch {
 	case f.apropos:
 		return rd.Apropos(ctx, rest, max(f.limit, 0))
 	case f.whatis:
 		return rd.Whatis(ctx, rest)
-	case f.versions:
+	case f.versions && site == "":
 		return rd.Versions(ctx, rest)
+	case f.versions:
+		fmt.Fprintln(os.Stderr, "girlc: --versions takes names, bestie, not addresses")
+		return remote.ExitUsage
 	}
-	return rd.Read(ctx, rest)
+	return rd.ReadRequests(ctx, reqs)
 }
 
 func countTrue(bs ...bool) int {

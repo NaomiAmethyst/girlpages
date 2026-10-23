@@ -55,7 +55,7 @@ func published(t *testing.T) *Repo {
 		}
 		vs := map[string]repo.VariantInfo{repo.VariantMan: mi}
 		if p.girl {
-			md := "# ✨ NAME ✨\n\n`" + p.name + "` slays 💅\n"
+			md := "# ✨ NAME ✨\n\n`" + p.name + "` <pink>slays</pink> 💅\n"
 			gi, err := s.PutVariant(repo.GirlVariant(src, title, md, &repo.Generator{Model: "fake-1", Generated: time.Unix(1700000000, 0)}))
 			if err != nil {
 				t.Fatal(err)
@@ -90,14 +90,14 @@ func TestRequests(t *testing.T) {
 		args []string
 		want []Request
 	}{
-		{[]string{"ls"}, []Request{{"ls", ""}}},
-		{[]string{"1", "ls", "cp"}, []Request{{"ls", "1"}, {"cp", "1"}}},
-		{[]string{"ls(1posix)", "open"}, []Request{{"ls", "1posix"}, {"open", ""}}},
-		{[]string{"rfc", "09110"}, []Request{{"9110", "rfc"}}},
-		{[]string{"RFC9110"}, []Request{{"9110", "rfc"}}},
+		{[]string{"ls"}, []Request{{"ls", "", ""}}},
+		{[]string{"1", "ls", "cp"}, []Request{{"ls", "1", ""}, {"cp", "1", ""}}},
+		{[]string{"ls(1posix)", "open"}, []Request{{"ls", "1posix", ""}, {"open", "", ""}}},
+		{[]string{"rfc", "09110"}, []Request{{"9110", "rfc", ""}}},
+		{[]string{"RFC9110"}, []Request{{"9110", "rfc", ""}}},
 		// A section alone is a page's name, as man has it.
-		{[]string{"1"}, []Request{{"1", ""}}},
-		{[]string{"systemd.unit"}, []Request{{"systemd.unit", ""}}},
+		{[]string{"1"}, []Request{{"1", "", ""}}},
+		{[]string{"systemd.unit"}, []Request{{"systemd.unit", "", ""}}},
 	} {
 		if got := Requests(c.args); !reflect.DeepEqual(got, c.want) {
 			t.Errorf("Requests(%q) = %v, want %v", c.args, got, c.want)
@@ -122,17 +122,17 @@ func TestFind(t *testing.T) {
 		o    Options
 		want []string
 	}{
-		{Request{"ls", ""}, Options{}, []string{"LS(1)"}},
-		{Request{"ls", "1posix"}, Options{}, []string{"LS(1posix)"}},
+		{Request{"ls", "", ""}, Options{}, []string{"LS(1)"}},
+		{Request{"ls", "1posix", ""}, Options{}, []string{"LS(1posix)"}},
 		// Like man: 1 before 3, 3 before 3p.
-		{Request{"printf", ""}, Options{All: true}, []string{"PRINTF(1)", "PRINTF(3)", "PRINTF(3p)"}},
-		{Request{"printf", ""}, Options{Sections: []string{"3"}}, []string{"PRINTF(3)"}},
-		{Request{"printf", "3"}, Options{All: true}, []string{"PRINTF(3)", "PRINTF(3p)"}},
-		{Request{"printf", "3"}, Options{}, []string{"PRINTF(3)"}},
+		{Request{"printf", "", ""}, Options{All: true}, []string{"PRINTF(1)", "PRINTF(3)", "PRINTF(3p)"}},
+		{Request{"printf", "", ""}, Options{Sections: []string{"3"}}, []string{"PRINTF(3)"}},
+		{Request{"printf", "3", ""}, Options{All: true}, []string{"PRINTF(3)", "PRINTF(3p)"}},
+		{Request{"printf", "3", ""}, Options{}, []string{"PRINTF(3)"}},
 		// Any case, as man finds them.
-		{Request{"PRINTF", ""}, Options{}, []string{"PRINTF(1)"}},
-		{Request{"cgi", ""}, Options{}, []string{"CGI(3pm)"}},
-		{Request{"9110", "rfc"}, Options{}, []string{"RFC 9110"}},
+		{Request{"PRINTF", "", ""}, Options{}, []string{"PRINTF(1)"}},
+		{Request{"cgi", "", ""}, Options{}, []string{"CGI(3pm)"}},
+		{Request{"9110", "rfc", ""}, Options{}, []string{"RFC 9110"}},
 	} {
 		ps, err := r.Find(ctx, c.q, c.o)
 		if err != nil {
@@ -143,7 +143,7 @@ func TestFind(t *testing.T) {
 			t.Errorf("Find(%v, %+v) = %v, want %v", c.q, c.o, got, c.want)
 		}
 	}
-	for _, q := range []Request{{"nope", ""}, {"ls", "8"}, {"printf", "2"}} {
+	for _, q := range []Request{{"nope", "", ""}, {"ls", "8", ""}, {"printf", "2", ""}} {
 		_, err := r.Find(ctx, q, Options{})
 		if !errors.Is(err, repo.ErrNotFound) {
 			t.Errorf("Find(%v) = %v, want ErrNotFound", q, err)
@@ -157,7 +157,7 @@ func TestVersionsAndVariants(t *testing.T) {
 	r := published(t)
 	ctx := context.Background()
 	find := func(o Options) (*Page, error) {
-		ps, err := r.Find(ctx, Request{"ls", "1"}, o)
+		ps, err := r.Find(ctx, Request{"ls", "1", ""}, o)
 		if err != nil {
 			return nil, err
 		}
@@ -211,7 +211,7 @@ func TestVersionsAndVariants(t *testing.T) {
 		}
 	}
 
-	ls, err := r.Listings(ctx, Request{"ls", "1"}, Options{})
+	ls, err := r.Listings(ctx, Request{"ls", "1", ""}, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +225,7 @@ func TestVersionsAndVariants(t *testing.T) {
 	if b.String() != want {
 		t.Errorf("WriteVersions:\n%s\nwant:\n%s", b.String(), want)
 	}
-	rfc, err := r.Listings(ctx, Request{"9110", "rfc"}, Options{})
+	rfc, err := r.Listings(ctx, Request{"9110", "rfc", ""}, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +253,7 @@ func TestSearch(t *testing.T) {
 	if err != nil || len(hits) != 1 || hits[0].Section != "3p" {
 		t.Errorf("search in 3p: %v %v", hits, err)
 	}
-	hits, err = r.Whatis(ctx, Request{"printf", ""}, nil)
+	hits, err = r.Whatis(ctx, Request{"printf", "", ""}, nil)
 	if err != nil || len(hits) != 3 || hits[0].Section != "1" {
 		t.Errorf("whatis printf: %v %v", hits, err)
 	}
@@ -288,5 +288,53 @@ func TestReader(t *testing.T) {
 	}
 	if _, _, st := read(Options{}, "nope"); st != ExitNotFound {
 		t.Errorf("nope: %d", st)
+	}
+
+	// As Markdown: the girly markup without its tags, or the original in
+	// a code block, and pages asked for by address, in their variant.
+	md := func(qs ...Request) (string, int) {
+		var out, errs bytes.Buffer
+		rd := &Reader{Repo: r, Prog: "girlc", Markdown: true, Page: true, Stdout: &out, Stderr: &errs}
+		st := rd.ReadRequests(ctx, qs)
+		return out.String(), st
+	}
+	if out, st := md(Request{"printf", "3", ""}); st != ExitOK || out != "# ✨ NAME ✨\n\n`printf` slays 💅\n" {
+		t.Errorf("printf(3) as Markdown (%d): %q", st, out)
+	}
+	if out, st := md(Request{"printf", "3", "man"}); st != ExitOK || !strings.HasPrefix(out, "# PRINTF(3)\n\n```\n") || !strings.HasSuffix(out, "\n```\n") {
+		t.Errorf("printf(3) original as Markdown (%d): %q", st, out)
+	}
+	if out, st := md(Request{"ls", "", ""}); st != ExitOK || !strings.HasPrefix(out, "# LS(1)\n\n> 💭 she hasn't gotten to this one yet") {
+		t.Errorf("ls as Markdown (%d): %q", st, out)
+	}
+}
+
+func TestPageURL(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		site string
+		q    Request
+		ok   bool
+	}{
+		{"https://girlpages.dev/girl/1/ls/", "https://girlpages.dev", Request{"ls", "1", ""}, true},
+		{"https://girlpages.dev/man/1/ls", "https://girlpages.dev", Request{"ls", "1", "man"}, true},
+		{"https://girlpages.dev/pirate/8/mount/#options", "https://girlpages.dev", Request{"mount", "8", "pirate"}, true},
+		{"https://girlpages.dev/girl/rfc/9110/", "https://girlpages.dev", Request{"9110", "rfc", ""}, true},
+		{"http://example.org/gp/girl/3/printf/", "http://example.org/gp", Request{"printf", "3", ""}, true},
+		{"https://girlpages.dev/girl/7/%252Ehidden/", "https://girlpages.dev", Request{".hidden", "7", ""}, true},
+		{"https://girlpages.dev/girl/1/c%2B%2B/", "https://girlpages.dev", Request{"c++", "1", ""}, true},
+		{"https://girlpages.dev/girl/1/repo/", "https://girlpages.dev", Request{"repo", "1", ""}, true},
+		{"https://girlpages.dev/section/1/", "", Request{}, false},
+		{"https://girlpages.dev/section/1/page/2/", "", Request{}, false},
+		{"https://girlpages.dev/packages/debian/trixie/", "", Request{}, false},
+		{"https://girlpages.dev/package/coreutils/page/2/", "", Request{}, false},
+		{"https://girlpages.dev/", "", Request{}, false},
+		{"ftp://girlpages.dev/girl/1/ls/", "", Request{}, false},
+		{"ls", "", Request{}, false},
+	} {
+		site, q, ok := PageURL(c.in)
+		if site != c.site || q != c.q || ok != c.ok {
+			t.Errorf("PageURL(%q) = %q %+v %v, want %q %+v %v", c.in, site, q, ok, c.site, c.q, c.ok)
+		}
 	}
 }

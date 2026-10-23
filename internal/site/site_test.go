@@ -1159,7 +1159,7 @@ func TestLLMsTxt(t *testing.T) {
 	txt := read(t, filepath.Join(out, "llms.txt"))
 	for _, want := range []string{"# girlpages\n\n> Unix manual pages", "6 pages, from debian.",
 		"https://example.test/girl/1/ls/", "## Sections\n\n- [Section 1: ", "](https://example.test/section/1/): 3 pages",
-		"## Packages\n\n- [Every package](https://example.test/packages/)", "## Optional\n\n- [Repository format](" + FormatDoc} {
+		"## Packages\n\n- [Every package](https://example.test/packages/)", "## Optional\n\n- [Repository format](" + FormatDoc, "girlc --markdown https://example.test/girl/1/ls/"} {
 		if !strings.Contains(txt, want) {
 			t.Errorf("llms.txt lacks %q:\n%s", want, txt)
 		}

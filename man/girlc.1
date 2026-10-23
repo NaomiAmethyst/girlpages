@@ -10,6 +10,10 @@ girlc \- read girly man pages from a girlpages repository
 .IR page \ ...
 .br
 .B girlc
+.RI [ options ]
+.IR url \ ...
+.br
+.B girlc
 .B \-k
 .RI [ options ]
 .IR words \ ...
@@ -52,6 +56,15 @@ and
 (or
 .BI rfc number\fR)
 for an RFC.
+A page can also be given by its address on a girlpages site
+.RB ( https://girlpages.dev/girl/1/ls/ ,
+or
+.B https://girlpages.dev/man/1/ls/
+for the original): it's read from that site's repository (unless
+.B \-\-repo
+says another), in the variant the address is in (unless
+.B \-\-variant
+says another).
 A page named alone is the first by
 .BR man 's
 section order (1, n, l, 8, 3, 0, 2, 5, 4, 9, 6, 7, and a section's
@@ -131,6 +144,13 @@ variants, instead of reading it.
 Print the page as it's stored (girlpages markup, or plain text for
 originals) instead of rendering it.
 .TP
+.B \-\-markdown
+Print pages as Markdown: girlified ones as their markup without its colour
+tags (it's Markdown otherwise), and originals as
+.B man
+prints them, in a code block under their title.
+For reading pages into other programs, language models among them.
+.TP
 .BR \-\-color =\fIwhen\fR
 .BR auto " (the default: if standard output is a terminal), " always " or " never .
 .B NO_COLOR
@@ -193,6 +213,12 @@ Installed as
 The repository to read, if
 .B \-\-repo
 isn't given.
+.TP
+.B GIRLPAGES_AGENT
+Added to the User-Agent of girlc's requests: an agent or tool reading
+pages with it can say who it is (as the site's
+.B llms.txt
+asks, without requiring it).
 .TP
 .BR GIRLPAGER ", " PAGER
 The pager, if

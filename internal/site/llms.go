@@ -64,6 +64,8 @@ func (b *builder) llmsTxt(pages []repo.PageRef) error {
 	fmt.Fprintf(&t, "For example `girlpage %s`, or `girlpage 1 ls man` for the original. ", u(b.pageURL("ls", "1")))
 	t.WriteString("Its requests say they're from it in their User-Agent; we'd like it (but don't require it) if you added your own, the agent or tool you are and its version, by setting `GIRLPAGES_AGENT` (`GIRLPAGES_AGENT=\"ExampleBot/1.0\" girlpage 1 ls`), or in your own requests' User-Agent if you fetch pages yourself. ")
 	t.WriteString("A name or section with characters other than letters, digits and `_+-.,:@` (or starting with a dot) has them escaped as `%XX` in the repository's paths, as its format (below) describes.\n\n")
+	fmt.Fprintf(&t, "For more than a page now and then, girlc is a more robust thin client for the repository, with more to it: it takes pages as man does (`printf(3)`, `rfc 9110`, a name alone in man's section order) or by address, escaping names itself; searches (`-k`); reads other versions and variants (`--versions`, `--page-version`, `--variant man`); and prints Markdown (`girlc --markdown %s`), saying who it is in its User-Agent too (`GIRLPAGES_AGENT`). ", u(b.pageURL("ls", "1")))
+	t.WriteString("It's one static binary, with no dependencies: in each release's packages (deb, rpm, apk, Arch) at https://github.com/NaomiAmethyst/girlpages/releases, or as an image, `docker run --rm ghcr.io/naomiamethyst/girlc --markdown ls`.\n\n")
 	t.WriteString("## Sections\n\n")
 	for _, k := range keys {
 		name, _ := web.SectionName(k)
