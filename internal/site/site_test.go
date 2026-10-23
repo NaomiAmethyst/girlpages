@@ -1171,3 +1171,60 @@ func TestLLMsTxt(t *testing.T) {
 		t.Errorf("llms.txt without a URL:\n%s", txt)
 	}
 }
+
+// TestGirlpageSh runs llms.txt's shell function against the repository,
+// over HTTP, if there's bash, curl and jq to run it with.
+func TestGirlpageSh(t *testing.T) {
+	for _, tool := range []string{"bash", "curl", "jq"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skip(tool + " not installed")
+		}
+	}
+	out := t.TempDir()
+	var agent atomic.Value
+	files := http.FileServer(http.Dir(out))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		agent.Store(r.UserAgent())
+		files.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+	build(t, out, specs, Options{URL: srv.URL})
+	txt := read(t, filepath.Join(out, "llms.txt"))
+	start := strings.Index(txt, "```sh\n")
+	end := strings.Index(txt[start+6:], "```")
+	if start < 0 || end < 0 {
+		t.Fatalf("no shell function in llms.txt:\n%s", txt)
+	}
+	fn := txt[start+6 : start+6+end]
+	run := func(args string) (string, error) {
+		b, err := exec.Command("bash", "-c", fn+"\ngirlpage "+args).CombinedOutput()
+		return string(b), err
+	}
+	girly, err := run(srv.URL + "/girl/1/ls/")
+	if err != nil || !strings.HasPrefix(girly, "# ✨ NAME ✨\n") || !strings.Contains(girly, "`ls` slays") {
+		t.Errorf("girly ls: %v\n%s", err, girly)
+	}
+	orig, err := run("1 ls man")
+	if err != nil || !strings.Contains(orig, "## NAME\n       ls - list directory contents") {
+		t.Errorf("original ls: %v\n%s", err, orig)
+	}
+	// Not girlified: the original.
+	if s, err := run("1 git-commit"); err != nil || !strings.Contains(s, "## NAME") {
+		t.Errorf("git-commit: %v\n%s", err, s)
+	}
+	if s, err := run("1 nosuch"); err == nil || !strings.Contains(s, "girlpage: no page nosuch(1)") {
+		t.Errorf("a missing page: %v\n%s", err, s)
+	}
+	if a, _ := agent.Load().(string); a != "girlpage (+"+srv.URL+"/llms.txt)" {
+		t.Errorf("user agent %q", a)
+	}
+	// With the agent's own name, if it gives it.
+	cmd := exec.Command("bash", "-c", fn+"\ngirlpage 1 ls")
+	cmd.Env = append(os.Environ(), "GIRLPAGES_AGENT=ExampleBot/1.0")
+	if b, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, b)
+	}
+	if a, _ := agent.Load().(string); a != "girlpage (+"+srv.URL+"/llms.txt) ExampleBot/1.0" {
+		t.Errorf("user agent with GIRLPAGES_AGENT: %q", a)
+	}
+}

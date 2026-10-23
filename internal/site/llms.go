@@ -55,11 +55,15 @@ func (b *builder) llmsTxt(pages []repo.PageRef) error {
 	}
 	fmt.Fprintf(&t, ". Updated %s.\n\n", b.m.Generated.Format(time.DateOnly))
 	t.WriteString("The girly versions were written by a language model, so for anything that matters (exact option semantics, security advice), check the original.\n\n")
-	fmt.Fprintf(&t, "Each page is at %s (for example %s: the girly version, or the original if it isn't girlified yet); its original is at %s, shown by the site's JavaScript. ",
+	site := strings.TrimSuffix(u(b.o.Base), "/")
+	fmt.Fprintf(&t, "Each page is at %s (for example %s), girly; its original is at %s, but shown by the site's JavaScript. ",
 		u(b.o.Base+"girl/<section>/<name>/"), u(b.pageURL("ls", "1")), u(b.o.Base+"man/<section>/<name>/"))
-	fmt.Fprintf(&t, "Every page's text, original and girly, every version, is in the repository at %s as JSON (its format is described below); it's for programs, not crawling, so robots.txt asks crawlers to keep out of it.\n\n",
-		u(b.o.Base+"repo/"))
-
+	fmt.Fprintf(&t, "Every page's text, girly and original, is also in the repository at %s, as JSON: for reading a page at a time, not crawling (robots.txt asks crawlers to keep out). ", u(b.o.Base+"repo/"))
+	t.WriteString("This shell function (it needs curl and jq) prints a page as Markdown, from its address or its section and name, girly or the original (`man`):\n\n")
+	t.WriteString("```sh\n" + strings.ReplaceAll(girlpageSh, "SITE", site) + "```\n\n")
+	fmt.Fprintf(&t, "For example `girlpage %s`, or `girlpage 1 ls man` for the original. ", u(b.pageURL("ls", "1")))
+	t.WriteString("Its requests say they're from it in their User-Agent; we'd like it (but don't require it) if you added your own, the agent or tool you are and its version, by setting `GIRLPAGES_AGENT` (`GIRLPAGES_AGENT=\"ExampleBot/1.0\" girlpage 1 ls`), or in your own requests' User-Agent if you fetch pages yourself. ")
+	t.WriteString("A name or section with characters other than letters, digits and `_+-.,:@` (or starting with a dot) has them escaped as `%XX` in the repository's paths, as its format (below) describes.\n\n")
 	t.WriteString("## Sections\n\n")
 	for _, k := range keys {
 		name, _ := web.SectionName(k)
@@ -85,3 +89,22 @@ func (b *builder) llmsTxt(pages []repo.PageRef) error {
 	t.WriteString("- [girlpages on GitHub](https://github.com/NaomiAmethyst/girlpages): the software, with `girl` and `girlc` for reading these pages in a terminal\n")
 	return b.write(filepath.Join(b.o.Out, "llms.txt"), []byte(t.String()))
 }
+
+// girlpageSh is a shell function printing a page as Markdown from the
+// repository at SITE/repo/: by its address on the site, or its section and
+// name (and a variant: girl by default, or man for the original). The
+// girly markup is Markdown, but for colour tags, which it drops.
+const girlpageSh = `girlpage() {  # girlpage SITE/girl/1/ls/  |  girlpage 1 ls [girl|man]
+  local s="${GIRLPAGES:-SITE}" sec name v=girl p src w sha c=(curl -fsS -A "girlpage (+SITE/llms.txt)${GIRLPAGES_AGENT:+ $GIRLPAGES_AGENT}")
+  if [ $# -eq 1 ]; then IFS=/ read -r v sec name _ <<<"${1#"$s"/}"; else sec=$1 name=$2 v=${3:-girl}; fi
+  p=$("${c[@]}" "$s/repo/page/name-$sec/$name.json" | jq -r .sha256)
+  [ -n "$p" ] || { echo "girlpage: no page $name($sec)" >&2; return 1; }
+  read -r src w sha < <("${c[@]}" "$s/repo/page/page-${p:0:2}/$p.json" | jq -r --arg v "$v" '.current as $c
+    | .versions[] | select(.source == $c) | .variants as $vs
+    | ([$v, "girl", "man"] | map(select($vs[.])) | first) as $w | "\($c) \($w) \($vs[$w].sha256)"')
+  [ -n "$sha" ] || { echo "girlpage: no text for $name($sec)" >&2; return 1; }
+  "${c[@]}" "$s/repo/contents/${src:0:2}/$src/$w-$sha.json" | jq -r '(if .syntax == "text" then "## " else "# " end) as $h
+    | .sections[] | (if .heading != "" then "\($h)\(.heading)\n" else "" end) + .body' |
+    sed -E 's#</?(pink|hotpink|purple|lavender|cyan|mint|yellow|peach|red|blue|green|rainbow)>##g; s#</?bold>#**#g; s#</?italic>#*#g'
+}
+`
