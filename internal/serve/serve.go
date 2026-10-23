@@ -106,12 +106,20 @@ func Handler(src Source, o Options) http.Handler {
 			o.Metrics.observe(rw.status, rw.bytes, d)
 		}
 		if o.AccessLog != nil {
-			line, _ := json.Marshal(map[string]any{
+			entry := map[string]any{
 				"time": start.UTC().Format(time.RFC3339Nano), "method": r.Method, "path": r.URL.Path,
 				"status": rw.status, "bytes": rw.bytes, "ms": float64(d.Microseconds()) / 1000,
 				"encoding": rw.Header().Get("Content-Encoding"), "remote": r.RemoteAddr,
 				"referer": r.Referer(), "agent": r.UserAgent(),
-			})
+			}
+			// Behind a proxy (an ingress, a load balancer), who it says
+			// asked, as it says it: the client's address, then any
+			// proxies' before it. It's whatever the client and proxies
+			// sent, so it's for reading, not trusting.
+			if xff := r.Header.Values("X-Forwarded-For"); len(xff) > 0 {
+				entry["forwarded_for"] = strings.Join(xff, ", ")
+			}
+			line, _ := json.Marshal(entry)
 			logMu.Lock()
 			o.AccessLog.Write(append(line, '\n'))
 			logMu.Unlock()

@@ -103,7 +103,13 @@ How often to check the archive for a new version (default 10s; 0 for only on
 .TP
 .B \-\-access\-log
 Write a line of JSON for each request to standard output: its time, method,
-path, status, size, duration, encoding, address, referrer and user agent.
+path, status, size, duration, encoding, address, referrer and user agent,
+and behind a proxy, its
+.B X\-Forwarded\-For
+header as it came
+.RB ( forwarded_for :
+the client's address and any proxies' before this one's, as they say;
+it's for reading, not trusting).
 .TP
 .BR \-\-drain\-delay =\fIduration\fR
 When stopping, keep serving this long first, with

@@ -63,7 +63,7 @@ func TestArchiveSource(t *testing.T) {
 	var log bytes.Buffer
 	h := Handler(src, Options{Metrics: m, AccessLog: &log})
 
-	w := get(t, h, "GET", "/girl/1/ls/", map[string]string{"Accept-Encoding": "gzip, br;q=0.9, zstd;q=0"})
+	w := get(t, h, "GET", "/girl/1/ls/", map[string]string{"Accept-Encoding": "gzip, br;q=0.9, zstd;q=0", "X-Forwarded-For": "203.0.113.7, 10.0.0.2"})
 	if w.Code != 200 || w.Header().Get("Content-Encoding") != "br" || w.Header().Get("Cache-Control") != CacheSite ||
 		w.Header().Get("X-Content-Type-Options") != "nosniff" || !strings.HasPrefix(w.Header().Get("Content-Type"), "text/html") {
 		t.Fatalf("page: %d %v", w.Code, w.Header())
@@ -129,7 +129,8 @@ func TestArchiveSource(t *testing.T) {
 		t.Errorf("after reload: %q", w.Body.String())
 	}
 
-	if !strings.Contains(log.String(), `"path":"/girl/1/ls/"`) || !strings.Contains(log.String(), `"status":304`) {
+	if !strings.Contains(log.String(), `"path":"/girl/1/ls/"`) || !strings.Contains(log.String(), `"status":304`) ||
+		!strings.Contains(log.String(), `"forwarded_for":"203.0.113.7, 10.0.0.2"`) || strings.Count(log.String(), `"forwarded_for"`) != 1 {
 		t.Errorf("access log: %s", log.String())
 	}
 	adm := Admin(src, m, a)
