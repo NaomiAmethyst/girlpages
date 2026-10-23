@@ -10,7 +10,7 @@ export const isRoute = (h) => /^#\/./.test(h);
 // The site's top-level directories (and files) that aren't variants (as
 // site.Reserved): anything else at the top is a variant (a voice).
 export const RESERVED = new Set(["section", "packages", "package", "search", "browse", "offline", "static", "repo", "src",
-  "404.html", "index.html", "sw.js", "sitemap.xml", "robots.txt", "manifest.webmanifest"]);
+  "404.html", "index.html", "sw.js", "sitemap.xml", "robots.txt", "llms.txt", "manifest.webmanifest"]);
 
 // unsegment undoes site.SegmentName (names starting with a dot are escaped).
 const unsegment = (s) => (s.startsWith("%") ? decodeURIComponent(s) : s);

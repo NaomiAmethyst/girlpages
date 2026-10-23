@@ -157,6 +157,7 @@ func Build(s *repo.Store, pages []repo.PageRef, m *repo.Manifest, o Options) (St
 		b.browse,
 		b.shell,
 		func() error { return b.sitemap(pages) },
+		func() error { return b.llmsTxt(pages) },
 	}
 	for _, step := range steps {
 		if err := step(); err != nil {
@@ -426,7 +427,7 @@ func (b *builder) variantURL(variant, name, sec string) string { return b.url(va
 // Reserved are the site's top-level directories (and files) that aren't
 // variants: no variant may be named one of these, or a series.
 var Reserved = []string{"section", "packages", "package", "search", "browse", "offline", "static", "repo", "src",
-	"404.html", "index.html", "sw.js", "sitemap.xml", "robots.txt", "manifest.webmanifest"}
+	"404.html", "index.html", "sw.js", "sitemap.xml", "robots.txt", "llms.txt", "manifest.webmanifest"}
 
 // listURL is a listing: a chapter's (section/3/, for sec ""), one of its
 // sections' (section/3/3ssl/, or section/3/3/ for just 3), or a series'

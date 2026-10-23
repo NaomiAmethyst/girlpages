@@ -69,7 +69,7 @@ async function page(req, url) {
 // The site's top-level directories (and files) that aren't variants (as
 // routes.js's RESERVED): anything else at the top is a variant.
 const RESERVED = ["section", "packages", "package", "search", "browse", "offline", "static", "repo", "src",
-  "404.html", "index.html", "sw.js", "sitemap.xml", "robots.txt", "manifest.webmanifest"];
+  "404.html", "index.html", "sw.js", "sitemap.xml", "robots.txt", "llms.txt", "manifest.webmanifest"];
 
 // appView reports whether the app's shell shows an address: a listing,
 // or anything in a variant.

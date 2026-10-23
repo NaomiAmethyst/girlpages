@@ -1147,3 +1147,24 @@ func TestPackageLists(t *testing.T) {
 		}
 	}
 }
+
+// TestLLMsTxt checks llms.txt has what https://llmstxt.org asks for, and
+// what Lighthouse checks: a title, a summary, and links.
+func TestLLMsTxt(t *testing.T) {
+	out := t.TempDir()
+	build(t, out, specs, Options{URL: "https://example.test"})
+	txt := read(t, filepath.Join(out, "llms.txt"))
+	for _, want := range []string{"# girlpages\n\n> Unix manual pages", "6 pages, 3 of them girlified so far, from debian.",
+		"https://example.test/girl/1/ls/", "## Sections\n\n- [Section 1: ", "](https://example.test/section/1/): 3 pages",
+		"## Packages\n\n- [Every package](https://example.test/packages/)", "## Optional\n\n- [Repository format](" + FormatDoc} {
+		if !strings.Contains(txt, want) {
+			t.Errorf("llms.txt lacks %q:\n%s", want, txt)
+		}
+	}
+	// Without the site's address, its links are from its root.
+	out = t.TempDir()
+	build(t, out, specs, Options{Base: "/gp/"})
+	if txt := read(t, filepath.Join(out, "llms.txt")); !strings.Contains(txt, "](/gp/section/1/)") {
+		t.Errorf("llms.txt without a URL:\n%s", txt)
+	}
+}

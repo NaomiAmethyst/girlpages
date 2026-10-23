@@ -85,7 +85,7 @@ func (s *siteInfos) get(src Source) siteInfo {
 // variants, as site.Reserved.
 var reserved = map[string]bool{"section": true, "packages": true, "package": true, "search": true, "browse": true, "offline": true, "static": true,
 	"repo": true, "src": true, "404.html": true, "index.html": true, "sw.js": true, "sitemap.xml": true,
-	"robots.txt": true, "manifest.webmanifest": true}
+	"robots.txt": true, "llms.txt": true, "manifest.webmanifest": true}
 
 func validVoice(v string) bool {
 	if v == "" || len(v) > 32 || reserved[v] || v[0] < 'a' || v[0] > 'z' {
