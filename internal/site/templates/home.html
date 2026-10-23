@@ -5,7 +5,7 @@
 <form class="hero-search" action="{{.Base}}search/" role="search">
 <input type="search" name="q" placeholder="what are we reading today? 🔎" aria-label="Search manual pages">
 </form>
-<div class="stats">{{pages .Total}} · {{.Girlified}} girlified ✨ · updated {{.Generated}}</div>
+<div class="stats">{{pages .Total}} · updated {{.Generated}}</div>
 </section>
 {{template "sources" .Sources}}
 <div class="sections">
@@ -13,7 +13,7 @@
 <span class="emoji">{{.Emoji}}</span>
 <div class="num">{{.Key}}</div>
 <div class="name">{{.Name}}</div>
-<div class="count">{{pages .Count}}{{if .Girlified}} · {{.Girlified}} girlified ✨{{end}}</div>
+<div class="count">{{pages .Count}}</div>
 </a>
 {{end}}</div>
 {{end}}

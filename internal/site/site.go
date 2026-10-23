@@ -181,9 +181,9 @@ type view struct {
 	JSONLD template.JS
 
 	// home
-	Sections         []card
-	Total, Girlified int
-	Generated        string
+	Sections  []card
+	Total     int
+	Generated string
 
 	// Sources lead to browsing by distribution or release.
 	Sources []sourceMenu
@@ -221,7 +221,7 @@ type view struct {
 
 type card struct {
 	Key, Name, Emoji, URL string
-	Count, Girlified      int
+	Count                 int
 }
 
 type chip struct {
@@ -698,10 +698,6 @@ func (b *builder) home(pages []repo.PageRef) error {
 		}
 		c.Count++
 		v.Total++
-		if p.Girlified() {
-			c.Girlified++
-			v.Girlified++
-		}
 	}
 	for _, c := range cards {
 		v.Sections = append(v.Sections, *c)

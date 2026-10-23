@@ -23,13 +23,9 @@ const FormatDoc = "https://github.com/NaomiAmethyst/girlpages/blob/main/doc/repo
 // pages' addresses, the sections' and packages' listings, and the
 // repository with every page's text.
 func (b *builder) llmsTxt(pages []repo.PageRef) error {
-	girly := 0
 	count := map[string]int{}
 	for _, p := range pages {
 		count[mainKey(p.Pointer.Section)]++
-		if p.Girlified() {
-			girly++
-		}
 	}
 	keys := make([]string, 0, len(count))
 	for k := range count {
@@ -52,8 +48,8 @@ func (b *builder) llmsTxt(pages []repo.PageRef) error {
 
 	var t strings.Builder
 	t.WriteString("# girlpages\n\n")
-	fmt.Fprintf(&t, "> Unix manual pages, rewritten by a language model in the voice of a Gen Z girl with every detail kept: %s, %d of them girlified so far",
-		pluralOf(len(pages), "page"), girly)
+	fmt.Fprintf(&t, "> Unix manual pages, rewritten by a language model in the voice of a Gen Z girl with every detail kept: %s",
+		pluralOf(len(pages), "page"))
 	if len(srcs) > 0 {
 		fmt.Fprintf(&t, ", from %s", strings.Join(srcs, ", "))
 	}

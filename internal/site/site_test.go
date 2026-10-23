@@ -125,7 +125,7 @@ func TestBuild(t *testing.T) {
 		t.Fatal("nothing written")
 	}
 	home := read(t, filepath.Join(out, "index.html"))
-	for _, want := range []string{`href="/girlpages/section/1/"`, `href="/girlpages/section/3/"`, "6 pages", "3 girlified",
+	for _, want := range []string{`href="/girlpages/section/1/"`, `href="/girlpages/section/3/"`, "6 pages",
 		`href="/girlpages/static/style.css?v=test"`, `<link rel="canonical" href="https://example.test/girlpages/">`,
 		`<meta property="og:type" content="website">`, `"@type":"WebSite"`,
 		`"urlTemplate":"https://example.test/girlpages/search/?q={search_term_string}"`,
@@ -133,6 +133,9 @@ func TestBuild(t *testing.T) {
 		if !strings.Contains(home, want) {
 			t.Errorf("home page lacks %q", want)
 		}
+	}
+	if strings.Contains(home, "girlified") {
+		t.Error("the home page counts girlified pages")
 	}
 	ls := read(t, filepath.Join(out, "girl", "1", "ls", "index.html"))
 	for _, want := range []string{"<title>ls(1) — list directory contents, newer · girlpages 💅</title>",
@@ -1154,7 +1157,7 @@ func TestLLMsTxt(t *testing.T) {
 	out := t.TempDir()
 	build(t, out, specs, Options{URL: "https://example.test"})
 	txt := read(t, filepath.Join(out, "llms.txt"))
-	for _, want := range []string{"# girlpages\n\n> Unix manual pages", "6 pages, 3 of them girlified so far, from debian.",
+	for _, want := range []string{"# girlpages\n\n> Unix manual pages", "6 pages, from debian.",
 		"https://example.test/girl/1/ls/", "## Sections\n\n- [Section 1: ", "](https://example.test/section/1/): 3 pages",
 		"## Packages\n\n- [Every package](https://example.test/packages/)", "## Optional\n\n- [Repository format](" + FormatDoc} {
 		if !strings.Contains(txt, want) {
