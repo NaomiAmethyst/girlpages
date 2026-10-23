@@ -564,13 +564,17 @@ func (b *builder) static() error {
 	}
 
 	manifest, err := json.MarshalIndent(map[string]any{
-		"name":             "girlpages",
-		"short_name":       "girlpages",
-		"description":      "the manual, but make it girly 💅",
-		"start_url":        b.o.Base,
-		"scope":            b.o.Base,
-		"display":          "standalone",
-		"background_color": "#fff6fb",
+		"name":        "girlpages",
+		"short_name":  "girlpages",
+		"description": "the manual, but make it girly 💅",
+		"start_url":   b.o.Base,
+		"scope":       b.o.Base,
+		"display":     "standalone",
+		// The dark theme's background (style.css's --bg): Android colours
+		// an installed app's gesture bar with this, and a manifest has just
+		// the one, so it's the dark one, which looks less amiss under the
+		// light theme than a white bar does under the dark.
+		"background_color": "#0e0814",
 		"theme_color":      "#ff3e9a",
 		"icons": []map[string]string{
 			{"src": "static/icon-192.png", "sizes": "192x192", "type": "image/png"},
