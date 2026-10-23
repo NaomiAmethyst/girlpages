@@ -124,6 +124,13 @@ docker run --rm ghcr.io/naomiamethyst/girlc ls
 `make packages` builds the packages here (it needs
 [nfpm](https://nfpm.goreleaser.com); `ARCH=arm64` for the other one).
 
+Each release has binaries for using without a package manager, too:
+`girlc` on its own for Linux (amd64, arm64, ARMv6, 386, riscv64), macOS,
+Windows and FreeBSD (`girlc-VERSION-OS-ARCH`, one static binary to copy
+anywhere), and everything, `girl`, `girlrepo`, `girlc` and `girlserve` with
+their man pages and an example config, in a tarball per Linux architecture
+(`girlpages-VERSION-linux-ARCH.tar.gz`). `make binaries` builds them here.
+
 ## In your browser
 
 ```sh

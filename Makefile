@@ -58,7 +58,7 @@ ifeq ($(SYSTEMD),auto)
   override SYSTEMD := $(if $(wildcard /run/systemd/system),yes,no)
 endif
 
-.PHONY: all build test check e2e lint packages install install-user install-girlrepo install-girlc install-girlserve uninstall uninstall-user clean
+.PHONY: all build test check e2e lint packages binaries install install-user install-girlrepo install-girlc install-girlserve uninstall uninstall-user clean
 
 all: build
 
@@ -108,6 +108,12 @@ e2e: girlrepo
 # dist/packages (needs nfpm; ARCH=arm64 for another architecture).
 packages:
 	dist/package.sh $(if $(ARCH),-a $(ARCH))
+
+# girlc on its own for each system it runs on, and every binary in a tarball
+# per Linux architecture, in dist/binaries: for using without a package
+# manager.
+binaries:
+	dist/binaries.sh
 
 install-girlrepo: girlrepo
 	install -Dm755 girlrepo '$(DESTDIR)$(BINDIR)/girlrepo'
