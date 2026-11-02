@@ -817,8 +817,17 @@ func Girlify(ctx context.Context, s *repo.Store, o GirlifyOptions) (GirlifyStats
 		st.Remaining += len(order)
 		return st, nil
 	}
+	// Nothing new to send: waiting on what's been sent, unless not.
+	waitSent := func() (GirlifyStats, error) {
+		if o.Batch == nil || o.NoWait || st.Pending == 0 {
+			return st, nil
+		}
+		logf("⏳ nothing new to send; waiting for the %d pages already in batches (ctrl-c is fine: they keep going, and the next girlify collects them)\n", st.Pending)
+		st.Pending = 0
+		return st, collectGirl(ctx, s, o, true, &st, logf)
+	}
 	if len(order) == 0 {
-		return st, nil
+		return waitSent()
 	}
 	if o.Batch != nil {
 		jobs := make([]llm.BatchJob, 0, len(order))
@@ -848,7 +857,7 @@ func Girlify(ctx context.Context, s *repo.Store, o GirlifyOptions) (GirlifyStats
 			jobs = append(jobs, llm.BatchJob{Key: src, Title: w.title, Text: text, Meta: meta, Kind: llm.KindOf(w.pages[0].Section), Variant: o.LLM.Variant})
 		}
 		if len(jobs) == 0 && !o.Batch.HasRedos() {
-			return st, nil
+			return waitSent()
 		}
 		if len(jobs) > 0 {
 			logf("💌 sending %d pages to %s in batches: about half price, back within a day\n", len(jobs), o.Batch.Client.ModelName())

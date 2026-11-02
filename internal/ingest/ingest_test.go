@@ -807,3 +807,31 @@ func TestGirlifyBatchVariant(t *testing.T) {
 		t.Errorf("%d batches", srv.Batches())
 	}
 }
+
+// With nothing new to send, girlify waits for the batches already sent,
+// unless told not to (it once just said they were running, and stopped).
+func TestGirlifyWaitsForSent(t *testing.T) {
+	needTools(t)
+	srv := llmtest.NewBatchServer()
+	defer srv.Close()
+	srv.Polls = 2 // still running the first two looks
+	srv.Reply = llmtest.EchoOptions("batched")
+	root := filepath.Join(t.TempDir(), "man")
+	write(t, filepath.Join(root, "man1", "foo.1"), []byte(roff("foo", "1", "does foo")))
+	s, _ := repo.Open(t.TempDir())
+	ctx := context.Background()
+	if _, err := Paths(ctx, s, []string{root}, Options{Quiet: true, Log: io.Discard}); err != nil {
+		t.Fatal(err)
+	}
+	o := GirlifyOptions{Quiet: true, Log: io.Discard, NoWait: true,
+		Batch: &llm.Batcher{Client: &llm.OpenRouterBatch{URL: srv.BatchURL(), Model: "cheap-model"},
+			Dir: t.TempDir(), Poll: 10 * time.Millisecond}}
+	if st, err := Girlify(ctx, s, o); err != nil || st.Batched != 1 {
+		t.Fatalf("send: %+v, %v", st, err)
+	}
+	o.NoWait = false
+	st, err := Girlify(ctx, s, o)
+	if err != nil || st.Converted != 1 || st.Pending != 0 || srv.Batches() != 1 {
+		t.Fatalf("didn't wait for it: %+v, %v", st, err)
+	}
+}

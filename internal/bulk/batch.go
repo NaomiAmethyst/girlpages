@@ -89,8 +89,17 @@ func collect(ctx context.Context, o Options, dir cache.Dir, wait bool, st *Stats
 // and (unless NoWait) waits for them.
 func runBatch(ctx context.Context, o Options, dir cache.Dir, byHash map[string]*job, order []string, st *Stats,
 	logf func(string, ...any), log io.Writer) error {
+	// Nothing new to send: waiting on what's been sent, unless not.
+	waitSent := func() error {
+		if o.NoWait || st.Pending == 0 {
+			return nil
+		}
+		logf("⏳ nothing new to send; waiting for the %d pages already in batches (ctrl-c is fine: they keep going, and the next run collects them)\n", st.Pending)
+		st.Pending = 0
+		return collect(ctx, o, dir, true, st, logf, log)
+	}
 	if len(order) == 0 {
-		return nil
+		return waitSent()
 	}
 	todo := order
 	if o.Fetch != nil {
@@ -146,7 +155,7 @@ func runBatch(ctx context.Context, o Options, dir cache.Dir, byHash map[string]*
 		}
 	}
 	if len(todo) == 0 && !o.Batch.HasRedos() {
-		return nil
+		return waitSent()
 	}
 	jobs := make([]llm.BatchJob, 0, len(todo))
 	pages := 0
