@@ -61,16 +61,17 @@ export GOOS=linux GOARCH="$arch" CGO_ENABLED=0 GOFLAGS="${GOFLAGS:-} -buildvcs=f
 build girl girlrepo girlc girlserve
 
 for format in deb rpm apk archlinux; do
+	systemd=yes
 	case $format in
 	deb) hooks=apt ;;
 	rpm) hooks=dnf ;;
 	archlinux) hooks=pacman ;;
-	apk) hooks=none ;;
+	apk) hooks=apk systemd=no ;; # Alpine's crond runs it daily instead
 	esac
 	stage=$tmp/stage-$format
 	build install DESTDIR="$stage" PREFIX=/usr SYSCONFDIR=/etc CACHEDIR=/var/cache/girlpages \
 		SYSTEMDUNITDIR=/usr/lib/systemd/system PACMANHOOKDIR=/usr/share/libalpm/hooks \
-		HOOKS="$hooks" SYSTEMD=yes >/dev/null
+		HOOKS="$hooks" SYSTEMD="$systemd" >/dev/null
 	# The config is the package's to keep across upgrades, and the cache
 	# a directory it makes (nfpm.yaml); neither's a plain file.
 	rm -rf "$stage/etc/girlpages" "$stage/var/cache/girlpages"

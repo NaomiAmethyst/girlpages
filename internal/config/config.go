@@ -510,8 +510,13 @@ func (c *Config) ResolveBackend() (string, error) {
 	if c.OpenAI.APIKey != "" || c.OpenAI.APIKeyFile != "" {
 		return BackendOpenAI, nil
 	}
+	// (Run from a package manager's hook, there may be no home to look in.)
+	where := UserConfigPath()
+	if where == "" {
+		where = SystemConfigPath()
+	}
 	return "", errors.New("no LLM backend configured: install the claude CLI, or set openai.base_url / OPENAI_API_KEY " +
-		"in " + UserConfigPath() + " (see girl(1))")
+		"in " + where + " (see girl(1))")
 }
 
 // OpenAIKey returns the API key, reading api_key_file if needed.

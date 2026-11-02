@@ -20,10 +20,13 @@ SYSTEMDUNITDIR ?= /etc/systemd/system
 APTCONFDIR     ?= $(SYSCONFDIR)/apt/apt.conf.d
 PACMANHOOKDIR  ?= $(SYSCONFDIR)/pacman.d/hooks
 DNFACTIONDIR   ?= $(SYSCONFDIR)/dnf/plugins/post-transaction-actions.d
+APKHOOKDIR     ?= $(SYSCONFDIR)/apk/commit_hooks.d
+PERIODICDIR    ?= $(SYSCONFDIR)/periodic/daily
 DESTDIR        ?=
 
 # Which package-manager hooks to install: auto (whatever's on this
-# machine), none, or a list from: apt pacman dnf
+# machine), none, or a list from: apt pacman dnf apk (apk's comes with a
+# daily refresh from crond, as there's no systemd timer)
 HOOKS   ?= auto
 # Install systemd units: auto (if systemd is running), yes or no.
 SYSTEMD ?= auto
@@ -49,7 +52,8 @@ ifeq ($(HOOKS),auto)
   override HOOKS := $(strip \
     $(if $(shell command -v dpkg 2>/dev/null),apt) \
     $(if $(shell command -v pacman 2>/dev/null),pacman) \
-    $(if $(shell command -v dnf 2>/dev/null),dnf))
+    $(if $(shell command -v dnf 2>/dev/null),dnf) \
+    $(if $(shell command -v apk 2>/dev/null),apk))
 endif
 ifeq ($(HOOKS),none)
   override HOOKS :=
@@ -153,6 +157,12 @@ endif
 ifneq ($(filter dnf,$(HOOKS)),)
 	install -dm755 '$(DESTDIR)$(DNFACTIONDIR)'
 	$(call SUBST,$(BINDIR)) dist/dnf/girlpages.action.in > '$(DESTDIR)$(DNFACTIONDIR)/girlpages.action'
+endif
+ifneq ($(filter apk,$(HOOKS)),)
+	install -dm755 '$(DESTDIR)$(APKHOOKDIR)' '$(DESTDIR)$(PERIODICDIR)'
+	$(call SUBST,$(BINDIR)) dist/apk/girlpages.post-commit.in > '$(DESTDIR)$(APKHOOKDIR)/girlpages.post-commit'
+	$(call SUBST,$(BINDIR)) dist/apk/girlpages.daily.in > '$(DESTDIR)$(PERIODICDIR)/girlpages'
+	chmod 755 '$(DESTDIR)$(APKHOOKDIR)/girlpages.post-commit' '$(DESTDIR)$(PERIODICDIR)/girlpages'
 endif
 ifeq ($(SYSTEMD)$(DESTDIR),yes)
 	systemctl daemon-reload

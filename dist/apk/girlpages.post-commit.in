@@ -1,0 +1,10 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Naomi Persephone Amethyst <naomi@amethyst.name>
+#
+# apk runs the scripts in /etc/apk/commit_hooks.d before and after each
+# transaction (with pre-commit or post-commit). It doesn't say what
+# changed, so after each one, girlpages' hook starts a background refresh,
+# which only girlifies pages that are new.
+[ "$1" = post-commit ] || exit 0
+exec '@LIBEXECDIR@/girlpages-hook'

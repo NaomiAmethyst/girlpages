@@ -86,9 +86,10 @@ that every user reads from. It also installs:
 
 - `girlpages-update.service`, which runs `girl --bulk --update --prune`;
 - a hook for each package manager it finds that starts that service when man
-  pages change: an apt `DPkg::Post-Invoke` hook, a pacman hook, and a dnf
-  post-transaction action (`HOOKS="apt pacman dnf"` or `HOOKS=none` to
-  choose);
+  pages change: an apt `DPkg::Post-Invoke` hook, a pacman hook, a dnf
+  post-transaction action, and an apk commit hook, with a daily run from
+  crond in `/etc/periodic/daily` as Alpine has no systemd
+  (`HOOKS="apt pacman dnf apk"` or `HOOKS=none` to choose);
 - `girlpages-update.timer`, a daily run for pages that arrive any other way.
 
 The hooks don't convert anything new until you opt in by girlifying the whole

@@ -1,0 +1,8 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Naomi Persephone Amethyst <naomi@amethyst.name>
+#
+# Run daily by crond (from /etc/periodic/daily, on Alpine), as the systemd
+# timer runs girlpages-update where there's systemd: girlify what's new,
+# and let go of what's gone.
+exec '@BINDIR@/girl' --bulk --update --prune --quiet >>/var/log/girlpages.log 2>&1
