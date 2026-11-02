@@ -108,6 +108,12 @@ func Run(ctx context.Context, o Options, caches cache.Set, b llm.Backend, log io
 
 	full := len(o.Sections) == 0 && len(o.Names) == 0 && o.Limit == 0
 	pending := map[string]bool{}
+	if o.Batch != nil && o.Batch.Log == nil {
+		// How collecting batches is going, or waiting looks like hanging
+		// (for this run's output, this run).
+		o.Batch.Log = logf
+		defer func() { o.Batch.Log = nil }()
+	}
 	if o.Batch != nil && !o.DryRun {
 		// Whatever earlier runs sent off may be back by now.
 		if err := collect(ctx, o, dir, false, &st, logf, log); err != nil {

@@ -685,6 +685,12 @@ func Girlify(ctx context.Context, s *repo.Store, o GirlifyOptions) (GirlifyStats
 		}
 	}
 	pending := map[string]bool{}
+	if o.Batch != nil && o.Batch.Log == nil {
+		// How collecting batches is going, or waiting looks like hanging
+		// (for this run's output, this run).
+		o.Batch.Log = logf
+		defer func() { o.Batch.Log = nil }()
+	}
 	if o.Batch != nil && !o.DryRun {
 		if err := collectGirl(ctx, s, o, false, &st, logf); err != nil {
 			return st, err

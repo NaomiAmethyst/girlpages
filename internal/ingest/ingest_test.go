@@ -345,9 +345,17 @@ func TestGirlifyBatch(t *testing.T) {
 	if err != nil || st.Pending != 2 || srv.Batches() != 1 {
 		t.Fatalf("second: %+v, %v", st, err)
 	}
-	st, err = Girlify(ctx, s, o)
+	// Collecting says how it's going (it once didn't, and waiting looked
+	// like hanging).
+	var out strings.Builder
+	loud := o
+	loud.Quiet, loud.Log = false, &out
+	st, err = Girlify(ctx, s, loud)
 	if err != nil || st.Converted != 2 || srv.Batches() != 1 {
 		t.Fatalf("third: %+v, %v", st, err)
+	}
+	if !strings.Contains(out.String(), "📬 batch ") {
+		t.Errorf("collecting said nothing of the batch:\n%s", out.String())
 	}
 	l, _, _ := s.Listing("foo", "1")
 	if _, ok := l.CurrentVersion().Variants[repo.VariantGirl]; !ok {

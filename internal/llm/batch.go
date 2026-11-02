@@ -628,6 +628,8 @@ func (b *Batcher) Collect(ctx context.Context, wait bool, text func(SavedJob) (s
 		if err != nil {
 			return cs, err
 		}
+		b.logf("📬 batch %s: %d pages, sent %s; looking at it…\n", st.ID, len(st.Jobs), st.Submitted.Local().Format("Jan 2 15:04"))
+		lastSaid := time.Now()
 		for {
 			if len(have) > 0 && hasAll(have, ids) {
 				// Read (and saved) before, by a run that stopped.
@@ -638,16 +640,14 @@ func (b *Batcher) Collect(ctx context.Context, wait bool, text func(SavedJob) (s
 			var he *httpError
 			if each, ok := b.Client.(BatchEach); ok && err == nil && batch.Apart {
 				b.logf("📥 batch %s: fetching its %d results one at a time\n", st.ID, len(ids))
-				batch, err = each.GetEach(ctx, st.ID, ids, have, func(cid string, r BatchResult) { saver.save(cid, r) })
+				batch, err = each.GetEach(ctx, st.ID, ids, have, b.saveAndSay(saver, st.ID, len(ids), len(have)))
 			} else if each, ok := b.Client.(BatchEach); ok && err != nil && !errors.As(err, &he) && ctx.Err() == nil {
 				// Its status, results and all, didn't come through (the
 				// connection broke, not the server refusing): its results
 				// can still be had one at a time.
 				b.logf("⚠️  batch %s: its status didn't come through (%v); fetching its %d results one at a time\n",
 					st.ID, err, len(ids))
-				batch, err = each.GetEach(ctx, st.ID, ids, have, func(cid string, r BatchResult) {
-					saver.save(cid, r)
-				})
+				batch, err = each.GetEach(ctx, st.ID, ids, have, b.saveAndSay(saver, st.ID, len(ids), len(have)))
 			}
 			if expired(err) {
 				// Gone: what was saved of it is all there is, and the rest
@@ -680,8 +680,10 @@ func (b *Batcher) Collect(ctx context.Context, wait bool, text func(SavedJob) (s
 			if batch.Finished() || !wait {
 				break
 			}
-			if p := fmt.Sprintf("%d/%d", batch.Completed+batch.Failed, batch.Total); p != last {
-				last = p
+			// What's done when it changes, and every ten minutes anyway,
+			// so waiting doesn't look like hanging.
+			if p := fmt.Sprintf("%d/%d", batch.Completed+batch.Failed, batch.Total); p != last || time.Since(lastSaid) >= 10*time.Minute {
+				last, lastSaid = p, time.Now()
 				b.logf("⏳ batch %s: %s requests done (%s)\n", st.ID, p, batch.Status)
 			}
 			select {
@@ -723,6 +725,18 @@ func (b *Batcher) Collect(ctx context.Context, wait bool, text func(SavedJob) (s
 		}
 	}
 	return cs, nil
+}
+
+// saveAndSay saves results fetched one at a time, saying how many there are
+// every hundred.
+func (b *Batcher) saveAndSay(saver *resultSaver, id string, total, had int) func(string, BatchResult) {
+	n := had
+	return func(cid string, r BatchResult) { // (GetEach calls it a result at a time)
+		saver.save(cid, r)
+		if n++; n%100 == 0 || n == total {
+			b.logf("📥 batch %s: %d of %d results\n", id, n, total)
+		}
+	}
 }
 
 func hasAll(have map[string]BatchResult, ids []string) bool {
