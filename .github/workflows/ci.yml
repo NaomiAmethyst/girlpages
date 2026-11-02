@@ -49,6 +49,18 @@ jobs:
           path: dist/packages/*
           if-no-files-found: error
 
+  # The Nix flake builds (its vendorHash is the Go modules', so it has to
+  # change when they do), and its NixOS module checks out.
+  nix:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - run: nix build .#girlc .#girlpages --print-build-logs
+      - run: ./result/bin/girlc --version && ./result-1/bin/girl --version
+      - run: nix flake check
+
   # Binaries for using without a package manager: girlc on its own for
   # each system it runs on, and every binary, with their man pages, in a
   # tarball per Linux architecture (see dist/binaries.sh).

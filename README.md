@@ -122,6 +122,30 @@ own, from scratch):
 docker run --rm ghcr.io/naomiamethyst/girlc ls
 ```
 
+### Nix
+
+The repository is a flake, with `girlpages` (everything) and `girlc`, for
+Linux and macOS:
+
+```sh
+nix run github:NaomiAmethyst/girlpages#girlc -- ls      # read a page
+nix profile install github:NaomiAmethyst/girlpages      # girl, girlrepo, girlc, girlserve
+```
+
+On NixOS, its module installs girlpages with its config and girlifies
+what's new daily (Nix has no hooks for when packages change):
+
+```nix
+{
+  inputs.girlpages.url = "github:NaomiAmethyst/girlpages";
+  # … then, in a configuration's modules: girlpages.nixosModules.default, and
+  services.girlpages = {
+    enable = true;
+    settings.openai = { base_url = "https://api.example.org/v1"; model = "some-model"; api_key_file = "/run/secrets/girlpages"; };
+  };
+}
+```
+
 `make packages` builds the packages here (it needs
 [nfpm](https://nfpm.goreleaser.com); `ARCH=arm64` for the other one).
 
