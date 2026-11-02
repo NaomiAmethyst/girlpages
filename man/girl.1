@@ -780,6 +780,23 @@ must be logged in, or point
 at a wrapper.
 .SH ENVIRONMENT
 .TP
+.B GIRLPAGES_RENDERER
+What renders pages to text for girlifying:
+.B man\-db
+.RB ( "man \-l" ,
+the default where
+.B man
+is man-db's),
+.B mandoc
+(the default without man-db, as on FreeBSD or with mandoc's
+.BR man ),
+or
+.B groff
+(the default with neither).
+Pages are found with
+.B man \-w
+whichever it is.
+.TP
 .B GIRLPAGER
 Pager to use; checked before
 .BR PAGER .

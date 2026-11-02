@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Naomi Persephone Amethyst <naomi@amethyst.name>
+#
+# A pkg trigger (see pkg-triggers(5)): after a transaction that changed man
+# pages, girlpages' hook starts a background refresh, which only girlifies
+# pages that are new.
+description: "Refresh girlpages after man pages change"
+path_glob: [ "/usr/share/man/*", "/usr/local/share/man/*" ]
+trigger: {
+	type: shell
+	sandbox: false
+	script: "@LIBEXECDIR@/girlpages-hook"
+}

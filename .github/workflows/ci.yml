@@ -49,6 +49,31 @@ jobs:
           path: dist/packages/*
           if-no-files-found: error
 
+  # FreeBSD packages of girlpages and girlc, for FreeBSD 14 and 15 on amd64
+  # and aarch64: staged here (it takes Go and GNU make), made into packages
+  # by pkg in a FreeBSD VM (see dist/freebsd/package.sh).
+  freebsd-packages:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # for the version: the tag, or the commit's date
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: dist/freebsd/package.sh stage
+      - uses: vmactions/freebsd-vm@v1
+        with:
+          usesh: true
+          prepare: env ASSUME_ALWAYS_YES=yes pkg bootstrap -f
+          run: sh dist/freebsd/package.sh create
+      - uses: actions/upload-artifact@v4
+        with:
+          name: freebsd-packages
+          path: dist/freebsd-packages/*.pkg
+          if-no-files-found: error
+
   # The Nix flake builds (its vendorHash is the Go modules', so it has to
   # change when they do), and its NixOS module checks out.
   nix:
@@ -141,7 +166,7 @@ jobs:
   # their checksums.
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [packages, binaries, images]
+    needs: [packages, binaries, freebsd-packages, images]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -154,6 +179,10 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: binaries
+          path: packages
+      - uses: actions/download-artifact@v4
+        with:
+          name: freebsd-packages
           path: packages
       - run: cd packages && sha256sum * > SHA256SUMS
       # Made, then filled, so running it again finishes what failed. GitHub

@@ -3,5 +3,6 @@
 /girlc
 /dist/packages
 /dist/binaries
+/dist/freebsd-packages
 /stage
 /girlserve

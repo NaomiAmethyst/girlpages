@@ -1,0 +1,24 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Naomi Persephone Amethyst <naomi@amethyst.name>
+#
+# Run daily by periodic(8), as the systemd timer is elsewhere: girlify
+# what's new, and let go of what's gone. daily_girlpages_enable="NO" in
+# /etc/periodic.conf turns it off.
+
+if [ -r /etc/defaults/periodic.conf ]; then
+	. /etc/defaults/periodic.conf
+	source_periodic_confs
+fi
+
+: "${daily_girlpages_enable:=YES}"
+
+case "$daily_girlpages_enable" in
+[Yy][Ee][Ss])
+	echo
+	echo 'Girlifying new man pages 💅:'
+	if '@BINDIR@/girl' --bulk --update --prune --quiet; then rc=0; else rc=3; fi
+	;;
+*) rc=0 ;;
+esac
+exit $rc

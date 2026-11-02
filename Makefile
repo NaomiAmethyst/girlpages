@@ -22,11 +22,13 @@ PACMANHOOKDIR  ?= $(SYSCONFDIR)/pacman.d/hooks
 DNFACTIONDIR   ?= $(SYSCONFDIR)/dnf/plugins/post-transaction-actions.d
 APKHOOKDIR     ?= $(SYSCONFDIR)/apk/commit_hooks.d
 PERIODICDIR    ?= $(SYSCONFDIR)/periodic/daily
+PKGTRIGGERDIR  ?= $(PREFIX)/share/pkg/triggers
 DESTDIR        ?=
 
 # Which package-manager hooks to install: auto (whatever's on this
-# machine), none, or a list from: apt pacman dnf apk (apk's comes with a
-# daily refresh from crond, as there's no systemd timer)
+# machine), none, or a list from: apt pacman dnf apk freebsd (apk's comes
+# with a daily refresh from crond, FreeBSD's pkg trigger with one from
+# periodic, as there's no systemd timer)
 HOOKS   ?= auto
 # Install systemd units: auto (if systemd is running), yes or no.
 SYSTEMD ?= auto
@@ -53,7 +55,8 @@ ifeq ($(HOOKS),auto)
     $(if $(shell command -v dpkg 2>/dev/null),apt) \
     $(if $(shell command -v pacman 2>/dev/null),pacman) \
     $(if $(shell command -v dnf 2>/dev/null),dnf) \
-    $(if $(shell command -v apk 2>/dev/null),apk))
+    $(if $(shell command -v apk 2>/dev/null),apk) \
+    $(if $(shell command -v pkg 2>/dev/null),$(if $(wildcard /usr/local/sbin/pkg),freebsd)))
 endif
 ifeq ($(HOOKS),none)
   override HOOKS :=
@@ -163,6 +166,12 @@ ifneq ($(filter apk,$(HOOKS)),)
 	$(call SUBST,$(BINDIR)) dist/apk/girlpages.post-commit.in > '$(DESTDIR)$(APKHOOKDIR)/girlpages.post-commit'
 	$(call SUBST,$(BINDIR)) dist/apk/girlpages.daily.in > '$(DESTDIR)$(PERIODICDIR)/girlpages'
 	chmod 755 '$(DESTDIR)$(APKHOOKDIR)/girlpages.post-commit' '$(DESTDIR)$(PERIODICDIR)/girlpages'
+endif
+ifneq ($(filter freebsd,$(HOOKS)),)
+	install -dm755 '$(DESTDIR)$(PKGTRIGGERDIR)' '$(DESTDIR)$(PERIODICDIR)'
+	$(call SUBST,$(BINDIR)) dist/freebsd/girlpages.ucl.in > '$(DESTDIR)$(PKGTRIGGERDIR)/girlpages.ucl'
+	$(call SUBST,$(BINDIR)) dist/freebsd/girlpages.periodic.in > '$(DESTDIR)$(PERIODICDIR)/500.girlpages'
+	chmod 755 '$(DESTDIR)$(PERIODICDIR)/500.girlpages'
 endif
 ifeq ($(SYSTEMD)$(DESTDIR),yes)
 	systemctl daemon-reload

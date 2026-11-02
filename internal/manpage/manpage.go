@@ -104,6 +104,9 @@ func Locate(ctx context.Context, args []string, o Options) ([]Page, bool, error)
 		cmdArgs = append(cmdArgs, "-a")
 	}
 	if o.Locale != "" {
+		if Renderer() != RendererManDB {
+			return nil, false, errors.New("-L needs man-db's man; set LANG for the language instead")
+		}
 		cmdArgs = append(cmdArgs, "-L", o.Locale)
 	}
 	if o.Sections != "" {
@@ -149,14 +152,31 @@ func Locate(ctx context.Context, args []string, o Options) ([]Page, bool, error)
 // model. Keeping it fixed keeps content hashes stable across terminals.
 const Width = 80
 
-// Text renders a man page source file to plain text.
+// Text renders a man page source file to plain text: with man-db's man,
+// where there is one, else (on FreeBSD, say, or with mandoc's man) with
+// mandoc, or failing that groff.
 func Text(ctx context.Context, path string, o Options) (string, error) {
-	cmd := exec.CommandContext(ctx, "man", "--no-hyphenation", "--no-justification", "-l", path)
-	env := append(o.env(),
-		fmt.Sprintf("MANWIDTH=%d", Width),
-		"MANPAGER=cat", "PAGER=cat", "MANOPT=", "MAN_KEEP_FORMATTING=",
-		"GROFF_NO_SGR=1",
-	)
+	var cmd *exec.Cmd
+	env := o.env()
+	switch Renderer() {
+	case RendererManDB:
+		cmd = exec.CommandContext(ctx, "man", "--no-hyphenation", "--no-justification", "-l", path)
+		env = append(env, fmt.Sprintf("MANWIDTH=%d", Width),
+			"MANPAGER=cat", "PAGER=cat", "MANOPT=", "MAN_KEEP_FORMATTING=", "GROFF_NO_SGR=1")
+	case RendererMandoc:
+		// (mandoc reads gzipped pages itself, and tables and equations.)
+		cmd = exec.CommandContext(ctx, "mandoc", "-T", "utf8", "-O", fmt.Sprintf("width=%d", Width), path)
+	default:
+		src, err := Source(path, nil)
+		if err != nil {
+			return "", fmt.Errorf("rendering %s: %w", path, err)
+		}
+		// -mandoc picks man or mdoc for the page, -t its tables; no
+		// colour, bold or underlining, nor hyphenation, as man-db's.
+		cmd = exec.CommandContext(ctx, "groff", "-mandoc", "-t", "-Tutf8", "-P-cbou",
+			fmt.Sprintf("-rLL=%dn", Width), fmt.Sprintf("-rLT=%dn", Width), "-rHY=0")
+		cmd.Stdin = bytes.NewReader(src)
+	}
 	cmd.Env = env
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -216,14 +236,46 @@ func CleanText(s string) string {
 	return strings.Trim(strings.Join(lines, "\n"), "\n") + "\n"
 }
 
+// defaultManPath is where man pages are when there's no manpath to say:
+// the manpath lines of mandoc's /etc/man.conf, and the usual directories,
+// those that exist.
+func defaultManPath() []string {
+	var dirs []string
+	seen := map[string]bool{}
+	add := func(d string) {
+		if fi, err := os.Stat(d); err == nil && fi.IsDir() && !seen[d] {
+			seen[d] = true
+			dirs = append(dirs, d)
+		}
+	}
+	if b, err := os.ReadFile("/etc/man.conf"); err == nil {
+		for _, l := range strings.Split(string(b), "\n") {
+			if f := strings.Fields(l); len(f) == 2 && f[0] == "manpath" {
+				add(f[1])
+			}
+		}
+	}
+	for _, d := range []string{"/usr/local/share/man", "/usr/share/man", "/usr/local/man", "/usr/X11R6/man"} {
+		add(d)
+	}
+	return dirs
+}
+
 // ManPath returns the directories man searches, in order.
 func ManPath(ctx context.Context, o Options) ([]string, error) {
 	cmd := exec.CommandContext(ctx, "manpath", "-q")
 	cmd.Env = o.env()
 	out, err := cmd.Output()
 	if err != nil {
-		if mp := os.Getenv("MANPATH"); o.ManPath == "" && mp != "" {
+		if o.ManPath != "" {
+			return filepath.SplitList(o.ManPath), nil
+		}
+		if mp := os.Getenv("MANPATH"); mp != "" {
 			return filepath.SplitList(mp), nil
+		}
+		// No manpath (mandoc has none): man.conf's, and the usual places.
+		if dirs := defaultManPath(); len(dirs) > 0 {
+			return dirs, nil
 		}
 		return nil, fmt.Errorf("running manpath: %w", err)
 	}
@@ -419,7 +471,10 @@ func Enumerate(dirs []string, sections []string) ([]Page, error) {
 	return pages, nil
 }
 
-var whatisRE = regexp.MustCompile(`^(\S+) \(([^)]+)\)\s+- (.*)$`)
+// whatisRE reads a line of man -k: man-db's "ls (1)   - list directory
+// contents", or mandoc's "ls(1) - list directory contents", which joins
+// names sharing a page ("chgrp, chown(8) - …").
+var whatisRE = regexp.MustCompile(`^(\S+(?:, \S+)*?) ?\(([^)]+)\)\s+- (.*)$`)
 
 // Descriptions returns the one-line description of every page in the
 // whatis database (via man -k), keyed by DescKey.
@@ -434,7 +489,9 @@ func Descriptions(ctx context.Context, o Options) (map[string]string, error) {
 	sc := bufio.NewScanner(bytes.NewReader(out))
 	for sc.Scan() {
 		if m := whatisRE.FindStringSubmatch(sc.Text()); m != nil {
-			descs[DescKey(m[1], m[2])] = strings.TrimSpace(m[3])
+			for _, name := range strings.Split(m[1], ", ") {
+				descs[DescKey(name, m[2])] = strings.TrimSpace(m[3])
+			}
 		}
 	}
 	return descs, nil

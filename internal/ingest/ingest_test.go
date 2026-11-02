@@ -627,7 +627,9 @@ func TestGirlifyResumes(t *testing.T) {
 	Paths(ctx, s, []string{root}, Options{Quiet: true, Log: io.Discard})
 	parts := t.TempDir()
 	b := &flaky{}
-	o := GirlifyOptions{Backend: b, LLM: llm.Options{ChunkSize: 400}, Jobs: 2, PartsDir: parts, Quiet: true, Log: io.Discard}
+	// (A part at a time: two at once, the failure can stop the run before
+	// the first part's done, under load.)
+	o := GirlifyOptions{Backend: b, LLM: llm.Options{ChunkSize: 400}, Jobs: 1, PartsDir: parts, Quiet: true, Log: io.Discard}
 	if st, _ := Girlify(ctx, s, o); st.Failed != 1 {
 		t.Fatalf("first run: %+v", st)
 	}
