@@ -34,6 +34,10 @@ func PackageKind(path string) string {
 		return "rpm"
 	case strings.HasSuffix(base, ".apk"):
 		return "apk"
+	case strings.HasSuffix(base, ".txz"):
+		return "txz" // a FreeBSD distribution set (base.txz)
+	case strings.HasSuffix(base, ".nar") || strings.Contains(base, ".nar."):
+		return "nar" // a store path from a Nix binary cache
 	}
 	return ""
 }
@@ -83,12 +87,14 @@ func Extract(path, dir string) error {
 	switch PackageKind(path) {
 	case "deb":
 		return extractDeb(path, dir)
-	case "pacman", "apk":
+	case "pacman", "apk", "txz":
 		// An Alpine package is gzipped tarballs run together (a
 		// signature's, its metadata's, its files'), which tar reads as one.
 		return untar(path, dir)
 	case "rpm":
 		return extractRPM(path, dir)
+	case "nar":
+		return extractNAR(path, dir)
 	}
 	return fmt.Errorf("%s: not a package girlrepo knows how to open", path)
 }

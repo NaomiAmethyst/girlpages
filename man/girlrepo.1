@@ -23,7 +23,7 @@ girlrepo \- build and publish girlpages repositories and their website
 .RB [ \-d
 .IR dir ]
 .B crawl
-.BR apt | rpm | pacman | apk | rfc
+.BR apt | rpm | pacman | apk | freebsd | rfc
 .I url
 .RI [ suite ]
 .RI [ options ]
@@ -196,7 +196,7 @@ Don't take conversions from girl's cache.
 .TP
 .BR \-q ", " \-\-quiet
 Only report problems.
-.SS "crawl apt \fIurl suite\fR | rpm \fIurl\fR | pacman \fIurl\fR | apk \fIurl\fR | rfc \fR[\fIurl\fR]"
+.SS "crawl apt \fIurl suite\fR | rpm \fIurl\fR | pacman \fIurl\fR | apk \fIurl\fR | freebsd \fIurl\fR | rfc \fR[\fIurl\fR]"
 Ingests every package in a repository that has man pages, or every RFC:
 .TP
 .B apt \fIurl suite\fR
@@ -241,6 +241,18 @@ packages, and
 .B man\-pages
 and
 .BR man\-pages\-posix .
+.TP
+.B freebsd \fIurl\fR
+A FreeBSD release's distribution sets: the directory holding their
+.BR MANIFEST ,
+such as
+.BR https://download.freebsd.org/releases/amd64/15.1\-RELEASE ,
+its release from the URL.
+The base system's pages (its commands, libraries, file formats and section
+9's kernel interfaces) are taken from
+.BR base.txz ;
+third-party software's, in the pkg repositories, aren't, as their indexes
+list no files.
 .TP
 .B rfc \fR[\fIurl\fR]
 RFCs, from the RFC Editor (or a mirror of

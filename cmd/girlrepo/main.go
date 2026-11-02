@@ -51,7 +51,7 @@ commands:
                      repositories (git+https://…[#ref], or URLs ending .git)
   ingest --system    add this system's man pages, noting their packages
   crawl KIND URL     add every package with man pages from a repository:
-                     apt URL SUITE, rpm URL, pacman URL, or apk URL
+                     apt URL SUITE, rpm URL, pacman URL, apk URL, or freebsd URL
   import SOURCE      merge another girlpages repository (a URL or a
                      directory) into this one, by its packs if it has them
   unpack [PATH]      merge packs you have (in DIR/repo/packs, or PATH)
@@ -292,7 +292,7 @@ func (a *app) fetcher() *crawl.Fetcher {
 }
 
 func (a *app) crawl(ctx context.Context, args []string) error {
-	fs := flags("crawl", "apt URL SUITE | rpm URL | pacman URL | apk URL | rfc [URL] [options]")
+	fs := flags("crawl", "apt URL SUITE | rpm URL | pacman URL | apk URL | freebsd URL | rfc [URL] [options]")
 	numbers := fs.String("rfcs", "", "rfc: only these RFCs (comma separated numbers)")
 	components := fs.String("components", "", "apt: components to crawl (default: all the suite has)")
 	arch := fs.String("arch", "", "apt: architecture (default amd64)")
@@ -334,8 +334,10 @@ func (a *app) crawl(ctx context.Context, args []string) error {
 		r = &crawl.Pacman{URL: rest[1], Repo: *dbName}
 	case "apk", "alpine":
 		r = &crawl.APK{URL: rest[1]}
+	case "freebsd":
+		r = &crawl.FreeBSD{URL: rest[1]}
 	default:
-		return fmt.Errorf("can't crawl %q repositories; try apt, rpm, pacman or apk", rest[0])
+		return fmt.Errorf("can't crawl %q repositories; try apt, rpm, pacman, apk or freebsd", rest[0])
 	}
 	if len(rest) > 2 && rest[0] != "apt" && rest[0] != "deb" && rest[0] != "debian" {
 		fs.Usage()

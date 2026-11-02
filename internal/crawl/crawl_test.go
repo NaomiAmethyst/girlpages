@@ -415,3 +415,45 @@ func TestAPK(t *testing.T) {
 		t.Error("no open(2), from man-pages")
 	}
 }
+
+func TestFreeBSD(t *testing.T) {
+	needTools(t, "xz")
+	var raw bytes.Buffer
+	tw := tar.NewWriter(&raw)
+	for name, body := range map[string][]byte{
+		"./usr/share/man/man1/ls.1.gz":  gz([]byte(roff("ls", "list directory contents"))),
+		"./usr/share/man/man9/malloc.9": []byte(roff("malloc", "kernel memory management routines")),
+		"./bin/ls":                      []byte("binary"),
+	} {
+		tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg})
+		tw.Write(body)
+	}
+	tw.Close()
+	cmd := exec.Command("xz", "-c")
+	cmd.Stdin = &raw
+	txz, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := fmt.Sprintf("base-dbg.txz\t%s\t1\tbase_dbg\t\"Base system (Debugging)\"\toff\n"+
+		"base.txz\t%s\t3\tbase\t\"Base system (MANDATORY)\"\ton\nkernel.txz\t%s\t1\tkernel\t\"Kernel\"\ton\n",
+		sum([]byte("x")), sum(txz), sum([]byte("y")))
+	srv := serve(map[string][]byte{"/releases/amd64/15.1-RELEASE/MANIFEST": []byte(manifest),
+		"/releases/amd64/15.1-RELEASE/base.txz": txz})
+	defer srv.Close()
+	s, _ := repo.Open(t.TempDir())
+	st := crawlOnce(t, s, &FreeBSD{URL: srv.URL + "/releases/amd64/15.1-RELEASE/"}, "")
+	if st.Total != 3 || st.WithMan != 1 || st.Fetched != 1 || st.Pages.New != 2 {
+		t.Fatalf("crawl: %+v", st)
+	}
+	l, _, _ := s.Listing("malloc", "9")
+	if l == nil {
+		t.Fatal("no malloc(9)")
+	}
+	if v := l.CurrentVersion(); v.Packages[0] != (repo.Package{Distro: "freebsd", Release: "15.1", Name: "base", Version: "15.1", Arch: "amd64"}) {
+		t.Errorf("malloc: %+v", v.Packages)
+	}
+	if srv.fetched("kernel.txz") != 0 {
+		t.Error("fetched kernel.txz, which has no man pages")
+	}
+}
