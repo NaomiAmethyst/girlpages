@@ -47,7 +47,11 @@ abiArch() { case $1 in arm64) echo aarch64 ;; *) echo "$1" ;; esac; }
 manifest() { # name comment desc abi [message]
 	msg=
 	[ -n "${5:-}" ] && msg="
-  \"messages\": [{\"message\": \"$5\"}],"
+  \"messages\": [{\"message\": \"$5\"}],
+  \"scripts\": {
+    \"post-install\": \"cfg=\${PKG_PREFIX}/etc/girlpages/config.toml\\n[ -f \\\"\$cfg\\\" ] || cp \\\"\$cfg.sample\\\" \\\"\$cfg\\\"\\n\",
+    \"pre-deinstall\": \"cfg=\${PKG_PREFIX}/etc/girlpages/config.toml\\nif cmp -s \\\"\$cfg\\\" \\\"\$cfg.sample\\\"; then rm -f \\\"\$cfg\\\"; fi\\n\"
+  },"
 	cat <<EOF
 {
   "name": "$1",
@@ -87,10 +91,10 @@ stage() {
 			-o girl -o girlrepo -o girlc -o girlserve install >/dev/null
 		# shellcheck disable=SC2086
 		make -C "$tmp" -s VERSION="$version" $vars DESTDIR="$girlc" -o girlc install-girlc >/dev/null
-		# The config is a sample, which pkg installs as the config unless
-		# there is one; the cache is a directory pkg makes.
+		# The config is a sample, which the package's scripts install as
+		# the config unless there is one (and take away, unchanged, with
+		# it), as ports' @sample does; the cache is a directory it owns.
 		mv "$all/usr/local/etc/girlpages/config.toml" "$all/usr/local/etc/girlpages/config.toml.sample"
-		rm -rf "$all/var"
 		for osv in $osVersions; do
 			abi=FreeBSD:$osv:$(abiArch "$arch")
 			for pkg in girlpages girlc; do
@@ -108,12 +112,7 @@ stage() {
 						"girlc reads man pages, girlified by girl, straight from a girlpages repository (by default https://girlpages.dev), the way man reads them from the system: one static binary, with nothing else to install." \
 						"$abi" >"$d/+MANIFEST"
 				fi
-				(cd "$d/root" && find . -type f | sort | sed 's|^\.||') | while read -r f; do
-					case $f in
-					*.sample) echo "@sample $f" ;;
-					*) echo "$f" ;;
-					esac
-				done >"$d/plist"
+				(cd "$d/root" && find . -type f | sort | sed 's|^\.||') >"$d/plist"
 				[ $pkg = girlpages ] && echo "@dir /var/cache/girlpages" >>"$d/plist"
 				echo "$pkg-freebsd$osv-$arch (staged)"
 			done
