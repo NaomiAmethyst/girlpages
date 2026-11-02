@@ -340,7 +340,7 @@ Every version of one page, and where each was found.
 | `.added` | When this version was first added to the repository. |
 | `.version` | Its upstream version number, if its packages say (see [below](#which-version-is-the-latest)). |
 | `.variants` | For each variant, its latest generation: the hash and size of its file, its generation, and the prompt version that made it (if it says). |
-| `.packages` | Everywhere it was found: `distro`, `release`, package `name`, package `version` and `arch`, `url` for git repositories (with `version` like `3.5a (549c35b06165)`, tag and commit), and `license`, the package's, as its repository's index says (SPDX, mostly: Arch, rpm and Alpine indexes say; Debian's don't). Any may be missing. |
+| `.packages` | Everywhere it was found: `distro`, `release`, package `name`, package `version` and `arch`, `url` for git repositories (with `version` like `3.5a (549c35b06165)`, tag and commit), and `license`, the package's, as its repository's index says (SPDX, mostly: Arch, rpm and Alpine indexes say), or for a Debian package, its machine-readable `copyright` file's `Files: *` stanza, in SPDX's names where Debian's differ (`GPL-3+` is `GPL-3.0-or-later`). Any may be missing. |
 | `.license`, `.copyright` | What the version's source says, in comments man doesn't show: its `SPDX-License-Identifier`, and its copyright lines (a notice: "copyright", "(c)" or "©" then a year, from there on, with the holder on the next line if it's there instead; at most 12). Either may be missing. |
 
 Readers shouldn't need to work out `current`, `sources` or `version`

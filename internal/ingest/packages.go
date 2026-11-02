@@ -79,8 +79,12 @@ func PackageFromFile(path string) repo.Package {
 	return p
 }
 
-// manPattern selects what to unpack from a package.
-const manPattern = "*/man/*"
+// manPattern selects what to unpack from a package, and debCopyright a
+// Debian package's copyright file.
+const (
+	manPattern   = "*/man/*"
+	debCopyright = "*usr/share/doc/*/copyright"
+)
 
 // Extract unpacks the man pages from a package file into dir.
 func Extract(path, dir string) error {
@@ -101,9 +105,10 @@ func Extract(path, dir string) error {
 
 // untar extracts man pages from a tarball of any compression GNU tar
 // understands. A package without man pages isn't an error.
-func untar(path, dir string) error {
-	cmd := exec.Command("tar", "-x", "-f", path, "-C", dir, "--no-same-owner", "--no-same-permissions",
-		"--warning=no-unknown-keyword", "--wildcards", manPattern)
+func untar(path, dir string, also ...string) error {
+	args := append([]string{"-x", "-f", path, "-C", dir, "--no-same-owner", "--no-same-permissions",
+		"--warning=no-unknown-keyword", "--wildcards", manPattern}, also...)
+	cmd := exec.Command("tar", args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -162,7 +167,9 @@ func extractDeb(path, dir string) error {
 			if err := tmp.Close(); err != nil {
 				return err
 			}
-			return untar(tmp.Name(), dir)
+			// And its copyright file, which says its license, as its
+			// repository's index doesn't (see DebianLicense).
+			return untar(tmp.Name(), dir, debCopyright)
 		}
 		if _, err := br.Discard(int(size + size%2)); err != nil {
 			return fmt.Errorf("%s: %w", path, err)

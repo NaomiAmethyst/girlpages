@@ -316,7 +316,14 @@ pacman's
 for Alpine, its naming) say which packages have English man pages, and only
 those are downloaded (checking their SHA-256 against the index, where it
 has them), ingested a few at a time with
-their package, version and architecture, and deleted.
+their package, version, architecture and license (from the index, or for
+Debian's, which don't say, its machine-readable
+.B copyright
+file), and deleted.
+Each page's own license and copyright lines, from comments in its source,
+are kept too; crawling again with
+.B \-\-again
+fills them in for pages ingested before they were.
 Only the newest version of each package is taken.
 What's been ingested is remembered (in
 .BR ~/.cache/girlpages/girlrepo\-crawl/ ),

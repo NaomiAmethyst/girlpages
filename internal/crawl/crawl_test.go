@@ -66,7 +66,9 @@ func tarball(files map[string][]byte) []byte {
 
 // deb makes a .deb holding a man page.
 func deb(name, desc string) []byte {
-	data := tarball(map[string][]byte{"./usr/share/man/man1/" + name + ".1.gz": gz([]byte(roff(name, desc)))})
+	data := tarball(map[string][]byte{"./usr/share/man/man1/" + name + ".1.gz": gz([]byte(roff(name, desc))),
+		"./usr/share/doc/" + name + "/copyright": []byte("Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/\n\n" +
+			"Files: *\nCopyright: 2026 Someone\nLicense: GPL-3+\n")})
 	var b bytes.Buffer
 	b.WriteString("!<arch>\n")
 	for _, m := range []struct {
@@ -199,7 +201,7 @@ func TestApt(t *testing.T) {
 	l, _, _ := s.Listing("hello", "1")
 	v := l.CurrentVersion()
 	if v.Description != "say hello, newer" || len(v.Packages) != 1 ||
-		v.Packages[0] != (repo.Package{Distro: "debian", Release: "trixie", Name: "hello", Version: "1.0-2", Arch: "amd64"}) {
+		v.Packages[0] != (repo.Package{Distro: "debian", Release: "trixie", Name: "hello", Version: "1.0-2", Arch: "amd64", License: "GPL-3.0-or-later"}) {
 		t.Errorf("hello: %+v", v)
 	}
 	// Again: nothing to fetch.

@@ -131,6 +131,9 @@ func Sources(ctx context.Context, s *repo.Store, srcs []Source, o Options) (Stat
 			if err := Extract(p, dir); err != nil {
 				return Stats{}, err
 			}
+			if pkg.License == "" && PackageKind(p) == "deb" {
+				pkg.License = DebianLicense(dir, pkg.Name)
+			}
 			sysroot, jail = dir, dir
 		}
 		top := p
