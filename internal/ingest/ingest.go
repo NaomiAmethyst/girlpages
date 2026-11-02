@@ -204,7 +204,7 @@ func InstalledPages(ctx context.Context, s *repo.Store, pages []manpage.Page, ro
 			own, ok = owners[p.Path]
 		}
 		if ok {
-			pkg.Name, pkg.Version, pkg.Arch = own.Name, own.Version, own.Arch
+			pkg.Name, pkg.Version, pkg.Arch, pkg.License = own.Name, own.Version, own.Arch, own.License
 		}
 		cands = append(cands, candidate{path: p.Path, name: p.Name, section: p.Section, pkg: pkg, roots: roots})
 	}

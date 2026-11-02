@@ -21,15 +21,21 @@ func DebianLicense(dir, name string) string {
 		paths = append(paths, more...)
 	}
 	for _, p := range paths {
-		b, err := os.ReadFile(p)
-		if err != nil {
-			continue
-		}
-		if l := dep5License(string(b)); l != "" {
+		if l := DebianLicenseFile(p); l != "" {
 			return l
 		}
 	}
 	return ""
+}
+
+// DebianLicenseFile is the license a machine-readable copyright file says
+// (see DebianLicense), or "".
+func DebianLicenseFile(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return dep5License(string(b))
 }
 
 // dep5License is the license of a machine-readable copyright file's Files:

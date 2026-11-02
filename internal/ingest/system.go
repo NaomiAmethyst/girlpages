@@ -82,8 +82,14 @@ func dpkgOwners(owners map[string]repo.Package) {
 		if err != nil {
 			continue
 		}
+		licensed := false
 		for _, f := range strings.Split(string(b), "\n") {
 			if isManFile(f) {
+				// Its license, from its copyright file (which dpkg's
+				// database doesn't say), for packages with man pages.
+				if !licensed {
+					p.License, licensed = DebianLicenseFile(filepath.Join("/usr/share/doc", p.Name, "copyright")), true
+				}
 				owners[f] = p
 			}
 		}
@@ -98,7 +104,8 @@ func pacmanOwners(owners map[string]repo.Package) {
 			continue
 		}
 		fields := pacmanFields(b)
-		p := repo.Package{Name: first(fields["%NAME%"]), Version: first(fields["%VERSION%"]), Arch: first(fields["%ARCH%"])}
+		p := repo.Package{Name: first(fields["%NAME%"]), Version: first(fields["%VERSION%"]), Arch: first(fields["%ARCH%"]),
+			License: strings.Join(fields["%LICENSE%"], " AND ")}
 		fb, err := os.ReadFile(filepath.Join(filepath.Dir(desc), "files"))
 		if err != nil {
 			continue
@@ -138,14 +145,14 @@ func first(s []string) string {
 }
 
 func rpmOwners(owners map[string]repo.Package) {
-	out, err := exec.Command("rpm", "-qa", "--qf", `[%{FILENAMES}\t%{NAME}\t%{VERSION}-%{RELEASE}\t%{ARCH}\n]`).Output()
+	out, err := exec.Command("rpm", "-qa", "--qf", `[%{FILENAMES}\t%{NAME}\t%{VERSION}-%{RELEASE}\t%{ARCH}\t%{LICENSE}\n]`).Output()
 	if err != nil {
 		return
 	}
 	for _, line := range strings.Split(string(out), "\n") {
 		f := strings.Split(line, "\t")
-		if len(f) == 4 && isManFile(f[0]) {
-			owners[f[0]] = repo.Package{Name: f[1], Version: f[2], Arch: f[3]}
+		if len(f) == 5 && isManFile(f[0]) {
+			owners[f[0]] = repo.Package{Name: f[1], Version: f[2], Arch: f[3], License: strings.TrimSpace(f[4])}
 		}
 	}
 }
