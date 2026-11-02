@@ -83,7 +83,10 @@ func expired(err error) bool {
 type Batch struct {
 	// Apart says a finished batch's results are to be fetched one at a
 	// time (with BatchEach), not with it.
-	Apart  bool
+	Apart bool
+	// Done, for a batch still running, are the custom ids of its requests
+	// that are done, if the API says (to fetch them with BatchEach now).
+	Done   []string
 	ID     string
 	Status string
 	// Total, Completed and Failed count requests.
@@ -636,116 +639,174 @@ func (b *Batcher) Collect(ctx context.Context, wait bool, text func(SavedJob) (s
 	if poll <= 0 {
 		poll = time.Minute
 	}
+	var running []*looking
 	for _, st := range states {
-		var batch *Batch
-		last := ""
-		ids := customIDs(st)
 		have, err := b.loadResults(st.ID)
 		if err != nil {
 			return cs, err
 		}
-		saver, err := b.saveResults(st.ID)
-		if err != nil {
-			return cs, err
-		}
-		b.logf("📬 batch %s: %d pages, sent %s; looking at it…\n", st.ID, len(st.Jobs), st.Submitted.Local().Format("Jan 2 15:04"))
-		lastSaid := time.Now()
-		for {
-			if len(have) > 0 && hasAll(have, ids) {
-				// Read (and saved) before, by a run that stopped.
-				batch = &Batch{ID: st.ID, Status: "completed", Total: len(ids), Results: have}
-				break
-			}
-			batch, err = b.Client.Get(ctx, st.ID)
-			var he *httpError
-			if each, ok := b.Client.(BatchEach); ok && err == nil && batch.Apart {
-				b.logf("📥 batch %s: fetching its %d results one at a time\n", st.ID, len(ids))
-				batch, err = each.GetEach(ctx, st.ID, ids, have, b.saveAndSay(saver, st.ID, len(ids), len(have)))
-			} else if each, ok := b.Client.(BatchEach); ok && err != nil && !errors.As(err, &he) && ctx.Err() == nil {
-				// Its status, results and all, didn't come through (the
-				// connection broke, not the server refusing): its results
-				// can still be had one at a time.
-				b.logf("⚠️  batch %s: its status didn't come through (%v); fetching its %d results one at a time\n",
-					st.ID, err, len(ids))
-				batch, err = each.GetEach(ctx, st.ID, ids, have, b.saveAndSay(saver, st.ID, len(ids), len(have)))
-			}
-			if expired(err) {
-				// Gone: what was saved of it is all there is, and the rest
-				// is sent again.
-				b.logf("💔 batch %s: the API no longer has it (%v); %d of its %d results were saved, and its other pages will be sent again\n",
-					st.ID, err, len(have), len(ids))
-				batch = &Batch{ID: st.ID, Status: "completed", Total: len(ids), Results: map[string]BatchResult{}}
-				for _, cid := range ids {
-					if r, ok := have[cid]; ok {
-						batch.Results[cid] = r
-					} else {
-						batch.Results[cid] = BatchResult{Err: ErrExpired}
-					}
-				}
-				err = nil
-				break
-			}
+		b.logf("📬 batch %s: %d pages, sent %s; looking at it…\n", st.ID, len(st.Jobs)+len(st.Redos), st.Submitted.Local().Format("Jan 2 15:04"))
+		running = append(running, &looking{st: st, ids: customIDs(st), have: have})
+	}
+	// Each round looks at every batch still running, once: those finished
+	// are taken, and the rest's results that are done are saved as they
+	// come (so one slow batch holds up none of the others, and none of its
+	// results expire unread meanwhile).
+	last, lastSaid := "", time.Now()
+	for {
+		var still []*looking
+		doneReqs, allReqs := 0, 0
+		for _, l := range running {
+			batch, err := b.look(ctx, l)
 			if err != nil {
-				saver.close()
-				return cs, fmt.Errorf("batch %s: %w", st.ID, err)
+				return cs, fmt.Errorf("batch %s: %w", l.st.ID, err)
 			}
-			if batch.Status == "completed" {
-				for cid, r := range batch.Results {
-					if _, ok := have[cid]; !ok {
-						saver.save(cid, r)
-						have[cid] = r
-					}
-				}
+			if !batch.Finished() {
+				still = append(still, l)
+				doneReqs += batch.Completed + batch.Failed
+				allReqs += batch.Total
+				continue
 			}
-			if batch.Finished() || !wait {
-				break
-			}
-			// What's done when it changes, and every ten minutes anyway,
-			// so waiting doesn't look like hanging.
-			if p := fmt.Sprintf("%d/%d", batch.Completed+batch.Failed, batch.Total); p != last || time.Since(lastSaid) >= 10*time.Minute {
-				last, lastSaid = p, time.Now()
-				b.logf("⏳ batch %s: %s requests done (%s)\n", st.ID, p, batch.Status)
-			}
-			select {
-			case <-time.After(poll):
-			case <-ctx.Done():
-				return cs, ctx.Err()
+			if err := b.take(ctx, l.st, batch, text, done, &cs); err != nil {
+				return cs, err
 			}
 		}
-		if err := saver.close(); err != nil {
-			return cs, fmt.Errorf("saving batch %s's results: %w", st.ID, err)
+		running = still
+		if len(running) == 0 || !wait {
+			cs.Running = len(running)
+			return cs, nil
 		}
-		if !batch.Finished() {
-			cs.Running++
-			continue
+		// How it's going when that changes, and every ten minutes anyway,
+		// so waiting doesn't look like hanging.
+		if p := fmt.Sprintf("%d %d/%d", len(running), doneReqs, allReqs); p != last || time.Since(lastSaid) >= 10*time.Minute {
+			last, lastSaid = p, time.Now()
+			b.logf("⏳ %d batches running: %d/%d requests done\n", len(running), doneReqs, allReqs)
 		}
-		cs.Finished++
-		cs.Cost += batch.Cost
-		if batch.Status != "completed" {
-			msg := batch.Status
-			if batch.Error != "" {
-				msg += ": " + batch.Error
-			}
-			b.logf("💔 batch %s %s; its %d pages will be sent again\n", st.ID, msg, len(st.Jobs))
-			for _, j := range st.Jobs {
-				cs.Failed++
-				done(Result{Job: j, Err: fmt.Errorf("batch %s", msg)})
-			}
-		} else {
-			b.finish(ctx, st, batch, text, done, &cs)
-			if ctx.Err() != nil {
-				return cs, ctx.Err()
-			}
-			b.finishRedos(st, batch, done, &cs)
-		}
-		if err := os.Remove(b.statePath(st.ID)); err != nil {
-			return cs, err
-		}
-		if err := os.Remove(b.resultsPath(st.ID)); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return cs, err
+		select {
+		case <-time.After(poll):
+		case <-ctx.Done():
+			return cs, ctx.Err()
 		}
 	}
-	return cs, nil
+}
+
+// looking is a batch being collected: its requests' ids, and the results
+// saved of it so far.
+type looking struct {
+	st   *batchState
+	ids  []string
+	have map[string]BatchResult
+}
+
+// look looks at a batch once: finished (from its saved results, if it has
+// them all), or not, its finished results saved either way.
+func (b *Batcher) look(ctx context.Context, l *looking) (*Batch, error) {
+	st, ids, have := l.st, l.ids, l.have
+	if len(have) > 0 && hasAll(have, ids) {
+		// Read (and saved) before: by a run that stopped, or a look while
+		// it was running.
+		return &Batch{ID: st.ID, Status: "completed", Total: len(ids), Results: have}, nil
+	}
+	saver, err := b.saveResults(st.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer saver.close()
+	batch, err := b.Client.Get(ctx, st.ID)
+	each, isEach := b.Client.(BatchEach)
+	var he *httpError
+	switch {
+	case isEach && err == nil && batch.Apart:
+		b.logf("📥 batch %s: fetching its %d results one at a time\n", st.ID, len(ids))
+		batch, err = each.GetEach(ctx, st.ID, ids, have, b.saveAndSay(saver, st.ID, len(ids), len(have)))
+	case isEach && err != nil && !errors.As(err, &he) && ctx.Err() == nil:
+		// Its status, results and all, didn't come through (the
+		// connection broke, not the server refusing): its results can
+		// still be had one at a time.
+		b.logf("⚠️  batch %s: its status didn't come through (%v); fetching its %d results one at a time\n", st.ID, err, len(ids))
+		batch, err = each.GetEach(ctx, st.ID, ids, have, b.saveAndSay(saver, st.ID, len(ids), len(have)))
+	}
+	if expired(err) {
+		// Gone: what was saved of it is all there is, and the rest is
+		// sent again.
+		b.logf("💔 batch %s: the API no longer has it (%v); %d of its %d results were saved, and its other pages will be sent again\n",
+			st.ID, err, len(have), len(ids))
+		batch = &Batch{ID: st.ID, Status: "completed", Total: len(ids), Results: map[string]BatchResult{}}
+		for _, cid := range ids {
+			if r, ok := have[cid]; ok {
+				batch.Results[cid] = r
+			} else {
+				batch.Results[cid] = BatchResult{Err: ErrExpired}
+			}
+		}
+		return batch, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case batch.Status == "completed":
+		for cid, r := range batch.Results {
+			if _, ok := have[cid]; !ok {
+				saver.save(cid, r)
+				have[cid] = r
+			}
+		}
+		// (Those saved while it ran aren't in its reply, if it gave them
+		// apart.)
+		for cid, r := range have {
+			if _, ok := batch.Results[cid]; !ok && batch.Results != nil {
+				batch.Results[cid] = r
+			}
+		}
+	case !batch.Finished() && isEach:
+		// Running: its results that are done, saved now, not left to
+		// expire unread.
+		var fresh []string
+		for _, cid := range batch.Done {
+			if _, ok := have[cid]; !ok {
+				fresh = append(fresh, cid)
+			}
+		}
+		if len(fresh) > 0 {
+			b.logf("📥 batch %s: saving %d results done so far\n", st.ID, len(fresh))
+			if _, err := each.GetEach(ctx, st.ID, fresh, have, b.saveAndSay(saver, st.ID, len(ids), len(have))); err != nil && !expired(err) {
+				return nil, err
+			}
+		}
+	}
+	return batch, saver.close()
+}
+
+// take handles a finished batch: its pages done (or failed, to be sent
+// again), and it forgotten.
+func (b *Batcher) take(ctx context.Context, st *batchState, batch *Batch, text func(SavedJob) (string, bool), done func(Result), cs *CollectStats) error {
+	cs.Finished++
+	cs.Cost += batch.Cost
+	if batch.Status != "completed" {
+		msg := batch.Status
+		if batch.Error != "" {
+			msg += ": " + batch.Error
+		}
+		b.logf("💔 batch %s %s; its %d pages will be sent again\n", st.ID, msg, len(st.Jobs))
+		for _, j := range st.Jobs {
+			cs.Failed++
+			done(Result{Job: j, Err: fmt.Errorf("batch %s", msg)})
+		}
+	} else {
+		b.finish(ctx, st, batch, text, done, cs)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		b.finishRedos(st, batch, done, cs)
+	}
+	if err := os.Remove(b.statePath(st.ID)); err != nil {
+		return err
+	}
+	if err := os.Remove(b.resultsPath(st.ID)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 // partOf says which part of a page a part is (" part 2/3"), if it has

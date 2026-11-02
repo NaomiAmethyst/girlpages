@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -534,6 +535,14 @@ func (c *SailBatch) Get(ctx context.Context, id string) (*Batch, error) {
 		b.ID = id
 	}
 	if obj.Status != "completed" {
+		// Which requests are done, to fetch now, not leave to expire.
+		for cid, st := range obj.RequestStatus {
+			switch st.Status {
+			case "COMPLETED", "FAILED", "CANCELLED", "EXPIRED":
+				b.Done = append(b.Done, cid)
+			}
+		}
+		sort.Strings(b.Done)
 		return b, nil
 	}
 	if obj.Results == nil {

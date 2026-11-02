@@ -338,3 +338,69 @@ func TestSailBatchExpiredAndSaved(t *testing.T) {
 		t.Errorf("saved as expired: %+v, %v, %d live", got, err, live.calls.Load())
 	}
 }
+
+// TestSailCollectRounds: one slow batch holds up no other, and its results
+// that are done are saved while it runs, not left to expire unread.
+func TestSailCollectRounds(t *testing.T) {
+	var mu sync.Mutex
+	posts, slowLooks := 0, 0
+	fetched := map[string]int{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch p := r.URL.Path; {
+		case r.Method == http.MethodPost:
+			posts++
+			fmt.Fprintf(w, `{"id":"batch_%d"}`, posts)
+		case p == "/v1/batches/batch_1": // slow: one part done, one not, for a while
+			slowLooks++
+			if slowLooks < 3 {
+				fmt.Fprint(w, `{"id":"batch_1","status":"in_progress","request_counts":{"total":2,"completed":1,"failed":0},
+					"request_status":{"0-0":{"status":"COMPLETED"},"0-1":{"status":"RUNNING"}},"results":null}`)
+				return
+			}
+			// Finished: too big to give inline, say.
+			fmt.Fprint(w, `{"id":"batch_1","status":"completed","request_counts":{"total":2,"completed":2,"failed":0},
+				"request_status":{"0-0":{"status":"COMPLETED"},"0-1":{"status":"COMPLETED"}},"results":null}`)
+		case p == "/v1/batches/batch_2": // quick
+			fmt.Fprintf(w, `{"id":"batch_2","status":"completed","request_counts":{"total":1,"completed":1,"failed":0},"request_status":{},
+				"results":[{"custom_id":"0-0","response":{"body":{"id":"r","status":"completed","output":%s}},"error":null}]}`, doneOutput)
+		case strings.HasPrefix(p, "/v1/batches/batch_1/"):
+			fetched[p]++
+			fmt.Fprintf(w, `{"id":"r","status":"completed","output":%s}`, doneOutput)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, p)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	b := &Batcher{Client: &SailBatch{URL: srv.URL + "/v1/batches", Model: "m"}, Dir: t.TempDir(), Poll: time.Millisecond,
+		Options: Options{ChunkSize: 200}, MaxRequests: 2}
+	ctx := context.Background()
+	long := page("long", "-1", "-2", "-3", "-4", "-5", "-6", "-7", "-8")
+	short := "FOO(1)\n\nNAME\n       foo - does foo\n"
+	if n := len(Plan("LONG(1)", long, b.Options)); n != 2 {
+		t.Fatalf("want the long page in 2 parts, got %d", n)
+	}
+	texts := map[string]string{"long": long, "foo": short}
+	if _, err := b.Submit(ctx, []BatchJob{{Key: "long", Title: "LONG(1)", Text: long}, {Key: "foo", Title: "FOO(1)", Text: short}}); err != nil {
+		t.Fatal(err)
+	}
+	var order []string
+	cs, err := b.Collect(ctx, true, func(j SavedJob) (string, bool) { return texts[j.Key], true }, func(r Result) {
+		if r.Err != nil {
+			t.Errorf("%s: %v", r.Job.Title, r.Err)
+		}
+		order = append(order, r.Job.Key)
+	})
+	if err != nil || cs.Finished != 2 {
+		t.Fatalf("collect: %+v, %v", cs, err)
+	}
+	if len(order) != 2 || order[0] != "foo" {
+		t.Errorf("the quick batch waited for the slow one: %v", order)
+	}
+	// 0-0 saved while it ran (once), 0-1 once it was done.
+	if fetched["/v1/batches/batch_1/0-0"] != 1 || fetched["/v1/batches/batch_1/0-1"] != 1 {
+		t.Errorf("fetched %v", fetched)
+	}
+}
