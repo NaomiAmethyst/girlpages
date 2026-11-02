@@ -59,11 +59,24 @@ type OpenRouterBatch struct {
 // (Sail sends every result with it, which can be more than the connection
 // takes).
 type BatchEach interface {
-	GetEach(ctx context.Context, id string, customIDs []string) (*Batch, error)
+	// GetEach fetches the results of customIDs but those in have, calling
+	// save with each as it's done.
+	GetEach(ctx context.Context, id string, customIDs []string, have map[string]BatchResult,
+		save func(customID string, r BatchResult)) (*Batch, error)
+}
+
+// expired reports whether err is the API saying it no longer has a batch,
+// or a result (404): kept only so long, and gone.
+func expired(err error) bool {
+	var he *httpError
+	return errors.As(err, &he) && he.status == http.StatusNotFound
 }
 
 // Batch is a submitted batch as the server last described it.
 type Batch struct {
+	// Apart says a finished batch's results are to be fetched one at a
+	// time (with BatchEach), not with it.
+	Apart  bool
 	ID     string
 	Status string
 	// Total, Completed and Failed count requests.
@@ -606,19 +619,63 @@ func (b *Batcher) Collect(ctx context.Context, wait bool, text func(SavedJob) (s
 	for _, st := range states {
 		var batch *Batch
 		last := ""
+		ids := customIDs(st)
+		have, err := b.loadResults(st.ID)
+		if err != nil {
+			return cs, err
+		}
+		saver, err := b.saveResults(st.ID)
+		if err != nil {
+			return cs, err
+		}
 		for {
+			if len(have) > 0 && hasAll(have, ids) {
+				// Read (and saved) before, by a run that stopped.
+				batch = &Batch{ID: st.ID, Status: "completed", Total: len(ids), Results: have}
+				break
+			}
 			batch, err = b.Client.Get(ctx, st.ID)
 			var he *httpError
-			if each, ok := b.Client.(BatchEach); ok && err != nil && !errors.As(err, &he) && ctx.Err() == nil {
+			if each, ok := b.Client.(BatchEach); ok && err == nil && batch.Apart {
+				b.logf("📥 batch %s: fetching its %d results one at a time\n", st.ID, len(ids))
+				batch, err = each.GetEach(ctx, st.ID, ids, have, func(cid string, r BatchResult) { saver.save(cid, r) })
+			} else if each, ok := b.Client.(BatchEach); ok && err != nil && !errors.As(err, &he) && ctx.Err() == nil {
 				// Its status, results and all, didn't come through (the
 				// connection broke, not the server refusing): its results
 				// can still be had one at a time.
 				b.logf("⚠️  batch %s: its status didn't come through (%v); fetching its %d results one at a time\n",
-					st.ID, err, len(customIDs(st)))
-				batch, err = each.GetEach(ctx, st.ID, customIDs(st))
+					st.ID, err, len(ids))
+				batch, err = each.GetEach(ctx, st.ID, ids, have, func(cid string, r BatchResult) {
+					saver.save(cid, r)
+				})
+			}
+			if expired(err) {
+				// Gone: what was saved of it is all there is, and the rest
+				// is sent again.
+				b.logf("💔 batch %s: the API no longer has it (%v); %d of its %d results were saved, and its other pages will be sent again\n",
+					st.ID, err, len(have), len(ids))
+				batch = &Batch{ID: st.ID, Status: "completed", Total: len(ids), Results: map[string]BatchResult{}}
+				for _, cid := range ids {
+					if r, ok := have[cid]; ok {
+						batch.Results[cid] = r
+					} else {
+						batch.Results[cid] = BatchResult{Err: errors.New("expired before it was read")}
+					}
+				}
+				err = nil
+				break
 			}
 			if err != nil {
+				saver.close()
 				return cs, fmt.Errorf("batch %s: %w", st.ID, err)
+			}
+			if batch.Status == "completed" {
+				for cid, r := range batch.Results {
+					if _, ok := have[cid]; !ok {
+						saver.save(cid, r)
+						have[cid] = r
+					}
+				}
 			}
 			if batch.Finished() || !wait {
 				break
@@ -632,6 +689,9 @@ func (b *Batcher) Collect(ctx context.Context, wait bool, text func(SavedJob) (s
 			case <-ctx.Done():
 				return cs, ctx.Err()
 			}
+		}
+		if err := saver.close(); err != nil {
+			return cs, fmt.Errorf("saving batch %s's results: %w", st.ID, err)
 		}
 		if !batch.Finished() {
 			cs.Running++
@@ -658,8 +718,20 @@ func (b *Batcher) Collect(ctx context.Context, wait bool, text func(SavedJob) (s
 		if err := os.Remove(b.statePath(st.ID)); err != nil {
 			return cs, err
 		}
+		if err := os.Remove(b.resultsPath(st.ID)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return cs, err
+		}
 	}
 	return cs, nil
+}
+
+func hasAll(have map[string]BatchResult, ids []string) bool {
+	for _, id := range ids {
+		if _, ok := have[id]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // customIDs are the custom ids of a batch's requests: job-part.

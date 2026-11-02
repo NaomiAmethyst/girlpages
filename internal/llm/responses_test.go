@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -163,6 +164,8 @@ func TestSailBatch(t *testing.T) {
 				"error":{"code":"batch_results_too_large","message":"fetch them one at a time"}}`)
 		case r.URL.Path == "/v1/batches/batch_big/0-0":
 			fmt.Fprintf(w, `{"id":"r1","status":"completed","output":%s}`, doneOutput)
+		case r.URL.Path == "/v1/batches/batch_big/0-1":
+			fmt.Fprint(w, `{"id":"r2","status":"failed","error":{"message":"no"}}`)
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 			http.NotFound(w, r)
@@ -181,8 +184,15 @@ func TestSailBatch(t *testing.T) {
 	if b, err = c.Get(ctx, "batch_1"); err != nil || b.Status != "completed" || b.Results["0-0"].Reply != "# hiiii" || b.Results["0-1"].Err == nil {
 		t.Fatalf("completed: %+v, %v", b, err)
 	}
-	if b, err = c.Get(ctx, "batch_big"); err != nil || b.Results["0-0"].Reply != "# hiiii" || b.Results["0-1"].Err == nil {
+	// Too big to give inline: they're to be had one at a time.
+	if b, err = c.Get(ctx, "batch_big"); err != nil || !b.Apart || b.Results != nil {
 		t.Fatalf("too big for inline: %+v, %v", b, err)
+	}
+	saved := map[string]BatchResult{}
+	b, err = c.GetEach(ctx, "batch_big", []string{"0-0", "0-1"}, map[string]BatchResult{},
+		func(cid string, r BatchResult) { saved[cid] = r })
+	if err != nil || b.Status != "completed" || b.Results["0-0"].Reply != "# hiiii" || b.Results["0-1"].Err == nil || len(saved) != 2 {
+		t.Fatalf("one at a time: %+v, %v (saved %v)", b, err, saved)
 	}
 }
 
@@ -229,5 +239,83 @@ func TestSailBatchStatusBroken(t *testing.T) {
 	}
 	if looks != 2 || len(logs) == 0 || !strings.Contains(strings.Join(logs, ""), "one at a time") {
 		t.Errorf("%d looks at the result; logs: %q", looks, logs)
+	}
+}
+
+// TestSailBatchExpiredAndSaved: results read are saved, so a later run
+// finishes from them without asking again; and a batch Sail no longer has
+// doesn't stop collecting: its pages are sent again.
+func TestSailBatchExpiredAndSaved(t *testing.T) {
+	var mu sync.Mutex
+	asked := map[string]int{}
+	expire := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		asked[r.URL.Path]++
+		switch {
+		case r.Method == http.MethodPost:
+			fmt.Fprintf(w, `{"id":"batch_%d"}`, len(asked))
+		case expire:
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"error":{"message":"response \"resp_1\" has expired and its result is no longer available"}}`)
+		default:
+			fmt.Fprintf(w, `{"id":"batch_1","status":"completed","request_counts":{"total":1,"completed":1,"failed":0},"request_status":{},
+				"results":[{"custom_id":"0-0","response":{"body":{"id":"r1","status":"completed","output":%s}},"error":null}],"error":null}`, doneOutput)
+		}
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	b := &Batcher{Client: &SailBatch{URL: srv.URL + "/v1/batches", Model: "m"}, Dir: dir, Poll: time.Millisecond}
+	ctx := context.Background()
+	text := "FOO(1)\n\nNAME\n       foo - does foo\n"
+	if _, err := b.Submit(ctx, []BatchJob{{Key: "foo", Title: "FOO(1)", Text: text}}); err != nil {
+		t.Fatal(err)
+	}
+	sts, _ := b.saved()
+	id := sts[0].ID
+
+	// A run that reads the results, then stops before it's done with them
+	// (its page's text can't be had, say): they're saved.
+	cs, err := b.Collect(ctx, true, func(SavedJob) (string, bool) { return "", false }, func(Result) {})
+	if err != nil || cs.Changed != 1 {
+		t.Fatalf("first collect: %+v, %v", cs, err)
+	}
+	// (Collect removes a finished batch's files; put the batch back, as if
+	// that run had stopped first, with its results saved.)
+	if _, err := os.Stat(b.resultsPath(id)); err == nil {
+		t.Fatal("a finished batch's results were left behind")
+	}
+	if _, err := b.Submit(ctx, []BatchJob{{Key: "foo", Title: "FOO(1)", Text: text}}); err != nil {
+		t.Fatal(err)
+	}
+	sts, _ = b.saved()
+	id = sts[0].ID
+	s, _ := b.saveResults(id)
+	s.save("0-0", BatchResult{Reply: "# saved"})
+	s.close()
+	before := asked["/v1/batches/"+id]
+	var got []Result
+	if _, err := b.Collect(ctx, true, func(SavedJob) (string, bool) { return text, true }, func(r Result) { got = append(got, r) }); err != nil {
+		t.Fatal(err)
+	}
+	if asked["/v1/batches/"+id] != before || len(got) != 1 || !strings.Contains(got[0].Markup, "# saved") {
+		t.Errorf("didn't finish from the saved results: asked %d times, got %+v", asked["/v1/batches/"+id]-before, got)
+	}
+
+	// Expired: its page fails (to be sent again), and collecting goes on.
+	if _, err := b.Submit(ctx, []BatchJob{{Key: "foo", Title: "FOO(1)", Text: text}}); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	expire = true
+	mu.Unlock()
+	got = nil
+	cs, err = b.Collect(ctx, true, func(SavedJob) (string, bool) { return text, true }, func(r Result) { got = append(got, r) })
+	if err != nil || len(got) != 1 || got[0].Err == nil || !strings.Contains(got[0].Err.Error(), "expired") {
+		t.Fatalf("expired: %+v, %v, %+v", cs, err, got)
+	}
+	if sts, _ := b.saved(); len(sts) != 0 {
+		t.Errorf("an expired batch is still saved: %d", len(sts))
 	}
 }

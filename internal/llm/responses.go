@@ -318,11 +318,6 @@ type SailBatch struct {
 	Extra   map[string]any
 	Client  *http.Client
 	Retries int
-
-	// fetched are the results GetEach has had, by batch, as they're done:
-	// a result never changes once it is.
-	mu      sync.Mutex
-	fetched map[string]map[string]BatchResult
 }
 
 func (c *SailBatch) Kind() string      { return "sail" }
@@ -392,25 +387,25 @@ func (c *SailBatch) Submit(ctx context.Context, reqs []BatchRequest) (*Batch, er
 // getJobs is how many of a batch's results GetEach fetches at once.
 const getJobs = 8
 
-// GetEach fetches a batch's results one at a time, for when its status (with
-// them all inline) doesn't come through: finished once every one has, else
-// still in progress.
-func (c *SailBatch) GetEach(ctx context.Context, id string, customIDs []string) (*Batch, error) {
+// GetEach fetches a batch's results one at a time, but those it has, for
+// when its status (with them all inline) doesn't come through: finished
+// once every one is, else still in progress. A result Sail no longer has
+// (it keeps one only ten minutes after giving it) is done, as an error.
+func (c *SailBatch) GetEach(ctx context.Context, id string, customIDs []string, have map[string]BatchResult,
+	save func(customID string, r BatchResult)) (*Batch, error) {
 	u := strings.TrimRight(c.URL, "/") + "/" + url.PathEscape(id)
 	b := &Batch{ID: id, Status: "completed", Total: len(customIDs), Results: map[string]BatchResult{}}
-	c.mu.Lock()
-	if c.fetched == nil {
-		c.fetched = map[string]map[string]BatchResult{}
-	}
-	had := c.fetched[id]
-	if had == nil {
-		had = map[string]BatchResult{}
-		c.fetched[id] = had
-	}
-	c.mu.Unlock()
 	var mu sync.Mutex
 	var firstErr error
 	running := 0
+	got := func(cid string, r BatchResult) { // (with mu held)
+		b.Results[cid] = r
+		if r.Err == nil {
+			b.Completed++
+		} else {
+			b.Failed++
+		}
+	}
 	jobs := make(chan string)
 	var wg sync.WaitGroup
 	for range getJobs {
@@ -423,23 +418,36 @@ func (c *SailBatch) GetEach(ctx context.Context, id string, customIDs []string) 
 					return struct{}{}, doJSON(ctx, c.client(), http.MethodGet, u+"/"+url.PathEscape(cid), nil, c.APIKey, c.Headers, "", &ro)
 				})
 				var he *httpError
-				mu.Lock()
+				var r BatchResult
+				done := true
 				switch {
+				case errors.As(err, &he) && he.status == http.StatusNotFound && strings.Contains(he.msg, "expired"):
+					r = BatchResult{Err: errors.New("expired before it was read")}
 				case errors.As(err, &he) && he.status == http.StatusNotFound:
-					running++ // not run yet, as far as it says
+					done = false // not run yet, as far as it says
 				case err != nil:
+					mu.Lock()
 					if firstErr == nil {
 						firstErr = fmt.Errorf("fetching result %s: %w", cid, err)
 					}
+					mu.Unlock()
+					continue
 				case !ro.done():
-					running++
+					done = false
 				case ro.Status == "completed":
 					text, err := ro.text()
-					b.Results[cid] = BatchResult{Reply: text, Err: err}
-					b.Completed++
+					r = BatchResult{Reply: text, Err: err}
 				default:
-					b.Results[cid] = BatchResult{Err: fmt.Errorf("request %s", ro.Status)}
-					b.Failed++
+					r = BatchResult{Err: fmt.Errorf("request %s", ro.Status)}
+				}
+				mu.Lock()
+				if done {
+					got(cid, r)
+					if save != nil {
+						save(cid, r)
+					}
+				} else {
+					running++
 				}
 				mu.Unlock()
 			}
@@ -451,45 +459,39 @@ func (c *SailBatch) GetEach(ctx context.Context, id string, customIDs []string) 
 		}
 		mu.Lock()
 		stop := firstErr != nil
-		r, ok := had[cid]
+		r, ok := have[cid]
 		if ok {
-			b.Results[cid] = r
-			if r.Err == nil {
-				b.Completed++
-			} else {
-				b.Failed++
-			}
+			got(cid, r)
 		}
 		mu.Unlock()
-		if ok {
-			continue
-		}
 		if stop {
 			break
 		}
-		jobs <- cid
+		if !ok {
+			jobs <- cid
+		}
 	}
 	close(jobs)
 	wg.Wait()
+	mu.Lock()
+	for cid, r := range b.Results {
+		have[cid] = r
+	}
+	mu.Unlock()
 	if firstErr != nil {
 		return nil, firstErr
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	c.mu.Lock()
-	for cid, r := range b.Results {
-		had[cid] = r
-	}
-	if running == 0 {
-		delete(c.fetched, id)
-	}
-	c.mu.Unlock()
 	if running > 0 {
 		return &Batch{ID: id, Status: "in_progress", Total: len(customIDs), Completed: b.Completed, Failed: b.Failed}, nil
 	}
 	return b, nil
 }
+
+// (Sail can fetch a batch's results one at a time.)
+var _ BatchEach = (*SailBatch)(nil)
 
 // Get fetches a batch's status, and its results once it has completed:
 // inline, or one at a time if there are too many for that.
@@ -534,26 +536,13 @@ func (c *SailBatch) Get(ctx context.Context, id string) (*Batch, error) {
 	if obj.Status != "completed" {
 		return b, nil
 	}
-	b.Results = map[string]BatchResult{}
 	if obj.Results == nil {
-		// Too big to give inline: each result on its own.
-		for cid, st := range obj.RequestStatus {
-			if st.Status != "COMPLETED" {
-				b.Results[cid] = BatchResult{Err: fmt.Errorf("request %s", strings.ToLower(st.Status))}
-				continue
-			}
-			var ro responseObject
-			_, err := retry(ctx, c.Retries, func() (struct{}, error) {
-				return struct{}{}, doJSON(ctx, c.client(), http.MethodGet, u+"/"+url.PathEscape(cid), nil, c.APIKey, c.Headers, "", &ro)
-			})
-			if err != nil {
-				return nil, fmt.Errorf("fetching result %s: %w", cid, err)
-			}
-			text, err := ro.text()
-			b.Results[cid] = BatchResult{Reply: text, Err: err}
-		}
+		// Too big to give inline: each result's to be had on its own (see
+		// GetEach, which saves each as it comes).
+		b.Apart = true
 		return b, nil
 	}
+	b.Results = map[string]BatchResult{}
 	for _, r := range obj.Results {
 		switch {
 		case r.Error != nil:
