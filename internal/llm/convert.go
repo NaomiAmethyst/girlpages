@@ -116,15 +116,22 @@ func Convert(ctx context.Context, b Backend, title, text string, o Options) (str
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	for i := range chunks {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
+		// Parts start in order, so those before a failure are done (and
+		// kept, for a run that resumes): racing for a slot, any could go
+		// first.
+		if ctx.Err() == nil {
 			select {
 			case sem <- struct{}{}:
 			case <-ctx.Done():
-				errs[i] = ctx.Err()
-				return
 			}
+		}
+		if err := ctx.Err(); err != nil {
+			errs[i] = err
+			continue
+		}
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
 			defer func() { <-sem }()
 			key := ""
 			if o.Parts != nil {

@@ -594,7 +594,8 @@ type otherModel struct{ *fake }
 
 func (otherModel) Model() string { return "fake-2" }
 
-// flaky fails the first request for one part of a page, then works.
+// flaky fails the first request for one part of a page (its third), then
+// works.
 type flaky struct {
 	fake
 	mu     sync.Mutex
@@ -603,7 +604,7 @@ type flaky struct {
 
 func (f *flaky) Complete(ctx context.Context, sys, user string) (string, error) {
 	f.mu.Lock()
-	fail := !f.failed && strings.Contains(user, "this is part 2.")
+	fail := !f.failed && strings.Contains(user, "this is part 3.")
 	f.failed = f.failed || fail
 	f.mu.Unlock()
 	if fail {
@@ -627,15 +628,15 @@ func TestGirlifyResumes(t *testing.T) {
 	Paths(ctx, s, []string{root}, Options{Quiet: true, Log: io.Discard})
 	parts := t.TempDir()
 	b := &flaky{}
-	// (A part at a time: two at once, the failure can stop the run before
-	// the first part's done, under load.)
+	// (A part at a time, which start in order: so parts 1 and 2 are done
+	// when part 3 fails.)
 	o := GirlifyOptions{Backend: b, LLM: llm.Options{ChunkSize: 400}, Jobs: 1, PartsDir: parts, Quiet: true, Log: io.Discard}
 	if st, _ := Girlify(ctx, s, o); st.Failed != 1 {
 		t.Fatalf("first run: %+v", st)
 	}
 	first := b.calls.Load()
-	if first < 2 {
-		t.Fatalf("only %d parts converted before the failure", first)
+	if first != 2 {
+		t.Fatalf("%d parts converted before the failure", first)
 	}
 	st, err := Girlify(ctx, s, o)
 	if err != nil || st.Converted != 1 {
