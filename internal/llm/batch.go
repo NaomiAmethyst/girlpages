@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -64,6 +65,11 @@ type BatchEach interface {
 	GetEach(ctx context.Context, id string, customIDs []string, have map[string]BatchResult,
 		save func(customID string, r BatchResult)) (*Batch, error)
 }
+
+// ErrExpired is a batch's result that the API no longer has. Its page goes
+// in the next batch: it isn't redone live, at full price, as a part that
+// failed is (an expired batch would be every part of it).
+var ErrExpired = errors.New("expired before it was read")
 
 // expired reports whether err is the API saying it no longer has a batch,
 // or a result (404): kept only so long, and gone.
@@ -659,7 +665,7 @@ func (b *Batcher) Collect(ctx context.Context, wait bool, text func(SavedJob) (s
 					if r, ok := have[cid]; ok {
 						batch.Results[cid] = r
 					} else {
-						batch.Results[cid] = BatchResult{Err: errors.New("expired before it was read")}
+						batch.Results[cid] = BatchResult{Err: ErrExpired}
 					}
 				}
 				err = nil
@@ -762,6 +768,14 @@ func customIDs(st *batchState) []string {
 func (b *Batcher) finish(ctx context.Context, st *batchState, batch *Batch, text func(SavedJob) (string, bool),
 	done func(Result), cs *CollectStats) {
 	opts := Options{ChunkSize: st.ChunkSize, ExtraInstructions: st.ExtraInstructions}
+	// Parts the batch didn't do, redone live (at full price): said, so it's
+	// never a surprise.
+	var live atomic.Int64
+	defer func() {
+		if n := live.Load(); n > 0 {
+			b.logf("🔁 batch %s: %d parts it didn't do redone live, at full price\n", st.ID, n)
+		}
+	}()
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, max(b.Jobs, 1))
@@ -791,8 +805,11 @@ func (b *Batcher) finish(ctx context.Context, st *batchState, batch *Batch, text
 				switch {
 				case r.Err == nil && r.Reply != "":
 					outs[pi], err = FinishPart(ctx, b.Live, p, r.Reply)
+				case errors.Is(r.Err, ErrExpired):
+					err = r.Err
 				case b.Live != nil:
 					outs[pi], err = ConvertPart(ctx, b.Live, p)
+					live.Add(1)
 				case r.Err != nil:
 					err = r.Err
 				default:

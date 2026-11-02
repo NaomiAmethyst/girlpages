@@ -46,7 +46,11 @@ func (b *Batcher) loadResults(id string) (map[string]BatchResult, error) {
 			continue // a line cut short when a run stopped
 		}
 		br := BatchResult{Reply: r.Reply}
-		if r.Error != "" {
+		switch r.Error {
+		case "":
+		case ErrExpired.Error():
+			br.Err = ErrExpired // (so it isn't redone live)
+		default:
 			br.Err = errors.New(r.Error)
 		}
 		out[r.ID] = br

@@ -422,7 +422,7 @@ func (c *SailBatch) GetEach(ctx context.Context, id string, customIDs []string, 
 				done := true
 				switch {
 				case errors.As(err, &he) && he.status == http.StatusNotFound && strings.Contains(he.msg, "expired"):
-					r = BatchResult{Err: errors.New("expired before it was read")}
+					r = BatchResult{Err: ErrExpired}
 				case errors.As(err, &he) && he.status == http.StatusNotFound:
 					done = false // not run yet, as far as it says
 				case err != nil:

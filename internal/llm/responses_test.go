@@ -6,6 +6,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -266,7 +267,8 @@ func TestSailBatchExpiredAndSaved(t *testing.T) {
 	}))
 	defer srv.Close()
 	dir := t.TempDir()
-	b := &Batcher{Client: &SailBatch{URL: srv.URL + "/v1/batches", Model: "m"}, Dir: dir, Poll: time.Millisecond}
+	live := &liveFake{}
+	b := &Batcher{Client: &SailBatch{URL: srv.URL + "/v1/batches", Model: "m"}, Dir: dir, Poll: time.Millisecond, Live: live}
 	ctx := context.Background()
 	text := "FOO(1)\n\nNAME\n       foo - does foo\n"
 	if _, err := b.Submit(ctx, []BatchJob{{Key: "foo", Title: "FOO(1)", Text: text}}); err != nil {
@@ -317,5 +319,22 @@ func TestSailBatchExpiredAndSaved(t *testing.T) {
 	}
 	if sts, _ := b.saved(); len(sts) != 0 {
 		t.Errorf("an expired batch is still saved: %d", len(sts))
+	}
+	// Nor is any of it redone live, at full price: it goes in the next batch.
+	if n := live.calls.Load(); n != 0 {
+		t.Errorf("%d parts of an expired batch redone live", n)
+	}
+	// Nor from the saved results, the next run.
+	if _, err := b.Submit(ctx, []BatchJob{{Key: "foo", Title: "FOO(1)", Text: text}}); err != nil {
+		t.Fatal(err)
+	}
+	sts, _ = b.saved()
+	s, _ = b.saveResults(sts[0].ID)
+	s.save("0-0", BatchResult{Err: ErrExpired})
+	s.close()
+	got = nil
+	if _, err := b.Collect(ctx, true, func(SavedJob) (string, bool) { return text, true }, func(r Result) { got = append(got, r) }); err != nil ||
+		len(got) != 1 || !errors.Is(got[0].Err, ErrExpired) || live.calls.Load() != 0 {
+		t.Errorf("saved as expired: %+v, %v, %d live", got, err, live.calls.Load())
 	}
 }
