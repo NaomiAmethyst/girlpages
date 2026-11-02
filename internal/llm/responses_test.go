@@ -185,3 +185,49 @@ func TestSailBatch(t *testing.T) {
 		t.Fatalf("too big for inline: %+v, %v", b, err)
 	}
 }
+
+// TestSailBatchStatusBroken: when a batch's status (every result inline)
+// doesn't come through, its results are fetched one at a time instead.
+func TestSailBatchStatusBroken(t *testing.T) {
+	var mu sync.Mutex
+	looks := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/batches":
+			fmt.Fprint(w, `{"id":"batch_x"}`)
+		case r.URL.Path == "/v1/batches/batch_x":
+			// As a stream reset: the connection goes, mid-reply.
+			conn, _, _ := w.(http.Hijacker).Hijack()
+			conn.Close()
+		case r.URL.Path == "/v1/batches/batch_x/0-0":
+			looks++
+			if looks == 1 {
+				fmt.Fprint(w, `{"id":"r1","status":"in_progress"}`)
+				return
+			}
+			fmt.Fprintf(w, `{"id":"r1","status":"completed","output":%s}`, doneOutput)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	var logs []string
+	b := &Batcher{Client: &SailBatch{URL: srv.URL + "/v1/batches", Model: "m"}, Dir: t.TempDir(), Poll: time.Millisecond,
+		Log: func(format string, a ...any) { logs = append(logs, fmt.Sprintf(format, a...)) }}
+	ctx := context.Background()
+	text := "FOO(1)\n\nNAME\n       foo - does foo\n"
+	if _, err := b.Submit(ctx, []BatchJob{{Key: "foo", Title: "FOO(1)", Text: text}}); err != nil {
+		t.Fatal(err)
+	}
+	var got []Result
+	cs, err := b.Collect(ctx, true, func(SavedJob) (string, bool) { return text, true }, func(r Result) { got = append(got, r) })
+	if err != nil || cs.Finished != 1 || len(got) != 1 || got[0].Err != nil || !strings.Contains(got[0].Markup, "# hiiii") {
+		t.Fatalf("collect: %+v, %v, %+v", cs, err, got)
+	}
+	if looks != 2 || len(logs) == 0 || !strings.Contains(strings.Join(logs, ""), "one at a time") {
+		t.Errorf("%d looks at the result; logs: %q", looks, logs)
+	}
+}

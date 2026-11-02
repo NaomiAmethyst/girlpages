@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -317,6 +318,11 @@ type SailBatch struct {
 	Extra   map[string]any
 	Client  *http.Client
 	Retries int
+
+	// fetched are the results GetEach has had, by batch, as they're done:
+	// a result never changes once it is.
+	mu      sync.Mutex
+	fetched map[string]map[string]BatchResult
 }
 
 func (c *SailBatch) Kind() string      { return "sail" }
@@ -381,6 +387,108 @@ func (c *SailBatch) Submit(ctx context.Context, reqs []BatchRequest) (*Batch, er
 		return nil, errors.New("the batch was made, but Sail didn't say its id")
 	}
 	return &Batch{ID: created.ID, Status: "in_progress", Total: len(reqs)}, nil
+}
+
+// getJobs is how many of a batch's results GetEach fetches at once.
+const getJobs = 8
+
+// GetEach fetches a batch's results one at a time, for when its status (with
+// them all inline) doesn't come through: finished once every one has, else
+// still in progress.
+func (c *SailBatch) GetEach(ctx context.Context, id string, customIDs []string) (*Batch, error) {
+	u := strings.TrimRight(c.URL, "/") + "/" + url.PathEscape(id)
+	b := &Batch{ID: id, Status: "completed", Total: len(customIDs), Results: map[string]BatchResult{}}
+	c.mu.Lock()
+	if c.fetched == nil {
+		c.fetched = map[string]map[string]BatchResult{}
+	}
+	had := c.fetched[id]
+	if had == nil {
+		had = map[string]BatchResult{}
+		c.fetched[id] = had
+	}
+	c.mu.Unlock()
+	var mu sync.Mutex
+	var firstErr error
+	running := 0
+	jobs := make(chan string)
+	var wg sync.WaitGroup
+	for range getJobs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for cid := range jobs {
+				var ro responseObject
+				_, err := retry(ctx, c.Retries, func() (struct{}, error) {
+					return struct{}{}, doJSON(ctx, c.client(), http.MethodGet, u+"/"+url.PathEscape(cid), nil, c.APIKey, c.Headers, "", &ro)
+				})
+				var he *httpError
+				mu.Lock()
+				switch {
+				case errors.As(err, &he) && he.status == http.StatusNotFound:
+					running++ // not run yet, as far as it says
+				case err != nil:
+					if firstErr == nil {
+						firstErr = fmt.Errorf("fetching result %s: %w", cid, err)
+					}
+				case !ro.done():
+					running++
+				case ro.Status == "completed":
+					text, err := ro.text()
+					b.Results[cid] = BatchResult{Reply: text, Err: err}
+					b.Completed++
+				default:
+					b.Results[cid] = BatchResult{Err: fmt.Errorf("request %s", ro.Status)}
+					b.Failed++
+				}
+				mu.Unlock()
+			}
+		}()
+	}
+	for _, cid := range customIDs {
+		if ctx.Err() != nil {
+			break
+		}
+		mu.Lock()
+		stop := firstErr != nil
+		r, ok := had[cid]
+		if ok {
+			b.Results[cid] = r
+			if r.Err == nil {
+				b.Completed++
+			} else {
+				b.Failed++
+			}
+		}
+		mu.Unlock()
+		if ok {
+			continue
+		}
+		if stop {
+			break
+		}
+		jobs <- cid
+	}
+	close(jobs)
+	wg.Wait()
+	if firstErr != nil {
+		return nil, firstErr
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	c.mu.Lock()
+	for cid, r := range b.Results {
+		had[cid] = r
+	}
+	if running == 0 {
+		delete(c.fetched, id)
+	}
+	c.mu.Unlock()
+	if running > 0 {
+		return &Batch{ID: id, Status: "in_progress", Total: len(customIDs), Completed: b.Completed, Failed: b.Failed}, nil
+	}
+	return b, nil
 }
 
 // Get fetches a batch's status, and its results once it has completed:

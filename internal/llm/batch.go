@@ -54,6 +54,14 @@ type OpenRouterBatch struct {
 	Retries int
 }
 
+// BatchEach is a BatchAPI that can also fetch a batch's results one at a
+// time, by their custom ids: for when its status can't be had at all
+// (Sail sends every result with it, which can be more than the connection
+// takes).
+type BatchEach interface {
+	GetEach(ctx context.Context, id string, customIDs []string) (*Batch, error)
+}
+
 // Batch is a submitted batch as the server last described it.
 type Batch struct {
 	ID     string
@@ -600,6 +608,15 @@ func (b *Batcher) Collect(ctx context.Context, wait bool, text func(SavedJob) (s
 		last := ""
 		for {
 			batch, err = b.Client.Get(ctx, st.ID)
+			var he *httpError
+			if each, ok := b.Client.(BatchEach); ok && err != nil && !errors.As(err, &he) && ctx.Err() == nil {
+				// Its status, results and all, didn't come through (the
+				// connection broke, not the server refusing): its results
+				// can still be had one at a time.
+				b.logf("⚠️  batch %s: its status didn't come through (%v); fetching its %d results one at a time\n",
+					st.ID, err, len(customIDs(st)))
+				batch, err = each.GetEach(ctx, st.ID, customIDs(st))
+			}
 			if err != nil {
 				return cs, fmt.Errorf("batch %s: %w", st.ID, err)
 			}
@@ -643,6 +660,17 @@ func (b *Batcher) Collect(ctx context.Context, wait bool, text func(SavedJob) (s
 		}
 	}
 	return cs, nil
+}
+
+// customIDs are the custom ids of a batch's requests: job-part.
+func customIDs(st *batchState) []string {
+	var out []string
+	for ji, j := range st.Jobs {
+		for pi := 0; pi < j.Parts; pi++ {
+			out = append(out, fmt.Sprintf("%d-%d", ji, pi))
+		}
+	}
+	return out
 }
 
 func (b *Batcher) finish(ctx context.Context, st *batchState, batch *Batch, text func(SavedJob) (string, bool),
