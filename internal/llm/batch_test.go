@@ -6,6 +6,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -67,6 +68,7 @@ func testBatcher(t *testing.T, srv *llmtest.BatchServer, api BatchAPI, auth stri
 		Dir:         dir,
 		Options:     Options{ChunkSize: 200},
 		Live:        live,
+		Repair:      RepairLive, // (what this test is of)
 		Jobs:        2,
 		Poll:        10 * time.Millisecond,
 		MaxRequests: 3, // so the jobs go in several batches
@@ -216,5 +218,111 @@ func TestBatchOtherAPI(t *testing.T) {
 	}
 	if p, _ := or.Pending(); len(p) != 1 {
 		t.Error("openrouter's batch should still be there")
+	}
+}
+
+// TestBatchRepair: a reply that dropped options is asked again: by
+// default in the next batch (the page kept as it is meanwhile, and replaced
+// by the better reply), or live, which is said, or not at all.
+func TestBatchRepair(t *testing.T) {
+	for _, policy := range []string{RepairBatch, RepairLive, RepairNone} {
+		srv := llmtest.NewBatchServer()
+		srv.Reply = func(user string) (string, string) {
+			if strings.Contains(user, "a previous attempt left out") {
+				return llmtest.EchoOptions("asked again")(user)
+			}
+			return "# NAME\n\nfoo, but she forgot the flags", ""
+		}
+		live := &liveFake{}
+		var logs strings.Builder
+		b := &Batcher{Client: &OpenRouterBatch{URL: srv.BatchURL(), Model: "m"}, Dir: t.TempDir(), Poll: time.Millisecond,
+			Live: live, Repair: policy, Log: func(f string, a ...any) { fmt.Fprintf(&logs, f, a...) }}
+		ctx := context.Background()
+		text := page("foo", "-a", "--all")
+		if _, err := b.Submit(ctx, []BatchJob{{Key: "foo", Title: "FOO(1)", Text: text}}); err != nil {
+			t.Fatal(err)
+		}
+		var got []Result
+		collect := func() {
+			t.Helper()
+			if _, err := b.Collect(ctx, true, func(SavedJob) (string, bool) { return text, true }, func(r Result) { got = append(got, r) }); err != nil {
+				t.Fatalf("%s: collect: %v", policy, err)
+			}
+		}
+		collect()
+		if len(got) != 1 {
+			t.Fatalf("%s: %+v", policy, got)
+		}
+		switch policy {
+		case RepairBatch:
+			if live.calls.Load() != 0 || !strings.Contains(got[0].Markup, "forgot the flags") || !b.HasRedos() {
+				t.Fatalf("batch: %d live calls, %q, redos %v", live.calls.Load(), got[0].Markup, b.HasRedos())
+			}
+			if keys, _ := b.Pending(); !keys["foo"] {
+				t.Error("a page with parts to ask again isn't pending")
+			}
+			// The next submission sends it, though there's nothing new.
+			if n, err := b.Submit(ctx, nil); err != nil || n != 1 || b.HasRedos() {
+				t.Fatalf("batch: resubmitted %d, %v", n, err)
+			}
+			collect()
+			if len(got) != 2 || !strings.Contains(got[1].Markup, "asked again") || live.calls.Load() != 0 {
+				t.Errorf("batch: the better reply didn't replace it: %+v", got)
+			}
+		case RepairLive:
+			if live.calls.Load() != 1 || !strings.Contains(logs.String(), "🩹 FOO(1): its reply dropped") {
+				t.Errorf("live: %d live calls; logs %q", live.calls.Load(), logs.String())
+			}
+		case RepairNone:
+			if live.calls.Load() != 0 || !strings.Contains(got[0].Markup, "forgot the flags") || b.HasRedos() {
+				t.Errorf("none: %d live calls, %q", live.calls.Load(), got[0].Markup)
+			}
+		}
+		srv.Close()
+	}
+}
+
+// TestBatchRedoFailedPart: a part that failed is asked again in the next
+// batch, its page held till then (not sent whole), and done once it has it.
+func TestBatchRedoFailedPart(t *testing.T) {
+	srv := llmtest.NewBatchServer()
+	failed := false
+	srv.Reply = func(user string) (string, string) {
+		if strings.Contains(user, "part 2") && !failed {
+			failed = true
+			return "", "provider exploded"
+		}
+		return llmtest.EchoOptions("ok")(user)
+	}
+	defer srv.Close()
+	b := &Batcher{Client: &OpenRouterBatch{URL: srv.BatchURL(), Model: "m"}, Dir: t.TempDir(), Poll: time.Millisecond,
+		Options: Options{ChunkSize: 200}, Live: &liveFake{}}
+	ctx := context.Background()
+	text := page("long", "-1", "-2", "-3", "-4", "-5", "-6", "-7", "-8")
+	if n := len(Plan("LONG(1)", text, b.Options)); n < 2 {
+		t.Fatalf("want a page in parts, got %d", n)
+	}
+	if _, err := b.Submit(ctx, []BatchJob{{Key: "long", Title: "LONG(1)", Text: text}}); err != nil {
+		t.Fatal(err)
+	}
+	var got []Result
+	collect := func() CollectStats {
+		cs, err := b.Collect(ctx, true, func(SavedJob) (string, bool) { return text, true }, func(r Result) { got = append(got, r) })
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cs
+	}
+	if cs := collect(); cs.Held != 1 || len(got) != 0 {
+		t.Fatalf("first: %+v, %+v", cs, got)
+	}
+	if keys, _ := b.Pending(); !keys["long"] {
+		t.Error("a held page isn't pending, so it'd be sent whole")
+	}
+	if n, err := b.Submit(ctx, nil); err != nil || n != 1 {
+		t.Fatalf("resubmitted %d, %v", n, err)
+	}
+	if collect(); len(got) != 1 || got[0].Err != nil || strings.Count(got[0].Markup, "ok") < 2 {
+		t.Errorf("second: %+v", got)
 	}
 }

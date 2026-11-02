@@ -507,8 +507,9 @@ Ctrl+C asks a run to stop; a second stops it right away.
 Batches sent with one API are only collected while that API is configured.
 A page that changed in the meantime is sent again.
 Replies get the same completeness check as live ones, and any part that failed
-or dropped options is redone live, if the backend works; batches don't need
-it otherwise.
+or dropped options is asked again in the next batch: a page whose reply
+dropped options is kept meanwhile (and replaced if the next is better), and
+one with a part that failed waits for it.
 The package-manager hooks and timer pass
 .BR \-\-no\-wait ,
 so the daily run collects what the last one sent.

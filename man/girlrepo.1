@@ -557,6 +557,21 @@ collects whatever has finished.
 .B \-\-no\-wait
 Send batches off and return without waiting.
 .TP
+.BR \-\-repair =\fIhow\fR
+What's done with a batch's parts that failed, or whose replies dropped
+options:
+.B batch
+(the default) asks them again in the next batch, at batch price, keeping a
+page whose reply dropped options as it is meanwhile (and replacing it if the
+next reply's better), and holding one with a part that failed until it has
+it (sent whole after three goes);
+.B live
+asks the live model there and then, at full price (which in a flex window
+can take a long while);
+.B none
+keeps replies that dropped options as they are, and sends a page with a
+part that failed whole in the next batch.
+.TP
 .B \-\-reprompt
 Convert again versions whose variant was made with an older prompt.
 Listings record each variant's prompt version, and

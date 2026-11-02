@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -373,6 +374,8 @@ type batchState struct {
 	ExtraInstructions string     `json:"extra_instructions,omitempty"`
 	PromptVersion     int        `json:"prompt_version"`
 	Jobs              []SavedJob `json:"jobs"`
+	// Redos are pages with parts asked again (see SavedRedo).
+	Redos []SavedRedo `json:"redos,omitempty"`
 }
 
 // Batcher converts pages in batches, keeping track of submitted batches
@@ -383,6 +386,9 @@ type Batcher struct {
 	Options Options
 	// Live, if set, redoes parts that failed or dropped options in a batch.
 	Live Backend
+	// Repair is what's done with parts that failed or whose replies dropped
+	// options: RepairBatch ("" too), RepairLive (with Live) or RepairNone.
+	Repair string
 	// Jobs is how many finished pages are checked (and fixed up live) at
 	// once.
 	Jobs int
@@ -453,8 +459,11 @@ func (b *Batcher) Pending() (map[string]bool, error) {
 		for _, j := range st.Jobs {
 			keys[PendingKey(j.Key, j.Variant)] = true
 		}
+		for _, r := range st.Redos {
+			keys[PendingKey(r.Job.Key, r.Job.Variant)] = true
+		}
 	}
-	return keys, nil
+	return keys, b.redoKeys(keys)
 }
 
 // Submit plans the jobs and sends them, in as many batches as their size
@@ -475,7 +484,11 @@ func (b *Batcher) Submit(ctx context.Context, jobs []BatchJob) (int, error) {
 	// bytes sent) is sent again in batches half as big, from where it
 	// started; those before it were sent, and are saved. A page too big
 	// alone is left out.
-	sent := 0
+	// First, parts asked again.
+	sent, err := b.submitRedos(ctx, maxBytes, maxReqs)
+	if err != nil {
+		return sent, err
+	}
 	for {
 		n, err := b.submit(ctx, jobs, maxBytes, maxReqs)
 		sent += n
@@ -601,14 +614,15 @@ type Result struct {
 type CollectStats struct {
 	// Batches finished and still running.
 	Finished, Running int
-	// Pages converted, failed, and skipped because they changed.
-	Pages, Failed, Changed int
-	Cost                   float64
+	// Pages converted, failed, and skipped because they changed; and held
+	// for parts that failed, asked again in the next batch.
+	Pages, Failed, Changed, Held int
+	Cost                         float64
 }
 
 // Collect looks at every saved batch. Finished ones have their pages
-// checked (redoing failed parts live, if there's a Live backend) and
-// handed to done, then are forgotten. With wait, it keeps looking until
+// checked (parts that failed or dropped options asked again as Repair
+// says) and handed to done, then are forgotten. With wait, it keeps looking until
 // every batch has finished. text supplies a saved job's current text, or
 // false if the page has changed or gone since. done may be called from
 // several goroutines at once.
@@ -722,6 +736,7 @@ func (b *Batcher) Collect(ctx context.Context, wait bool, text func(SavedJob) (s
 			if ctx.Err() != nil {
 				return cs, ctx.Err()
 			}
+			b.finishRedos(st, batch, done, &cs)
 		}
 		if err := os.Remove(b.statePath(st.ID)); err != nil {
 			return cs, err
@@ -731,6 +746,23 @@ func (b *Batcher) Collect(ctx context.Context, wait bool, text func(SavedJob) (s
 		}
 	}
 	return cs, nil
+}
+
+// partOf says which part of a page a part is (" part 2/3"), if it has
+// more than one.
+func partOf(i, n int) string {
+	if n < 2 {
+		return ""
+	}
+	return fmt.Sprintf(" part %d/%d", i+1, n)
+}
+
+// short is the first n of ss, and how many more there are.
+func short(ss []string, n int) []string {
+	if len(ss) <= n {
+		return ss
+	}
+	return append(append([]string(nil), ss[:n]...), fmt.Sprintf("%d more", len(ss)-n))
 }
 
 // saveAndSay saves results fetched one at a time, saying how many there are
@@ -754,12 +786,18 @@ func hasAll(have map[string]BatchResult, ids []string) bool {
 	return true
 }
 
-// customIDs are the custom ids of a batch's requests: job-part.
+// customIDs are the custom ids of a batch's requests: job-part, and for
+// parts asked again, rpage-n.
 func customIDs(st *batchState) []string {
 	var out []string
 	for ji, j := range st.Jobs {
 		for pi := 0; pi < j.Parts; pi++ {
 			out = append(out, fmt.Sprintf("%d-%d", ji, pi))
+		}
+	}
+	for ri, r := range st.Redos {
+		for k := range r.Parts {
+			out = append(out, fmt.Sprintf("r%d-%d", ri, k))
 		}
 	}
 	return out
@@ -770,10 +808,13 @@ func (b *Batcher) finish(ctx context.Context, st *batchState, batch *Batch, text
 	opts := Options{ChunkSize: st.ChunkSize, ExtraInstructions: st.ExtraInstructions}
 	// Parts the batch didn't do, redone live (at full price): said, so it's
 	// never a surprise.
-	var live atomic.Int64
+	var live, repairs atomic.Int64
 	defer func() {
 		if n := live.Load(); n > 0 {
 			b.logf("🔁 batch %s: %d parts it didn't do redone live, at full price\n", st.ID, n)
+		}
+		if n := repairs.Load(); n > 0 {
+			b.logf("🩹 batch %s: %d parts that dropped options asked again live\n", st.ID, n)
 		}
 	}()
 	var mu sync.Mutex
@@ -799,15 +840,35 @@ func (b *Batcher) finish(ctx context.Context, st *batchState, batch *Batch, text
 				return
 			}
 			outs := make([]string, len(parts))
+			var redo []RedoPart // parts to ask again in the next batch
+			policy := b.repair()
 			var err error
 			for pi, p := range parts {
 				r := batch.Results[fmt.Sprintf("%d-%d", ji, pi)]
+				out := ""
+				if r.Err == nil {
+					out = Clean(r.Reply)
+				}
 				switch {
-				case r.Err == nil && r.Reply != "":
-					outs[pi], err = FinishPart(ctx, b.Live, p, r.Reply)
+				case out != "":
+					missing := Missing(p.Kind, p.Source, out)
+					switch {
+					case len(missing) == 0 || policy == RepairNone || policy == RepairLive && b.Live == nil:
+						outs[pi] = out
+					case policy == RepairLive:
+						b.logf("🩹 %s%s: its reply dropped %s; asking again live (full price)\n", j.Title, partOf(pi, len(parts)), joinMissing(missing))
+						repairs.Add(1)
+						outs[pi], err = FinishPart(ctx, b.Live, p, r.Reply)
+					default: // in the next batch, keeping this one meanwhile
+						outs[pi] = out
+						redo = append(redo, RedoPart{Part: pi, Missing: missing,
+							Prompt: Part{System: p.System, User: RetryPrompt(p.User, missing), Source: p.Source, Kind: p.Kind}})
+					}
 				case errors.Is(r.Err, ErrExpired):
 					err = r.Err
-				case b.Live != nil:
+				case policy == RepairBatch:
+					redo = append(redo, RedoPart{Part: pi, Prompt: p})
+				case policy == RepairLive && b.Live != nil:
 					outs[pi], err = ConvertPart(ctx, b.Live, p)
 					live.Add(1)
 				case r.Err != nil:
@@ -825,6 +886,19 @@ func (b *Batcher) finish(ctx context.Context, st *batchState, batch *Batch, text
 			res := Result{Job: j, Model: st.Model, PromptVersion: st.PromptVersion, Err: err}
 			if j.PromptVersion != 0 {
 				res.PromptVersion = j.PromptVersion
+			}
+			if err == nil && len(redo) > 0 {
+				rd := &SavedRedo{Job: j, Model: res.Model, PromptVersion: res.PromptVersion, Outs: outs, Parts: redo}
+				if err = b.queueRedo(rd); err == nil && slices.Contains(outs, "") {
+					// A part failed: the page waits for it.
+					b.logf("⏳ %s: %d of its parts go in the next batch\n", j.Title, len(redo))
+					mu.Lock()
+					cs.Held++
+					mu.Unlock()
+					return
+				} else if err == nil {
+					b.logf("🩹 %s: kept; %d of its parts that dropped options go in the next batch\n", j.Title, len(redo))
+				}
 			}
 			if err == nil {
 				res.Markup = Join(outs)

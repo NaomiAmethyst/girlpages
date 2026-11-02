@@ -847,10 +847,12 @@ func Girlify(ctx context.Context, s *repo.Store, o GirlifyOptions) (GirlifyStats
 			}
 			jobs = append(jobs, llm.BatchJob{Key: src, Title: w.title, Text: text, Meta: meta, Kind: llm.KindOf(w.pages[0].Section), Variant: o.LLM.Variant})
 		}
-		if len(jobs) == 0 {
+		if len(jobs) == 0 && !o.Batch.HasRedos() {
 			return st, nil
 		}
-		logf("💌 sending %d pages to %s in batches: about half price, back within a day\n", len(jobs), o.Batch.Client.ModelName())
+		if len(jobs) > 0 {
+			logf("💌 sending %d pages to %s in batches: about half price, back within a day\n", len(jobs), o.Batch.Client.ModelName())
+		}
 		if _, err := o.Batch.Submit(ctx, jobs); err != nil {
 			return st, err
 		}

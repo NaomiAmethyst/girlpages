@@ -706,6 +706,7 @@ func (a *app) girlify(ctx context.Context, args []string) error {
 	noBatch := fs.Bool("no-batch", false, "the same as --batch=none")
 	batchRequests := fs.Int("batch-requests", 0, "requests in a batch, at most (default from the config, or as many as the API takes)")
 	noWait := fs.Bool("no-wait", false, "send batches off and return; the next girlify collects them")
+	repairFlag := fs.String("repair", llm.RepairBatch, "batch parts that failed or dropped options: ask again in the next batch, of the live model (live), or not (none)")
 	quiet := fs.BoolP("quiet", "q", false, "only report problems")
 	variant := fs.String("variant", llm.VariantGirl, "the voice to rewrite pages in (see --list-variants)")
 	list := fs.Bool("list-variants", false, "list the variants there are prompts for")
@@ -773,6 +774,14 @@ func (a *app) girlify(ctx context.Context, args []string) error {
 	o.OutputRatio = *ratio
 	if o.Batch, err = core.NewBatcher(a.cfg, batchDir(s.Dir), o.Backend); err != nil && !*dry {
 		return err
+	}
+	switch *repairFlag {
+	case llm.RepairBatch, llm.RepairLive, llm.RepairNone:
+	default:
+		return fmt.Errorf("--repair=%s: want batch, live or none", *repairFlag)
+	}
+	if o.Batch != nil {
+		o.Batch.Repair = *repairFlag
 	}
 	if backendErr != nil {
 		if o.Batch == nil {

@@ -145,7 +145,7 @@ func runBatch(ctx context.Context, o Options, dir cache.Dir, byHash map[string]*
 			}
 		}
 	}
-	if len(todo) == 0 {
+	if len(todo) == 0 && !o.Batch.HasRedos() {
 		return nil
 	}
 	jobs := make([]llm.BatchJob, 0, len(todo))
