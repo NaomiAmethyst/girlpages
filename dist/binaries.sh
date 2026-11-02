@@ -10,6 +10,10 @@
 #                                        with their man pages, the example
 #                                        config, README and LICENSE, for each
 #                                        Linux architecture
+#   girlpages-VERSION-freebsd-ARCH.tar.gz
+#                                        girlc and girlserve, the same way:
+#                                        girl and girlrepo render pages with
+#                                        man-db, which FreeBSD hasn't
 #
 #   dist/binaries.sh [-v VERSION] [-o DIR]
 #
@@ -36,7 +40,7 @@ case $out in /*) ;; *) out=$root/$out ;; esac
 # girlc's systems, as GOOS/GOARCH (arm is ARMv6, for every Raspberry Pi),
 # and the Linux architectures the whole set is tarred for.
 girlcTargets="linux/amd64 linux/arm64 linux/arm linux/386 linux/riscv64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64 freebsd/amd64"
-tarArches="amd64 arm64 arm 386 riscv64"
+tarTargets="linux/amd64 linux/arm64 linux/arm linux/386 linux/riscv64 freebsd/amd64 freebsd/arm64"
 
 umask 022
 tmp=$(mktemp -d)
@@ -61,15 +65,21 @@ for t in $girlcTargets; do
 	echo "girlc-$version-$os-$arch$ext"
 done
 
-for arch in $tarArches; do
-	name=girlpages-$version-linux-$arch
-	build linux "$arch" girl girlrepo girlc girlserve
+for t in $tarTargets; do
+	os=${t%/*} arch=${t#*/}
+	name=girlpages-$version-$os-$arch
+	bins="girl girlrepo girlc girlserve"
+	[ "$os" = freebsd ] && bins="girlc girlserve"
+	# shellcheck disable=SC2086 # (a list)
+	build "$os" "$arch" $bins
 	d=$tmp/$name
 	rm -rf "$d"
 	mkdir -p "$d/bin" "$d/man/man1"
-	cp "$tmp/girl" "$tmp/girlrepo" "$tmp/girlc" "$tmp/girlserve" "$d/bin/"
-	cp "$tmp"/man/*.1 "$d/man/man1/"
-	cp "$tmp/dist/config.toml" "$d/config.toml.example"
+	for b in $bins; do
+		cp "$tmp/$b" "$d/bin/"
+		cp "$tmp/man/$b.1" "$d/man/man1/"
+	done
+	case $bins in girl\ *) cp "$tmp/dist/config.toml" "$d/config.toml.example" ;; esac
 	cp "$tmp/README.md" "$tmp/LICENSE" "$d/"
 	# The same tarball from the same source, whenever it's made: files in
 	# order, owned by nobody in particular, dated by the commit.

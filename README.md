@@ -154,7 +154,9 @@ Each release has binaries for using without a package manager, too:
 Windows and FreeBSD (`girlc-VERSION-OS-ARCH`, one static binary to copy
 anywhere), and everything, `girl`, `girlrepo`, `girlc` and `girlserve` with
 their man pages and an example config, in a tarball per Linux architecture
-(`girlpages-VERSION-linux-ARCH.tar.gz`). `make binaries` builds them here.
+(`girlpages-VERSION-linux-ARCH.tar.gz`), and `girlc` and `girlserve` in one
+for FreeBSD amd64 and arm64 (`girl` and `girlrepo` render pages with
+man-db, which FreeBSD hasn't). `make binaries` builds them here.
 
 ## In your browser
 
