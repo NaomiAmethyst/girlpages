@@ -51,7 +51,8 @@ commands:
                      repositories (git+https://…[#ref], or URLs ending .git)
   ingest --system    add this system's man pages, noting their packages
   crawl KIND URL     add every package with man pages from a repository:
-                     apt URL SUITE, rpm URL, pacman URL, apk URL, or freebsd URL
+                     apt URL SUITE, rpm URL, pacman URL, apk URL,
+                     freebsd URL, or nix CHANNEL
   import SOURCE      merge another girlpages repository (a URL or a
                      directory) into this one, by its packs if it has them
   unpack [PATH]      merge packs you have (in DIR/repo/packs, or PATH)
@@ -292,11 +293,13 @@ func (a *app) fetcher() *crawl.Fetcher {
 }
 
 func (a *app) crawl(ctx context.Context, args []string) error {
-	fs := flags("crawl", "apt URL SUITE | rpm URL | pacman URL | apk URL | freebsd URL | rfc [URL] [options]")
+	fs := flags("crawl", "apt URL SUITE | rpm URL | pacman URL | apk URL | freebsd URL | nix URL | rfc [URL] [options]")
 	numbers := fs.String("rfcs", "", "rfc: only these RFCs (comma separated numbers)")
 	components := fs.String("components", "", "apt: components to crawl (default: all the suite has)")
 	arch := fs.String("arch", "", "apt: architecture (default amd64)")
 	dbName := fs.String("repo", "", "pacman: database name (default: from the URL, e.g. core)")
+	nixCache := fs.String("nix-cache", "https://cache.nixos.org", "nix: the binary cache the channel's store paths are in")
+	lookups := fs.Int("lookups", 32, "nix: store paths to look up at once")
 	distro := fs.String("distro", "", "distribution to record (default: what the repository says)")
 	release := fs.String("release", "", "release to record (default: what the repository says)")
 	match := fs.StringP("match", "m", "", "only packages whose names match this regular expression")
@@ -336,8 +339,13 @@ func (a *app) crawl(ctx context.Context, args []string) error {
 		r = &crawl.APK{URL: rest[1]}
 	case "freebsd":
 		r = &crawl.FreeBSD{URL: rest[1]}
+	case "nix", "nixos":
+		// What each store path holds never changes, so what's been found
+		// out is kept for every crawl of the cache, whichever repository.
+		r = &crawl.Nix{URL: rest[1], Cache: *nixCache, Jobs: *lookups, Log: os.Stderr,
+			Listings: filepath.Join(config.UserCacheDir(), "girlrepo-crawl", "nix-"+repo.Hash([]byte(*nixCache))[:16]+".json")}
 	default:
-		return fmt.Errorf("can't crawl %q repositories; try apt, rpm, pacman, apk or freebsd", rest[0])
+		return fmt.Errorf("can't crawl %q repositories; try apt, rpm, pacman, apk, freebsd or nix", rest[0])
 	}
 	if len(rest) > 2 && rest[0] != "apt" && rest[0] != "deb" && rest[0] != "debian" {
 		fs.Usage()

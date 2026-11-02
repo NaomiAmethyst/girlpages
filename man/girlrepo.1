@@ -23,7 +23,7 @@ girlrepo \- build and publish girlpages repositories and their website
 .RB [ \-d
 .IR dir ]
 .B crawl
-.BR apt | rpm | pacman | apk | freebsd | rfc
+.BR apt | rpm | pacman | apk | freebsd | nix | rfc
 .I url
 .RI [ suite ]
 .RI [ options ]
@@ -196,7 +196,7 @@ Don't take conversions from girl's cache.
 .TP
 .BR \-q ", " \-\-quiet
 Only report problems.
-.SS "crawl apt \fIurl suite\fR | rpm \fIurl\fR | pacman \fIurl\fR | apk \fIurl\fR | freebsd \fIurl\fR | rfc \fR[\fIurl\fR]"
+.SS "crawl apt \fIurl suite\fR | rpm \fIurl\fR | pacman \fIurl\fR | apk \fIurl\fR | freebsd \fIurl\fR | nix \fIurl\fR | rfc \fR[\fIurl\fR]"
 Ingests every package in a repository that has man pages, or every RFC:
 .TP
 .B apt \fIurl suite\fR
@@ -253,6 +253,35 @@ The base system's pages (its commands, libraries, file formats and section
 .BR base.txz ;
 third-party software's, in the pkg repositories, aren't, as their indexes
 list no files.
+.TP
+.B nix \fIurl\fR
+A Nix channel, such as
+.BR https://channels.nixos.org/nixos\-25.05 ,
+with its store paths in the binary cache
+.B \-\-nix\-cache
+.RB ( https://cache.nixos.org
+by default), recorded as from
+.B nixos
+(or
+.BR nixpkgs )
+and the channel's release
+.RB ( 25.05 ,
+.BR unstable ),
+each package by the name and version in its store path.
+The channel lists its store paths, and the cache, for each, its files, so
+every store path that could hold man pages (a
+.B man
+or
+.B bin
+output, or the main one) is looked at, at most
+.B \-\-lookups
+at once (default 32), and those that do are fetched as NARs, of which only
+the man pages are unpacked.
+What each store path holds is remembered (they never change), in
+girlrepo's cache, so later crawls only look at new ones; the first looks at
+about 136,000, which takes about ten minutes.
+Most packages split their man pages into their own output, but some keep
+them in their main one, which is fetched whole.
 .TP
 .B rfc \fR[\fIurl\fR]
 RFCs, from the RFC Editor (or a mirror of

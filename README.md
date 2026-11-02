@@ -224,6 +224,7 @@ girlrepo crawl rpm https://dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os
 girlrepo crawl pacman https://geo.mirror.pkgbuild.com/core/os/x86_64
 girlrepo crawl apk https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64
 girlrepo crawl freebsd https://download.freebsd.org/releases/amd64/15.1-RELEASE
+girlrepo crawl nix https://channels.nixos.org/nixos-25.05
 girlrepo girlify -n --price 0.10/0.50                         # what would it cost?
 girlrepo import https://girlpages.dev                          # merge in another repo (by its packs)
 girlrepo export /srv/packs                                    # or write yours as just packs, for mirroring
