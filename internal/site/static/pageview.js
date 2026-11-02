@@ -69,6 +69,13 @@ export function createPageView({ el: app, base, listing, findName, variant, brow
     return parts.join(": ") + (p.url ? ` from ${p.url}` : "");
   }
 
+  // licenseLink is a license, linked to its SPDX page if it's a lone
+  // identifier there, as site.SPDXURL.
+  function licenseLink(l) {
+    return /^[A-Za-z0-9][A-Za-z0-9.+-]*$/.test(l) && !l.startsWith("LicenseRef-")
+      ? html`<a href="https://spdx.org/licenses/${l}.html" rel="license nofollow">${l}</a>` : l;
+  }
+
   // packageKey is the name of a package's listing (as site.packageLink),
   // or "" if it hasn't one.
   function packageKey(p) {
@@ -237,9 +244,12 @@ export function createPageView({ el: app, base, listing, findName, variant, brow
     const from = [
       ...(ver.packages || []).map(p => {
         const k = packageKey(p);
-        return html`<li>${k ? html`<a href="${packageURL(base, k)}" title="every page from it">${packageLabel(p)}</a>` : packageLabel(p)}</li>`;
+        return html`<li>${k ? html`<a href="${packageURL(base, k)}" title="every page from it">${packageLabel(p)}</a>` : packageLabel(p)}${
+          p.license && html` · ${licenseLink(p.license)}`}</li>`;
       }),
-      g && html`<li>💖 ${which === "girl" ? "girlified" : "rewritten"} by ${g.model || g.backend || "a model"}${made && ` on ${made}`}</li>`,
+      ver.license && html`<li>📜 the page's license: ${licenseLink(ver.license)}</li>`,
+      ...(ver.copyright || []).map(c => html`<li class="copyright">${c}</li>`),
+      g && html`<li>💖 ${which === "girl" ? "girlified" : "rewritten"} by ${g.model || g.backend || "a model"}${made && ` on ${made}`}: a language model's rewrite of the original, under its terms</li>`,
     ].filter(Boolean);
     const provenance = from.length > 0 && html`<div class="provenance"><details><summary>📦 where this page comes from</summary><ul>${from}</ul></details></div>`;
 

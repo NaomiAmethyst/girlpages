@@ -116,13 +116,17 @@ func (rd *Reader) text(p *Page) string {
 		}
 		note += "\n\n"
 	}
+	notice := ""
+	if n := p.Notice(); n != "" {
+		notice = "\n" + n + "\n"
+	}
 	if p.Variant.Syntax != repo.SyntaxMarkup {
 		if about := p.About(); about != "" {
 			note += "📌 " + p.Title() + ", " + about + "\n\n"
 		}
-		return note + p.Text(render.Options{})
+		return note + p.Text(render.Options{}) + notice
 	}
-	return note + p.Text(render.Options{Width: rd.Width, Color: rd.Color, Footer: footer})
+	return note + p.Text(render.Options{Width: rd.Width, Color: rd.Color, Footer: footer}) + notice
 }
 
 // markdown is a page as Markdown: girlpages markup without its tags, or
@@ -140,14 +144,18 @@ func (rd *Reader) markdown(p *Page) string {
 		note += "> 📌 " + p.Title() + ", " + about + "\n\n"
 	}
 	text := render.StripControls(p.Variant.Text())
+	notice := ""
+	if n := p.Notice(); n != "" {
+		notice = "\n> " + n + "\n"
+	}
 	if p.Variant.Syntax == repo.SyntaxMarkup {
-		return note + render.Markdown(text)
+		return note + strings.TrimRight(render.Markdown(text), "\n") + "\n" + notice
 	}
 	fence := "```"
 	for strings.Contains(text, fence) {
 		fence += "`"
 	}
-	return "# " + p.Title() + "\n\n" + note + fence + "\n" + strings.TrimRight(text, "\n") + "\n" + fence + "\n"
+	return "# " + p.Title() + "\n\n" + note + fence + "\n" + strings.TrimRight(text, "\n") + "\n" + fence + "\n" + notice
 }
 
 // Versions lists the versions of the pages args ask for.

@@ -70,7 +70,7 @@ func (a *APK) Index(ctx context.Context, f *Fetcher) (*Index, error) {
 		}
 		size, _ := strconv.ParseInt(e["S"], 10, 64)
 		idx.Packages = append(idx.Packages, Package{Name: e["P"], Version: e["V"], Arch: e["A"],
-			URL: join(a.URL, e["P"]+"-"+e["V"]+".apk"), Size: size})
+			URL: join(a.URL, e["P"]+"-"+e["V"]+".apk"), Size: size, License: e["L"]})
 	}
 	e := map[string]string{}
 	sc := bufio.NewScanner(tr)

@@ -103,7 +103,8 @@ func (p *Pacman) Index(ctx context.Context, f *Fetcher) (*Index, error) {
 		}
 		size, _ := strconv.ParseInt(get("%CSIZE%"), 10, 64)
 		idx.Packages = append(idx.Packages, Package{Name: get("%NAME%"), Version: get("%VERSION%"), Arch: get("%ARCH%"),
-			URL: join(p.URL, get("%FILENAME%")), SHA256: get("%SHA256SUM%"), Size: size})
+			URL: join(p.URL, get("%FILENAME%")), SHA256: get("%SHA256SUM%"), Size: size,
+			License: strings.Join(e.desc["%LICENSE%"], " AND ")})
 	}
 	return idx, nil
 }

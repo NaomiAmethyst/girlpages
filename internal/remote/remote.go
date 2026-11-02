@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -429,6 +430,35 @@ func (p *Page) Text(o render.Options) string {
 		}
 	}
 	return render.Render(p.Variant.Text(), o)
+}
+
+// Notice says whose a page is and under what terms, as far as the
+// repository knows: its license (its source's own, else its packages'),
+// its copyright lines, and, for a rewrite, that it is one. "" if it knows
+// nothing to say.
+func (p *Page) Notice() string {
+	var parts []string
+	lic := p.Version.License
+	if lic == "" {
+		var ls []string
+		for _, pk := range p.Version.Packages {
+			if pk.License != "" && !slices.Contains(ls, pk.License) {
+				ls = append(ls, pk.License)
+			}
+		}
+		lic = strings.Join(ls, "; ")
+	}
+	if lic != "" {
+		parts = append(parts, "license: "+lic)
+	}
+	parts = append(parts, p.Version.Copyright...)
+	if p.Variant.Syntax == repo.SyntaxMarkup && len(parts) > 0 {
+		parts = append(parts, "a language model's rewrite of the original, under its terms")
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "📜 " + strings.Join(parts, " · ")
 }
 
 // About says which version a page is, if it isn't the latest ("version

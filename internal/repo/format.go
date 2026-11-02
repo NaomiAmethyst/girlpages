@@ -140,6 +140,11 @@ type Version struct {
 	// Version is the upstream version number (see Upstream), for clients.
 	// It's worked out whenever the listing changes.
 	Version string `json:"version,omitempty"`
+	// License and Copyright are what the page's source says, in comments
+	// man doesn't show: its SPDX license identifier, and its copyright
+	// lines (see manpage.FindNotices).
+	License   string   `json:"license,omitempty"`
+	Copyright []string `json:"copyright,omitempty"`
 }
 
 // VariantInfo describes a stored variant: in a listing, its latest
@@ -208,6 +213,16 @@ type Package struct {
 	Arch    string `json:"arch,omitempty"`
 	// URL is where it came from, for sources such as git repositories.
 	URL string `json:"url,omitempty"`
+	// License is the package's license, as its repository's index says
+	// (SPDX, mostly), if it does.
+	License string `json:"license,omitempty"`
+}
+
+// Same reports whether p and q are the same package, whatever they say
+// of its license (which a package found again may say, and once didn't).
+func (p Package) Same(q Package) bool {
+	p.License, q.License = "", ""
+	return p == q
 }
 
 func (p Package) String() string {

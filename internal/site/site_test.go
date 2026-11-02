@@ -34,6 +34,9 @@ type pageSpec struct {
 	added           int64
 	// pkgs are where it's from; by default debian trixie.
 	pkgs []repo.Package
+	// license and copyright are its source's notices.
+	license   string
+	copyright []string
 }
 
 // build makes a repository from specs in out/repo and publishes it.
@@ -68,7 +71,7 @@ func build(t *testing.T, out string, specs []pageSpec, o Options) (*repo.Store, 
 		err = s.UpdateListing(p.name, p.sec, func(l *repo.Listing) error {
 			l.Versions = append(l.Versions, repo.Version{Source: src, Title: title, Description: p.desc,
 				Added: time.Unix(1700000000+p.added, 0).UTC(), Variants: vs,
-				Packages: p.packages()})
+				Packages: p.packages(), License: p.license, Copyright: p.copyright})
 			l.Current = src
 			return nil
 		})
@@ -1226,5 +1229,38 @@ func TestGirlpageSh(t *testing.T) {
 	}
 	if a, _ := agent.Load().(string); a != "girlpage (+"+srv.URL+"/llms.txt) ExampleBot/1.0" {
 		t.Errorf("user agent with GIRLPAGES_AGENT: %q", a)
+	}
+}
+
+// TestLicenses checks a page says whose it is and under what terms: its
+// packages' licenses, its own, its copyright lines, that the girly one's
+// a rewrite, in its structured data too; and the footer, the software's.
+func TestLicenses(t *testing.T) {
+	out := t.TempDir()
+	build(t, out, []pageSpec{{name: "open", sec: "2", desc: "open and possibly create a file", girl: true,
+		pkgs:      []repo.Package{{Distro: "arch", Release: "rolling", Name: "man-pages", Version: "6.9-1", License: "GPL-2.0-or-later AND MIT"}},
+		license:   "Linux-man-pages-copyleft",
+		copyright: []string{"Copyright (C) 1992 Drew Eckhardt", "Copyright (C) 1993 Michael Haardt, Ian Jackson"}}},
+		Options{URL: "https://example.test"})
+	page := read(t, filepath.Join(out, "girl", "2", "open", "index.html"))
+	for _, want := range []string{
+		`man-pages 6.9-1</a> · GPL-2.0-or-later AND MIT</li>`,
+		`<li>📜 the page's license: <a href="https://spdx.org/licenses/Linux-man-pages-copyleft.html" rel="license nofollow">Linux-man-pages-copyleft</a></li>`,
+		`<li class="copyright">Copyright (C) 1992 Drew Eckhardt</li>`,
+		`a language model's rewrite of <a href="/man/2/open/" rel="nofollow" data-variant="man">the original</a>, under its terms`,
+		`"license":"https://spdx.org/licenses/Linux-man-pages-copyleft.html"`,
+		`"copyrightNotice":"Copyright (C) 1992 Drew Eckhardt; Copyright (C) 1993 Michael Haardt, Ian Jackson"`,
+		`"url":"https://example.test/man/2/open/"`,
+		`📜 girlpages, the software, was made with 💜 by Naomi Persephone Amethyst under the <a href="https://spdx.org/licenses/GPL-3.0-or-later.html" rel="license">GPL-3.0-or-later</a>; each page keeps its own license`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("open(2) lacks %s", want)
+		}
+	}
+	for in, want := range map[string]string{"GPL-3.0-or-later": "https://spdx.org/licenses/GPL-3.0-or-later.html",
+		"MIT OR Apache-2.0": "", "custom:BSD": "", "LicenseRef-foo": "", "": ""} {
+		if got := SPDXURL(in); got != want {
+			t.Errorf("SPDXURL(%q) = %q", in, got)
+		}
 	}
 }

@@ -416,6 +416,7 @@ func run(ctx context.Context, s *repo.Store, cands []candidate, o Options) (Stat
 					continue
 				}
 				source := repo.Hash(src)
+				notices := manpage.FindNotices(src)
 
 				l, _, err := s.Listing(c.name, c.section)
 				if err != nil {
@@ -440,6 +441,7 @@ func run(ctx context.Context, s *repo.Store, cands []candidate, o Options) (Stat
 								return nil
 							}
 							addPackage(v, c.pkg)
+							addNotices(v, notices)
 							return nil
 						})
 						if err != nil {
@@ -493,6 +495,7 @@ func run(ctx context.Context, s *repo.Store, cands []candidate, o Options) (Stat
 					}
 					v.Title = r.man.Title
 					v.Description = repo.Description(r.man)
+					addNotices(v, notices)
 					for _, variant := range []string{repo.VariantMan, repo.VariantGirl} {
 						if info, err := variantInfo(s, source, variant); err == nil {
 							v.Variants[variant] = info
@@ -539,13 +542,27 @@ func addPackage(v *repo.Version, p repo.Package) {
 	if p == (repo.Package{}) {
 		return
 	}
-	for _, q := range v.Packages {
-		if q == p {
+	for i, q := range v.Packages {
+		if q.Same(p) {
+			if q.License == "" {
+				v.Packages[i].License = p.License
+			}
 			return
 		}
 	}
 	v.Packages = append(v.Packages, p)
 	sort.Slice(v.Packages, func(i, j int) bool { return v.Packages[i].String() < v.Packages[j].String() })
+}
+
+// addNotices records what a version's source says of its license and
+// copyright, if it isn't already.
+func addNotices(v *repo.Version, n manpage.Notices) {
+	if v.License == "" {
+		v.License = n.License
+	}
+	if len(v.Copyright) == 0 {
+		v.Copyright = n.Copyright
+	}
 }
 
 // GirlifyOptions controls Girlify.

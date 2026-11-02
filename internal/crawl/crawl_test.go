@@ -9,8 +9,11 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"github.com/andybalholm/brotli"
+	"github.com/klauspost/compress/zstd"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -315,10 +318,10 @@ func TestRPM(t *testing.T) {
 func TestPacman(t *testing.T) {
 	needTools(t)
 	pkg := tarball(map[string][]byte{".PKGINFO": []byte("pkgname = which\n"),
-		"usr/share/man/man1/which.1.gz": gz([]byte(roff("which", "shows the full path")))})
+		"usr/share/man/man1/which.1.gz": gz([]byte(".\\\" Copyright (C) 1999-2008 Carlo Wood\n.\\\" SPDX-License-Identifier: GPL-3.0-or-later\n" + roff("which", "shows the full path")))})
 	db := tarball(map[string][]byte{
 		"which-2.21-6/desc": []byte(fmt.Sprintf("%%FILENAME%%\nwhich-2.21-6-x86_64.pkg.tar.gz\n\n%%NAME%%\nwhich\n\n%%VERSION%%\n2.21-6\n\n"+
-			"%%ARCH%%\nx86_64\n\n%%CSIZE%%\n%d\n\n%%SHA256SUM%%\n%s\n\n", len(pkg), sum(pkg))),
+			"%%ARCH%%\nx86_64\n\n%%CSIZE%%\n%d\n\n%%SHA256SUM%%\n%s\n\n%%LICENSE%%\nGPL-3.0-or-later\n\n", len(pkg), sum(pkg))),
 		"which-2.21-6/files": []byte("%FILES%\nusr/\nusr/bin/which\nusr/share/man/man1/which.1.gz\n\n"),
 		"zlib-1-1/desc":      []byte("%FILENAME%\nzlib-1-1-x86_64.pkg.tar.gz\n\n%NAME%\nzlib\n\n%VERSION%\n1-1\n"),
 		"zlib-1-1/files":     []byte("%FILES%\nusr/lib/libz.so\n"),
@@ -331,8 +334,13 @@ func TestPacman(t *testing.T) {
 		t.Fatalf("crawl: %+v", st)
 	}
 	l, _, _ := s.Listing("which", "1")
-	if v := l.CurrentVersion(); v.Packages[0] != (repo.Package{Distro: "arch", Release: "rolling", Name: "which", Version: "2.21-6", Arch: "x86_64"}) {
+	v := l.CurrentVersion()
+	if v.Packages[0] != (repo.Package{Distro: "arch", Release: "rolling", Name: "which", Version: "2.21-6", Arch: "x86_64", License: "GPL-3.0-or-later"}) {
 		t.Errorf("which: %+v", v.Packages)
+	}
+	// What its source says of itself, too.
+	if v.License != "GPL-3.0-or-later" || len(v.Copyright) != 1 || v.Copyright[0] != "Copyright (C) 1999-2008 Carlo Wood" {
+		t.Errorf("which's notices: %q %q", v.License, v.Copyright)
 	}
 }
 
@@ -408,7 +416,7 @@ func TestAPK(t *testing.T) {
 	if l == nil {
 		t.Fatal("no which(1)")
 	}
-	if v := l.CurrentVersion(); v.Packages[0] != (repo.Package{Distro: "alpine", Release: "3.22", Name: "which-doc", Version: "2.21-r6", Arch: "x86_64"}) {
+	if v := l.CurrentVersion(); v.Packages[0] != (repo.Package{Distro: "alpine", Release: "3.22", Name: "which-doc", Version: "2.21-r6", Arch: "x86_64", License: "GPL-3.0-or-later"}) {
 		t.Errorf("which: %+v", v.Packages)
 	}
 	if l, _, _ := s.Listing("open", "2"); l == nil {
@@ -456,4 +464,149 @@ func TestFreeBSD(t *testing.T) {
 	if srv.fetched("kernel.txz") != 0 {
 		t.Error("fetched kernel.txz, which has no man pages")
 	}
+}
+
+// nixBase32 encodes a sha256 (hex) in Nix's base 32, for narinfo files.
+func nixBase32(hexSum string) string {
+	const alphabet = "0123456789abcdfghijklmnpqrsvwxyz"
+	b, _ := hex.DecodeString(hexSum)
+	out := make([]byte, 52)
+	for i := 0; i < 52; i++ {
+		bit := i * 5
+		d := int(b[bit/8]) >> (bit % 8)
+		if bit/8+1 < len(b) {
+			d |= int(b[bit/8+1]) << (8 - bit%8)
+		}
+		out[51-i] = alphabet[d&31]
+	}
+	return string(out)
+}
+
+// nar makes a NAR of a directory tree of regular files (path → content).
+func nar(files map[string]string) []byte {
+	var b bytes.Buffer
+	str := func(ss ...string) {
+		for _, s := range ss {
+			binary.Write(&b, binary.LittleEndian, uint64(len(s)))
+			b.WriteString(s)
+			b.Write(make([]byte, (8-len(s)%8)%8))
+		}
+	}
+	type dir map[string]any
+	root := dir{}
+	for p, body := range files {
+		parts := strings.Split(p, "/")
+		d := root
+		for _, part := range parts[:len(parts)-1] {
+			if d[part] == nil {
+				d[part] = dir{}
+			}
+			d = d[part].(dir)
+		}
+		d[parts[len(parts)-1]] = body
+	}
+	var node func(any)
+	node = func(n any) {
+		switch n := n.(type) {
+		case string:
+			str("(", "type", "regular", "contents", n, ")")
+		case dir:
+			str("(", "type", "directory")
+			var names []string
+			for k := range n {
+				names = append(names, k)
+			}
+			sort.Strings(names)
+			for _, k := range names {
+				str("entry", "(", "name", k, "node")
+				node(n[k])
+				str(")")
+			}
+			str(")")
+		}
+	}
+	str("nix-archive-1")
+	node(root)
+	return b.Bytes()
+}
+
+func TestNixHash(t *testing.T) {
+	// The real narinfo's FileHash, and its file's sha256sum.
+	if h, err := nixHashHex("0d2cgp60cc6cacvkwc2kmwhcnpsbln4b7xyw2fv9k0g0wb609rks"); err != nil ||
+		h != "7ae604cce2e08199b613dcf7b388a54b5fcb20af53303e3753cc3006cc7d4c34" {
+		t.Errorf("nixHashHex = %s, %v", h, err)
+	}
+	if got := nixBase32("7ae604cce2e08199b613dcf7b388a54b5fcb20af53303e3753cc3006cc7d4c34"); got != "0d2cgp60cc6cacvkwc2kmwhcnpsbln4b7xyw2fv9k0g0wb609rks" {
+		t.Errorf("nixBase32 = %s", got)
+	}
+	for in, want := range map[string][3]string{
+		"coreutils-9.7":                 {"coreutils", "9.7", ""},
+		"sqlite-interactive-3.48.0-man": {"sqlite-interactive", "3.48.0", "man"},
+		"python3.12-requests-2.32.3":    {"python3.12-requests", "2.32.3", ""},
+		"openssl-3.4.1-bin":             {"openssl", "3.4.1", "bin"},
+		"hello":                         {"hello", "", ""},
+	} {
+		if n, v, o := nixName(in); [3]string{n, v, o} != want {
+			t.Errorf("nixName(%q) = %q %q %q", in, n, v, o)
+		}
+	}
+}
+
+func TestNix(t *testing.T) {
+	needTools(t)
+	br := func(s string) []byte {
+		var b bytes.Buffer
+		w := brotli.NewWriter(&b)
+		w.Write([]byte(s))
+		w.Close()
+		return b.Bytes()
+	}
+	h := func(c byte) string { return strings.Repeat(string(c), 32) }
+	page := nar(map[string]string{"share/man/man1/which.1": roff("which", "shows the full path"), "bin/which": "binary"})
+	paths := strings.Join([]string{
+		"/nix/store/" + h('a') + "-which-2.21",        // man pages in its main output
+		"/nix/store/" + h('b') + "-zlib-1.3",          // none
+		"/nix/store/" + h('c') + "-zlib-1.3-dev",      // never looked at
+		"/nix/store/" + h('d') + "-unfree-1.0",        // not in the cache
+		"/nix/store/" + h('f') + "-hello-2.12.tar.gz", // a source, never looked at
+	}, "\n") + "\n"
+	files := map[string][]byte{
+		"/nixos-25.05/store-paths.xz": []byte(paths),
+		"/cache/" + h('a') + ".ls":    br(`{"version":1,"root":{"type":"directory","entries":{"share":{"type":"directory","entries":{"man":{"type":"directory","entries":{"man1":{"type":"directory","entries":{"which.1":{"type":"regular","size":10}}}}}}},"bin":{"type":"directory","entries":{"which":{"type":"regular"}}}}}}`),
+		"/cache/" + h('a') + ".narinfo": []byte(fmt.Sprintf("StorePath: /nix/store/%s-which-2.21\nURL: nar/which.nar\nCompression: none\nFileHash: sha256:%s\nFileSize: %d\n",
+			h('a'), nixBase32(sum(page)), len(page))),
+		"/cache/nar/which.nar": page,
+		// (Some listings are zstd's, not saying so.)
+		"/cache/" + h('b') + ".ls": zstdBytes(`{"version":1,"root":{"type":"directory","entries":{"lib":{"type":"directory","entries":{"libz.so":{"type":"regular"}}}}}}`),
+	}
+	srv := serve(files)
+	defer srv.Close()
+	listings := filepath.Join(t.TempDir(), "nix.json")
+	n := &Nix{URL: srv.URL + "/nixos-25.05", Cache: srv.URL + "/cache", Listings: listings, Jobs: 2}
+	s, _ := repo.Open(t.TempDir())
+	st := crawlOnce(t, s, n, "")
+	if st.Total != 5 || st.WithMan != 1 || st.Fetched != 1 || st.Pages.New != 1 {
+		t.Fatalf("crawl: %+v", st)
+	}
+	l, _, _ := s.Listing("which", "1")
+	if l == nil {
+		t.Fatal("no which(1)")
+	}
+	if v := l.CurrentVersion(); v.Packages[0] != (repo.Package{Distro: "nixos", Release: "25.05", Name: "which", Version: "2.21"}) {
+		t.Errorf("which: %+v", v.Packages)
+	}
+	if srv.fetched(h('c')) != 0 || srv.fetched("hello") != 0 {
+		t.Error("looked at a -dev output or a source")
+	}
+	// Again: what each store path holds is remembered, not looked up.
+	before := srv.fetched(".ls")
+	crawlOnce(t, s, n, "")
+	if srv.fetched(".ls") != before {
+		t.Error("looked up store paths again")
+	}
+}
+
+func zstdBytes(s string) []byte {
+	w, _ := zstd.NewWriter(nil)
+	return w.EncodeAll([]byte(s), nil)
 }

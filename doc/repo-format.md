@@ -319,9 +319,10 @@ Every version of one page, and where each was found.
         "man":  {"sha256": "c0ff…", "size": 31877, "generation": 1}
       },
       "packages": [
-        {"distro": "arch", "release": "rolling", "name": "tar", "version": "1.35-5", "arch": "x86_64"},
+        {"distro": "arch", "release": "rolling", "name": "tar", "version": "1.35-5", "arch": "x86_64", "license": "GPL-3.0-or-later"},
         {"distro": "debian", "release": "trixie", "name": "tar", "version": "1.35+dfsg-3.1", "arch": "amd64"}
-      ]
+      ],
+      "copyright": ["Copyright (C) 2024 Free Software Foundation, Inc"]
     },
     …
   ]
@@ -339,7 +340,8 @@ Every version of one page, and where each was found.
 | `.added` | When this version was first added to the repository. |
 | `.version` | Its upstream version number, if its packages say (see [below](#which-version-is-the-latest)). |
 | `.variants` | For each variant, its latest generation: the hash and size of its file, its generation, and the prompt version that made it (if it says). |
-| `.packages` | Everywhere it was found: `distro`, `release`, package `name`, package `version` and `arch`, and `url` for git repositories (with `version` like `3.5a (549c35b06165)`, tag and commit). Any may be missing. |
+| `.packages` | Everywhere it was found: `distro`, `release`, package `name`, package `version` and `arch`, `url` for git repositories (with `version` like `3.5a (549c35b06165)`, tag and commit), and `license`, the package's, as its repository's index says (SPDX, mostly: Arch, rpm and Alpine indexes say; Debian's don't). Any may be missing. |
+| `.license`, `.copyright` | What the version's source says, in comments man doesn't show: its `SPDX-License-Identifier`, and its copyright lines (a notice: "copyright", "(c)" or "©" then a year, from there on, with the holder on the next line if it's there instead; at most 12). Either may be missing. |
 
 Readers shouldn't need to work out `current`, `sources` or `version`
 themselves; they're there so clients don't have to reimplement version

@@ -67,8 +67,12 @@ func published(t *testing.T) *Repo {
 			pkg = repo.Package{Distro: "debian", Release: "trixie", Name: p.name, Version: "1.0-1"}
 		}
 		err = s.UpdateListing(p.name, p.sec, func(l *repo.Listing) error {
-			l.Versions = append(l.Versions, repo.Version{Source: src, Title: title, Description: p.desc,
-				Added: time.Unix(1700000000+p.added, 0).UTC(), Variants: vs, Packages: []repo.Package{pkg}})
+			v := repo.Version{Source: src, Title: title, Description: p.desc,
+				Added: time.Unix(1700000000+p.added, 0).UTC(), Variants: vs, Packages: []repo.Package{pkg}}
+			if p.name == "printf" && p.sec == "3" {
+				v.License, v.Copyright = "Linux-man-pages-copyleft", []string{"Copyright (C) 1999 Someone"}
+			}
+			l.Versions = append(l.Versions, v)
 			return nil
 		})
 		if err != nil {
@@ -298,10 +302,12 @@ func TestReader(t *testing.T) {
 		st := rd.ReadRequests(ctx, qs)
 		return out.String(), st
 	}
-	if out, st := md(Request{"printf", "3", ""}); st != ExitOK || out != "# ✨ NAME ✨\n\n`printf` slays 💅\n" {
+	if out, st := md(Request{"printf", "3", ""}); st != ExitOK || out != "# ✨ NAME ✨\n\n`printf` slays 💅\n\n"+
+		"> 📜 license: Linux-man-pages-copyleft · Copyright (C) 1999 Someone · a language model's rewrite of the original, under its terms\n" {
 		t.Errorf("printf(3) as Markdown (%d): %q", st, out)
 	}
-	if out, st := md(Request{"printf", "3", "man"}); st != ExitOK || !strings.HasPrefix(out, "# PRINTF(3)\n\n```\n") || !strings.HasSuffix(out, "\n```\n") {
+	if out, st := md(Request{"printf", "3", "man"}); st != ExitOK || !strings.HasPrefix(out, "# PRINTF(3)\n\n```\n") ||
+		!strings.HasSuffix(out, "\n```\n\n> 📜 license: Linux-man-pages-copyleft · Copyright (C) 1999 Someone\n") {
 		t.Errorf("printf(3) original as Markdown (%d): %q", st, out)
 	}
 	if out, st := md(Request{"ls", "", ""}); st != ExitOK || !strings.HasPrefix(out, "# LS(1)\n\n> 💭 she hasn't gotten to this one yet") {

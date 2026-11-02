@@ -254,9 +254,11 @@ func (s *Store) importPages(ctx context.Context, c *Client, todo []IndexPage, o 
 							lv.Variants[variant] = info
 						}
 						for _, p := range rv.Packages {
-							if !hasPackage(lv.Packages, p) {
+							if i := packageIndex(lv.Packages, p); i < 0 {
 								lv.Packages = append(lv.Packages, p)
 								pkgs++
+							} else if lv.Packages[i].License == "" {
+								lv.Packages[i].License = p.License
 							}
 						}
 						sort.Slice(lv.Packages, func(i, j int) bool { return lv.Packages[i].String() < lv.Packages[j].String() })
@@ -265,6 +267,12 @@ func (s *Store) importPages(ctx context.Context, c *Client, todo []IndexPage, o 
 						}
 						if lv.Description == "" {
 							lv.Description = rv.Description
+						}
+						if lv.License == "" {
+							lv.License = rv.License
+						}
+						if len(lv.Copyright) == 0 {
+							lv.Copyright = rv.Copyright
 						}
 					}
 					return nil
@@ -433,11 +441,13 @@ func (s *Store) importVariant(ctx context.Context, c *Client, source, variant st
 	return info, !conflict, conflict, nil
 }
 
-func hasPackage(ps []Package, p Package) bool {
-	for _, q := range ps {
-		if q == p {
-			return true
+// packageIndex is where p is among ps (whatever either says of its
+// license), or -1.
+func packageIndex(ps []Package, p Package) int {
+	for i, q := range ps {
+		if q.Same(p) {
+			return i
 		}
 	}
-	return false
+	return -1
 }

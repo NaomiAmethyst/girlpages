@@ -89,6 +89,36 @@ func (b *builder) ldCollection(v *view, u string, items []item) template.JS {
 		b.ldCrumbs([2]string{"girlpages", b.o.Base}, [2]string{v.Heading, u})}})
 }
 
+// pageLicense is a page's license, for structured data: its own (from its
+// source), else its first package's that says, as the SPDX page if it's an
+// identifier there, else as it's written.
+func pageLicense(ver *repo.Version) string {
+	l := ver.License
+	for _, p := range ver.Packages {
+		if l != "" {
+			break
+		}
+		l = p.License
+	}
+	if u := SPDXURL(l); u != "" {
+		return u
+	}
+	return l
+}
+
+// ldOriginal is the original a page is a rewrite of: its page, license and
+// copyright notices.
+func (b *builder) ldOriginal(ver *repo.Version, pv *pageView) ld {
+	o := ld{"@type": "CreativeWork", "name": "the " + pv.Name + "(" + pv.Section + ") manual page"}.set("url", b.abs(pv.OriginalURL))
+	if l := pageLicense(ver); l != "" {
+		o["license"] = l
+	}
+	if len(ver.Copyright) > 0 {
+		o["copyrightNotice"] = strings.Join(ver.Copyright, "; ")
+	}
+	return o
+}
+
 func (b *builder) ldArticle(ver *repo.Version, pv *pageView, v *view, modified time.Time) template.JS {
 	secName, _ := web.SectionName(mainKey(pv.Section))
 	about := ld{"@type": "SoftwareApplication", "name": pv.Name, "operatingSystem": "Linux, Unix",
@@ -109,7 +139,7 @@ func (b *builder) ldArticle(ver *repo.Version, pv *pageView, v *view, modified t
 		"publisher":        b.ldPublisher(),
 		"author":           b.ldPublisher(),
 		"isPartOf":         b.ldSite(),
-		"isBasedOn":        ld{"@type": "CreativeWork", "name": "the " + pv.Name + "(" + pv.Section + ") manual page"},
+		"isBasedOn":        b.ldOriginal(ver, pv),
 		"proficiencyLevel": "Beginner",
 	}.set("url", b.abs(pv.URL)).set("image", b.abs(b.o.Base+"static/icon-512.png"))
 	if u := b.abs(pv.URL); u != "" {
@@ -120,6 +150,10 @@ func (b *builder) ldArticle(ver *repo.Version, pv *pageView, v *view, modified t
 	}
 	if !modified.IsZero() {
 		art["dateModified"] = modified.UTC().Format(time.RFC3339)
+	}
+	// It's the original's, rewritten: under the original's license.
+	if l := pageLicense(ver); l != "" {
+		art["license"] = l
 	}
 	if pv.Model != "" {
 		art["contributor"] = ld{"@type": "SoftwareApplication", "name": pv.Model, "applicationCategory": "Large language model"}

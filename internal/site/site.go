@@ -27,6 +27,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -361,7 +362,13 @@ type pageView struct {
 	TOC             []render.Heading
 	Girlified       bool
 	Model, Modified string
-	Packages        []chip // each linking to a search for its pages
+	// Packages are where it's from, each linking to its package's pages,
+	// with its license.
+	Packages []pkgChip
+	// License and Copyright are the page's own notices, from its source;
+	// LicenseURL is the license's SPDX page, if it's one.
+	License, LicenseURL string
+	Copyright           []string
 	// In lists the sources this version is in, each linking to the page as
 	// that source has it; Versions is how many versions there are.
 	In []chip
@@ -1006,8 +1013,10 @@ func (b *builder) page(p repo.PageRef) error {
 		pv.Published = published(ver.Packages[0].Version)
 	}
 	for _, pk := range ver.Packages {
-		pv.Packages = append(pv.Packages, chip{Label: pk.String(), URL: b.packageLink(pk)})
+		pv.Packages = append(pv.Packages, pkgChip{Label: pk.String(), URL: b.packageLink(pk), License: pk.License, LicenseURL: SPDXURL(pk.License)})
 	}
+	pv.License, pv.LicenseURL, pv.Copyright = ver.License, SPDXURL(ver.License), ver.Copyright
+
 	for _, src := range sourcesIn(ver) {
 		pv.In = append(pv.In, chip{Label: src.Label(), URL: b.browseURL(src.Key(), sec, name)})
 	}
@@ -1068,6 +1077,25 @@ func (b *builder) page(p repo.PageRef) error {
 	}
 	v.JSONLD = b.ldArticle(ver, pv, v, modified)
 	return b.render(u, "page", v)
+}
+
+// pkgChip is a package a page comes from, and its license.
+type pkgChip struct {
+	Label, URL          string
+	License, LicenseURL string
+}
+
+// spdxID matches a lone SPDX license identifier (not an expression, nor a
+// LicenseRef- of a package's own).
+var spdxID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.+-]*$`)
+
+// SPDXURL is the SPDX License List's page for a license, if it's a lone
+// identifier ("GPL-3.0-or-later"), or "".
+func SPDXURL(license string) string {
+	if !spdxID.MatchString(license) || strings.HasPrefix(license, "LicenseRef-") {
+		return ""
+	}
+	return "https://spdx.org/licenses/" + license + ".html"
 }
 
 // packageLink is a package's listing, or "" if it hasn't one (a package

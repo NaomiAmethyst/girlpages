@@ -35,6 +35,8 @@ type Package struct {
 	// SHA256 is its checksum from the index, if the index has one.
 	SHA256 string
 	Size   int64
+	// License is its license, as the index says, if it does.
+	License string
 }
 
 func (p Package) key() string {
@@ -248,7 +250,7 @@ func Run(ctx context.Context, s *repo.Store, r Repository, o Options) (Stats, er
 				continue
 			}
 			pk := pkg
-			pk.Name, pk.Version, pk.Arch = p.Name, p.Version, p.Arch
+			pk.Name, pk.Version, pk.Arch, pk.License = p.Name, p.Version, p.Arch, p.License
 			srcs = append(srcs, ingest.Source{Path: files[i], Package: pk})
 			got = append(got, p)
 		}

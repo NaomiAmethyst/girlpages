@@ -98,6 +98,7 @@ func (r *RPM) Index(ctx context.Context, f *Fetcher) (*Index, error) {
 				Href    string `xml:"href,attr"`
 				XMLBase string `xml:"base,attr"`
 			} `xml:"location"`
+			License string `xml:"format>license"`
 		}
 		if err := d.DecodeElement(&p, &start); err != nil {
 			return err
@@ -118,7 +119,8 @@ func (r *RPM) Index(ctx context.Context, f *Fetcher) (*Index, error) {
 		if p.Location.XMLBase != "" {
 			base = p.Location.XMLBase
 		}
-		pk := Package{Name: p.Name, Version: v, Arch: p.Arch, URL: join(base, p.Location.Href), Size: p.Size.Package}
+		pk := Package{Name: p.Name, Version: v, Arch: p.Arch, URL: join(base, p.Location.Href), Size: p.Size.Package,
+			License: strings.TrimSpace(p.License)}
 		if p.Checksum.Type == "sha256" {
 			pk.SHA256 = sum
 		}

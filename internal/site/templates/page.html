@@ -10,7 +10,7 @@
 {{end}}<div class="content{{if not .Girlified}} reflowed{{end}}">
 {{.Body}}
 </div>
-{{if or .Packages .Model}}<div class="provenance"><details><summary>📦 where this page comes from</summary><ul>{{range .Packages}}<li>{{if .URL}}<a href="{{.URL}}" rel="nofollow" title="every page from it">{{.Label}}</a>{{else}}{{.Label}}{{end}}</li>{{end}}{{if .Model}}<li>💖 girlified by {{.Model}}{{if .Modified}} on <time datetime="{{.Modified}}">{{.Modified}}</time>{{end}}</li>{{end}}</ul></details></div>{{end}}
+{{if or .Packages .Model .License .Copyright}}<div class="provenance"><details><summary>📦 where this page comes from</summary><ul>{{range .Packages}}<li>{{if .URL}}<a href="{{.URL}}" rel="nofollow" title="every page from it">{{.Label}}</a>{{else}}{{.Label}}{{end}}{{if .License}} · {{if .LicenseURL}}<a href="{{.LicenseURL}}" rel="license nofollow">{{.License}}</a>{{else}}{{.License}}{{end}}{{end}}</li>{{end}}{{if .License}}<li>📜 the page's license: {{if .LicenseURL}}<a href="{{.LicenseURL}}" rel="license nofollow">{{.License}}</a>{{else}}{{.License}}{{end}}</li>{{end}}{{range .Copyright}}<li class="copyright">{{.}}</li>{{end}}{{if .Model}}<li>💖 girlified by {{.Model}}{{if .Modified}} on <time datetime="{{.Modified}}">{{.Modified}}</time>{{end}}: a language model's rewrite of <a href="{{.OriginalURL}}" rel="nofollow" data-variant="man">the original</a>, under its terms</li>{{end}}</ul></details></div>{{end}}
 </article>
 {{if .TOC}}<nav class="toc card" aria-label="Contents"><h2>✨ contents</h2><ul>
 {{range .TOC}}<li{{if eq .Level 2}} class="sub"{{end}}><a href="#{{.ID}}">{{.Text}}</a></li>
