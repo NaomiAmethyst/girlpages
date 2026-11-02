@@ -23,7 +23,7 @@ girlrepo \- build and publish girlpages repositories and their website
 .RB [ \-d
 .IR dir ]
 .B crawl
-.BR apt | rpm | pacman | rfc
+.BR apt | rpm | pacman | apk | rfc
 .I url
 .RI [ suite ]
 .RI [ options ]
@@ -196,7 +196,7 @@ Don't take conversions from girl's cache.
 .TP
 .BR \-q ", " \-\-quiet
 Only report problems.
-.SS "crawl apt \fIurl suite\fR | rpm \fIurl\fR | pacman \fIurl\fR | rfc \fR[\fIurl\fR]"
+.SS "crawl apt \fIurl suite\fR | rpm \fIurl\fR | pacman \fIurl\fR | apk \fIurl\fR | rfc \fR[\fIurl\fR]"
 Ingests every package in a repository that has man pages, or every RFC:
 .TP
 .B apt \fIurl suite\fR
@@ -225,6 +225,22 @@ An rpm-md (yum, dnf) repository: the directory holding
 .B pacman \fIurl\fR
 An Arch-style repository: the directory holding the database, such as
 .BR https://geo.mirror.pkgbuild.com/core/os/x86_64 .
+.TP
+.B apk \fIurl\fR
+An Alpine repository: the directory holding
+.BR APKINDEX.tar.gz ,
+such as
+.BR https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64 ,
+its release from the URL
+.RB ( v3.22
+is 3.22).
+Its index lists no files, so the packages taken are those Alpine puts man
+pages in:
+.BI \- doc
+packages, and
+.B man\-pages
+and
+.BR man\-pages\-posix .
 .TP
 .B rfc \fR[\fIurl\fR]
 RFCs, from the RFC Editor (or a mirror of
@@ -255,9 +271,10 @@ Instead the repository's file lists (apt's
 rpm's
 .BR filelists ,
 pacman's
-.BR .files )
-say which packages have English man pages, and only those are downloaded
-(checking their SHA-256 against the index), ingested a few at a time with
+.BR .files ;
+for Alpine, its naming) say which packages have English man pages, and only
+those are downloaded (checking their SHA-256 against the index, where it
+has them), ingested a few at a time with
 their package, version and architecture, and deleted.
 Only the newest version of each package is taken.
 What's been ingested is remembered (in

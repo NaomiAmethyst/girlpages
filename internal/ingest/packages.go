@@ -32,6 +32,8 @@ func PackageKind(path string) string {
 		return "pacman"
 	case strings.HasSuffix(base, ".rpm") && !strings.HasSuffix(base, ".src.rpm"):
 		return "rpm"
+	case strings.HasSuffix(base, ".apk"):
+		return "apk"
 	}
 	return ""
 }
@@ -39,6 +41,7 @@ func PackageKind(path string) string {
 var (
 	archRE = regexp.MustCompile(`^(.+)-([^-]+)-([^-]+)-([^-]+)\.pkg\.tar(\.[a-z0-9]+)?$`)
 	rpmRE  = regexp.MustCompile(`^(.+)-([^-]+)-([^-]+)\.([^.]+)\.rpm$`)
+	apkRE  = regexp.MustCompile(`^(.+)-([^-]+-r[0-9]+)\.apk$`)
 )
 
 // PackageFromFile guesses a package's name, version and architecture from
@@ -63,6 +66,11 @@ func PackageFromFile(path string) repo.Package {
 		if m := rpmRE.FindStringSubmatch(base); m != nil {
 			p.Name, p.Version, p.Arch = m[1], m[2]+"-"+m[3], m[4]
 		}
+	case "apk":
+		// (Alpine's file names don't say the architecture.)
+		if m := apkRE.FindStringSubmatch(base); m != nil {
+			p.Name, p.Version = m[1], m[2]
+		}
 	}
 	return p
 }
@@ -75,7 +83,9 @@ func Extract(path, dir string) error {
 	switch PackageKind(path) {
 	case "deb":
 		return extractDeb(path, dir)
-	case "pacman":
+	case "pacman", "apk":
+		// An Alpine package is gzipped tarballs run together (a
+		// signature's, its metadata's, its files'), which tar reads as one.
 		return untar(path, dir)
 	case "rpm":
 		return extractRPM(path, dir)
@@ -87,7 +97,7 @@ func Extract(path, dir string) error {
 // understands. A package without man pages isn't an error.
 func untar(path, dir string) error {
 	cmd := exec.Command("tar", "-x", "-f", path, "-C", dir, "--no-same-owner", "--no-same-permissions",
-		"--wildcards", manPattern)
+		"--warning=no-unknown-keyword", "--wildcards", manPattern)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {

@@ -216,12 +216,13 @@ girlc --markdown https://girlpages.dev/girl/1/ls/   # a page by its address, as 
 `girlrepo` (installed with `girl`, documented in `girlrepo(1)`) builds them:
 
 ```sh
-girlrepo ingest --distro debian --release trixie pool/*.deb   # or .pkg.tar.zst, .rpm, dirs
+girlrepo ingest --distro debian --release trixie pool/*.deb   # or .pkg.tar.zst, .rpm, .apk, dirs
 girlrepo ingest --system                                      # or this machine, with its packages
 girlrepo ingest git+https://github.com/tmux/tmux#3.5a          # or a git repository
 girlrepo crawl apt https://deb.debian.org/debian trixie        # or a whole package repository
 girlrepo crawl rpm https://dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os
 girlrepo crawl pacman https://geo.mirror.pkgbuild.com/core/os/x86_64
+girlrepo crawl apk https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64
 girlrepo girlify -n --price 0.10/0.50                         # what would it cost?
 girlrepo import https://girlpages.dev                          # merge in another repo (by its packs)
 girlrepo export /srv/packs                                    # or write yours as just packs, for mirroring

@@ -364,3 +364,54 @@ func TestIsManPath(t *testing.T) {
 		}
 	}
 }
+
+// apkSegment is a gzipped tar segment of an Alpine package or index:
+// without its end-of-archive blocks, unless it's the last.
+func apkSegment(files map[string][]byte, last bool) []byte {
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	var names []string
+	for n := range files {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		tw.WriteHeader(&tar.Header{Name: n, Mode: 0o644, Size: int64(len(files[n])), Typeflag: tar.TypeReg})
+		tw.Write(files[n])
+	}
+	tw.Flush()
+	if last {
+		tw.Close()
+	}
+	return gz(buf.Bytes())
+}
+
+func TestAPK(t *testing.T) {
+	needTools(t)
+	sig := map[string][]byte{".SIGN.RSA.test.rsa.pub": []byte("signature")}
+	pkg := append(append(apkSegment(sig, false), apkSegment(map[string][]byte{".PKGINFO": []byte("pkgname = which-doc\n")}, false)...),
+		apkSegment(map[string][]byte{"usr/share/man/man1/which.1.gz": gz([]byte(roff("which", "shows the full path")))}, true)...)
+	pages := apkSegment(map[string][]byte{"usr/share/man/man2/open.2.gz": gz([]byte(roff("open", "open and possibly create a file")))}, true)
+	index := fmt.Sprintf("C:Q1abc=\nP:which\nV:2.21-r6\nA:x86_64\nS:100\n\n"+
+		"P:which-doc\nV:2.21-r6\nA:x86_64\nS:%d\nL:GPL-3.0-or-later\n\n"+
+		"P:man-pages\nV:6.9-r0\nA:x86_64\nS:%d\n\nP:zlib\nV:1.3-r0\nA:x86_64\nS:9\n", len(pkg), len(pages))
+	db := append(apkSegment(sig, false), apkSegment(map[string][]byte{"DESCRIPTION": []byte("v3.22"), "APKINDEX": []byte(index)}, true)...)
+	srv := serve(map[string][]byte{"/alpine/v3.22/main/x86_64/APKINDEX.tar.gz": db,
+		"/alpine/v3.22/main/x86_64/which-doc-2.21-r6.apk": pkg, "/alpine/v3.22/main/x86_64/man-pages-6.9-r0.apk": pages})
+	defer srv.Close()
+	s, _ := repo.Open(t.TempDir())
+	st := crawlOnce(t, s, &APK{URL: srv.URL + "/alpine/v3.22/main/x86_64"}, "")
+	if st.Total != 4 || st.WithMan != 2 || st.Fetched != 2 || st.Pages.New != 2 {
+		t.Fatalf("crawl: %+v", st)
+	}
+	l, _, _ := s.Listing("which", "1")
+	if l == nil {
+		t.Fatal("no which(1)")
+	}
+	if v := l.CurrentVersion(); v.Packages[0] != (repo.Package{Distro: "alpine", Release: "3.22", Name: "which-doc", Version: "2.21-r6", Arch: "x86_64"}) {
+		t.Errorf("which: %+v", v.Packages)
+	}
+	if l, _, _ := s.Listing("open", "2"); l == nil {
+		t.Error("no open(2), from man-pages")
+	}
+}
