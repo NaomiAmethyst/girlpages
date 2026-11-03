@@ -1170,7 +1170,10 @@ func TestLLMsTxt(t *testing.T) {
 	// Without the site's address, its links are from its root.
 	out = t.TempDir()
 	build(t, out, specs, Options{Base: "/gp/"})
-	if txt := read(t, filepath.Join(out, "llms.txt")); !strings.Contains(txt, "](/gp/section/1/)") {
+	// … but its shell function reads girlpages.dev's, which it needs an
+	// address for.
+	if txt := read(t, filepath.Join(out, "llms.txt")); !strings.Contains(txt, "](/gp/section/1/)") ||
+		!strings.Contains(txt, `local s="${GIRLPAGES:-https://girlpages.dev}"`) || !strings.Contains(txt, `girlpage (+https://girlpages.dev/llms.txt)`) {
 		t.Errorf("llms.txt without a URL:\n%s", txt)
 	}
 }

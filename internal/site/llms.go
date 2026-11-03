@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NaomiAmethyst/girlpages/internal/config"
 	"github.com/NaomiAmethyst/girlpages/internal/manpage"
 	"github.com/NaomiAmethyst/girlpages/internal/repo"
 	"github.com/NaomiAmethyst/girlpages/internal/web"
@@ -56,7 +57,12 @@ func (b *builder) llmsTxt(pages []repo.PageRef) error {
 	fmt.Fprintf(&t, ". Updated %s.\n\n", b.m.Generated.Format(time.DateOnly))
 	t.WriteString("The girly versions were written by a language model, so for anything that matters (exact option semantics, security advice), check the original.\n\n")
 	t.WriteString("Each page keeps its original's license: under \"where this page comes from\" on its page (and in its listing in the repository, as `license` and `copyright`, and its packages' `license`) are its license, its packages' and its copyright lines, as far as they're known. Use the pages under those terms; a girly page is a rewrite of its original, under the original's. girlpages, the software, is under the GPL-3.0-or-later.\n\n")
-	site := strings.TrimSuffix(u(b.o.Base), "/")
+	// The function needs the site's address: without --url, girlpages.dev's,
+	// whose repository girl and girlc read by default too.
+	site := strings.TrimSuffix(b.abs(b.o.Base), "/")
+	if site == "" {
+		site = strings.TrimSuffix(config.DefaultRepoURL, "/repo")
+	}
 	fmt.Fprintf(&t, "Each page is at %s (for example %s), girly; its original is at %s, but shown by the site's JavaScript. ",
 		u(b.o.Base+"girl/<section>/<name>/"), u(b.pageURL("ls", "1")), u(b.o.Base+"man/<section>/<name>/"))
 	fmt.Fprintf(&t, "Every page's text, girly and original, is also in the repository at %s, as JSON: for reading a page at a time, not crawling (robots.txt asks crawlers to keep out). ", u(b.o.Base+"repo/"))
