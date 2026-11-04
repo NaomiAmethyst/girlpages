@@ -394,6 +394,7 @@ type pageView struct {
 var variantLabels = map[string]string{
 	"girl": "💅 girly", "man": "📜 original", "boy": "🎮 boy", "femboy": "🥺 femboy", "lolcat": "😺 lolcat",
 	"pirate": "🏴‍☠️ pirate", "eli5": "🧸 eli5", "woman": "☕ woman", "witch": "🔮 witch", "bofh": "🔥 bofh",
+	"bottom": "😭 bottom",
 }
 
 func variantLabel(v string) string {

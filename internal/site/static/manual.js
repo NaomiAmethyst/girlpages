@@ -60,7 +60,7 @@ export const plural = (n) => (n === 1 ? "1 page" : `${n} pages`);
 // others (made with other prompts) get their name. As site.variantLabel.
 const VARIANT_LABELS = {
   girl: "💅 girly", man: "📜 original", boy: "🎮 boy", femboy: "🥺 femboy", lolcat: "😺 lolcat", pirate: "🏴‍☠️ pirate",
-  eli5: "🧸 eli5", woman: "☕ woman", witch: "🔮 witch", bofh: "🔥 bofh",
+  eli5: "🧸 eli5", woman: "☕ woman", witch: "🔮 witch", bofh: "🔥 bofh", bottom: "😭 bottom",
 };
 
 /** @param {string} v */

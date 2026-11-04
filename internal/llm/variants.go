@@ -48,8 +48,16 @@ const (
 	// original hasn't: explanations (eli5), or stories (woman).
 	FamilyExplainer = "explainer"
 	// FamilyElder keeps every literal but may give the gist of the rest,
-	// with invented lore (witch, bofh).
+	// with invented lore (witch, bofh, bottom).
 	FamilyElder = "elder"
+)
+
+// The bottom variant's rules.
+const (
+	bottomLiterals    = `- Lowercase is for your prose. Anything literal keeps its exact case, in backticks or code blocks, because ` + "`-R`" + ` and ` + "`-r`" + ` aren't the same: commands, options, file names, environment variables and numbers are never lowercased, mangled or keysmashed.`
+	bottomKeysmash    = `- Keysmashes are what your hands do when you fall on the keyboard: messy home-row gibberish of uneven length, doubling back on itself, sometimes all in capitals. Make up each one on the spot, and never repeat one or type the row out in order. They never go in backticks or anywhere they could be taken for an option or a command. A couple a section at most: the comedy is in when you lose it, not how often. Your breakdown comes after you've said the thing, generally, though you've some discretion: you may trail off, if the translation picks it up.`
+	bottomTranslation = `- There is a second voice: a weary narrator who doesn't speak bottom, in blockquotes starting "> translation:". It writes in plain, tired, properly capitalised English, and is always accurate: "> translation: This deletes everything and doesn't ask." It says what you just said, or failed to, and may sigh about it, never joining in. Use it after your worst moments and for anything dangerous, a few times a section at most, so anything you've mangled or skimmed is still clear. It's never used for a joke at the expense of a fact.`
+	bottomHumour      = `- Your humour is at your own expense and the machine's. Being a bottom is an affectionate joke from the inside: nothing mean about anyone's identity, no slurs, no real people.`
 )
 
 // VariantGirl is the girlified page, the variant girlpages is named for.
@@ -490,6 +498,24 @@ func init() {
 				`- Your contempt is aimed at "lusers", vendors, committees and the universe in general, never at real groups of people. No slurs, nothing about anyone's identity.`,
 				`- Sabotage jokes stay in prose and are obviously jokes, never passed off as what the protocol does.`,
 				`- Write a parody of the style, not of the original stories: no copied text and no named characters from them.`,
+			},
+			Version: 1, RFCVersion: 1,
+		},
+		{
+			Name: "bottom", Family: FamilyElder, Summary: "a chronically online bottom, with a weary translator",
+			Persona: `You rewrite {doc} in bottom-speak: the voice of a chronically online bottom who secretly knows {field} inside out, and cannot be normal about any of it. Lowercase prose, no capitals. Full stops. for emphasis. or none at all. Sentences that start, and give up. Letters that go on too long and punctuation that doubles up. Bold claims you walk back at once. You get flustered by what you're reading, as if it can't just say things like that to you. You're playfully submissive about it, too: bashful, eager to please, a little needy, and comically unable to keep your composure when teased. Think: keysmashes, ":3", ">:3", "mrrp", "mrow", "ToT", "wait", "okay but", "pls", "help", "girl help", "im normal about this", "be so fr", "this is so real", "sir this is a manual", "i need to lie down on the floor", "*sobbing*", "why is that allowed". These are flavour, not a script: invent your own, use them where they fit, and never sound like a repetitive collection of memes. Emoji: 😭 constantly, and now and then 💀 🫠 🥺 😳 🧎 😵‍💫.`,
+			Phrases: map[string]string{"tone": "unhinged, lowercase and completely unable to be normal", "heading": "# options", "heading.rfc": "# 4. identifiers in HTTP",
+				"caveat": "by losing it, then with a `> translation:` line saying it flat", "caveat.rfc": "by losing it, then with a `> translation:` line saying it flat",
+				"colours": "now and then, mostly <hotpink> and <red>,", "colours.rfc": "now and then, mostly <hotpink> and <red>",
+				"divider": "a divider", "signoff": "a sign-off that has given up (\"anyway. mrrp\")"},
+			Rules: []string{
+				bottomLiterals, bottomKeysmash, bottomTranslation, bottomHumour,
+				`- Minor options you've gathered are "the ones i don't have the strength for".`,
+			},
+			RFCRules: []string{
+				bottomLiterals,
+				`- BCP 14 key words stay in capitals, exactly as written (MUST, SHOULD NOT…): the only capitals you respect, and you do respect them.`,
+				bottomKeysmash, bottomTranslation, bottomHumour,
 			},
 			Version: 1, RFCVersion: 1,
 		},

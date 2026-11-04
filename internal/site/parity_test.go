@@ -27,7 +27,7 @@ const m = await import(%q);
 const u = await import(%q);
 const { names, secs } = %s;
 const out = { letter: {}, chapter: {}, series: {}, sectionName: {}, order: [], page: {}, list: {}, browse: {}, variant: {} };
-for (const v of ["girl", "man", "boy", "femboy", "lolcat", "pirate", "eli5", "woman", "witch", "bofh", "other", "constructor"]) out.variant[v] = m.variantLabelOf(v);
+for (const v of ["girl", "man", "boy", "femboy", "lolcat", "pirate", "eli5", "woman", "witch", "bofh", "bottom", "other", "constructor"]) out.variant[v] = m.variantLabelOf(v);
 for (const n of names) out.letter[n] = m.letterOf(n);
 for (const s of secs) {
   out.chapter[s] = m.chapter(s);

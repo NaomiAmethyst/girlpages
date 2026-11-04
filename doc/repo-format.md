@@ -204,7 +204,7 @@ original as closely as each other:
 | The matched set | `girl`, `boy` (a Gen Z boy), `femboy` | Every detail, in a character's voice. |
 | Dialects | `lolcat`, `pirate` | Every detail, in a joke dialect that never touches anything literal. |
 | Explainers | `eli5` (for a beginner), `woman` (a veteran engineer) | Every detail, plus explanations of general ideas (`eli5`) or invented stories (`woman`) that carry no new facts. |
-| Elders | `witch` (an elder tech witch), `bofh` (the Bastard Operator From Hell) | Every literal (commands, options, values, code) and warning, but perhaps only the gist of the rest, with invented lore. |
+| Elders | `witch` (an elder tech witch), `bofh` (the Bastard Operator From Hell), `bottom` (a chronically online bottom, with a weary translator) | Every literal (commands, options, values, code) and warning, but perhaps only the gist of the rest, with invented lore. |
 
 Every family keeps commands, options and code exact and warnings
 intact, and makes up nothing about how a program behaves.
