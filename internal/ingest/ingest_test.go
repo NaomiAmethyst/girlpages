@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -592,6 +593,48 @@ func TestGirlifyAlias(t *testing.T) {
 		if err != nil || cs.Latest(repo.VariantGirl) == nil || *cs.Latest(repo.VariantGirl) != v.Variants[repo.VariantGirl] ||
 			cs.Latest(repo.VariantGirl).Generation != 2 {
 			t.Errorf("%s's listing doesn't match its girl variant's latest generation: %+v", p.Pointer.Name, v.Variants)
+		}
+	}
+}
+
+func TestReadNames(t *testing.T) {
+	dir := t.TempDir()
+	list := filepath.Join(dir, "list")
+	write(t, list, []byte("# the common ones\nls(1)\t# coreutils\n\n  printf(3)  \r\nc#\nfork\n"))
+	got, err := ReadNames(list)
+	if want := []string{"ls(1)", "printf(3)", "c#", "fork"}; err != nil || !slices.Equal(got, want) {
+		t.Errorf("got %q, %v, want %q", got, err, want)
+	}
+	// No names would mean every page.
+	empty := filepath.Join(dir, "empty")
+	write(t, empty, []byte("# nothing yet\n\n"))
+	if got, err := ReadNames(empty); err == nil {
+		t.Errorf("an empty list gave %q and no error", got)
+	}
+	if _, err := ReadNames(filepath.Join(dir, "missing")); err == nil {
+		t.Error("a missing list gave no error")
+	}
+}
+
+func TestGirlifyNames(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "man")
+	write(t, filepath.Join(root, "man1", "ls.1"), []byte(roff("ls", "1", "list directory contents")))
+	write(t, filepath.Join(root, "man1", "cat.1"), []byte(roff("cat", "1", "concatenate files")))
+	s, _ := repo.Open(t.TempDir())
+	ctx := context.Background()
+	Paths(ctx, s, []string{root}, Options{Quiet: true, Log: io.Discard})
+	var log strings.Builder
+	if _, err := Girlify(ctx, s, GirlifyOptions{Backend: &fake{}, Names: []string{"ls(1)", "nope(1)"}, Quiet: true, Log: &log}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(log.String(), "no page called nope(1)") || strings.Contains(log.String(), "no page called ls(1)") {
+		t.Errorf("log: %q", log.String())
+	}
+	pages, _ := s.AllPages()
+	for _, p := range pages {
+		_, done := p.Current().Variants[repo.VariantGirl]
+		if done != (p.Pointer.Name == "ls") {
+			t.Errorf("%s: girlified is %v", p.Pointer.Name, done)
 		}
 	}
 }

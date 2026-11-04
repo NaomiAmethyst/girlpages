@@ -668,6 +668,30 @@ func (o GirlifyOptions) cached(text string) (string, bool) {
 	return o.Cache.Object(cache.Hash(text))
 }
 
+// listComment is a comment in a list of names: at the start of a line, or
+// after a space, as c# is a name.
+var listComment = regexp.MustCompile(`(^|[ \t])#.*$`)
+
+// ReadNames reads a list of pages for GirlifyOptions.Names, one a line, as
+// name or name(section), with # for comments. A list with nothing in it is
+// an error, as no names at all would mean every page.
+func ReadNames(path string) ([]string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		if n := strings.TrimSpace(listComment.ReplaceAllString(strings.TrimRight(line, "\r"), "")); n != "" {
+			names = append(names, n)
+		}
+	}
+	if len(names) == 0 {
+		return nil, fmt.Errorf("%s: there are no names in it", path)
+	}
+	return names, nil
+}
+
 // Girlify adds variants (girl, or o.LLM.Variant) to versions that don't
 // have one.
 func Girlify(ctx context.Context, s *repo.Store, o GirlifyOptions) (GirlifyStats, error) {
@@ -705,7 +729,7 @@ func Girlify(ctx context.Context, s *repo.Store, o GirlifyOptions) (GirlifyStats
 		return st, err
 	}
 	counted := map[string]bool{}
-	names := map[string]bool{}
+	names, found := map[string]bool{}, map[string]bool{}
 	for _, n := range o.Names {
 		names[n] = true
 	}
@@ -720,9 +744,11 @@ func Girlify(ctx context.Context, s *repo.Store, o GirlifyOptions) (GirlifyStats
 			return st, err
 		}
 		// A name matches in any section; name(section) in that one.
-		if len(names) > 0 && !names[p.Pointer.Name] && !names[p.Pointer.Name+"("+p.Pointer.Section+")"] {
+		named := p.Pointer.Name + "(" + p.Pointer.Section + ")"
+		if len(names) > 0 && !names[p.Pointer.Name] && !names[named] {
 			continue
 		}
+		found[p.Pointer.Name], found[named] = true, true
 		if !manpage.SectionMatches(p.Pointer.Section, o.Sections) {
 			continue
 		}
@@ -752,6 +778,11 @@ func Girlify(ctx context.Context, s *repo.Store, o GirlifyOptions) (GirlifyStats
 				order = append(order, v.Source)
 			}
 			w.pages = append(w.pages, p.Pointer)
+		}
+	}
+	for _, n := range o.Names {
+		if !found[n] {
+			fmt.Fprintf(o.Log, "🤷 no page called %s\n", n)
 		}
 	}
 	// Aliases share the version's variant files, so every page with a

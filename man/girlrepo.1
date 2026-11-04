@@ -507,6 +507,19 @@ takes conversions from girl's cache, and each variant has its own prompt
 versions, for
 .BR \-\-reprompt .
 .TP
+.BR \-\-names\-from =\fIfile\fR
+Only the pages listed in
+.IR file ,
+along with any named on the command line: one a line, as
+.I name
+or
+.IR name ( section ),
+with
+.B #
+for comments, at the start of a line or after a space.
+It's how to give some pages more variants than the rest.
+A list with no names in it is an error, and a name with no page is reported.
+.TP
 .BR \-\-provider =\fIname\fR
 Use the provider configured as
 .BI [providers. name ]

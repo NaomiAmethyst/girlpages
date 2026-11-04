@@ -262,6 +262,7 @@ girlrepo import https://girlpages.dev                          # merge in anothe
 girlrepo export /srv/packs                                    # or write yours as just packs, for mirroring
 girlrepo girlify -j 8                                         # convert what isn't yet
 girlrepo girlify --variant pirate fork                        # or in another voice (--list-variants)
+girlrepo girlify --variant pirate --names-from common.txt      # or for a list of pages
 girlrepo publish --url https://example.org --gc               # index it and build the site
 girlrepo serve                                                # preview at localhost:1990
 ```

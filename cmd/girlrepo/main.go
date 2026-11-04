@@ -695,6 +695,7 @@ func (a *app) girlify(ctx context.Context, args []string) error {
 	jobs := fs.IntP("jobs", "j", a.cfg.Jobs, "pages to convert at once")
 	limit := fs.Int("limit", 0, "stop after this many pages")
 	sections := fs.StringP("sections", "s", "", "only these sections (comma separated)")
+	namesFrom := fs.String("names-from", "", "only the pages listed in this file, one a line, as name or name(section), with # for comments")
 	all := fs.Bool("all-versions", false, "girlify old versions too, not just current ones")
 	force := fs.Bool("force", false, "girlify again even if already done")
 	reprompt := fs.Bool("reprompt", false, "girlify again pages made with an older prompt")
@@ -740,9 +741,17 @@ func (a *app) girlify(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	names := fs.Args()
+	if *namesFrom != "" {
+		listed, err := ingest.ReadNames(*namesFrom)
+		if err != nil {
+			return err
+		}
+		names = append(names, listed...)
+	}
 	o := ingest.GirlifyOptions{
 		LLM:  llm.Options{ChunkSize: a.cfg.ChunkSize, ExtraInstructions: a.cfg.ExtraInstructions, Variant: *variant},
-		Jobs: *jobs, Limit: *limit, Sections: splitSections(*sections), Names: fs.Args(),
+		Jobs: *jobs, Limit: *limit, Sections: splitSections(*sections), Names: names,
 		AllVersions: *all, Force: *force, Reprompt: *reprompt, DryRun: *dry, Quiet: *quiet, Log: os.Stderr,
 		PartsDir: filepath.Join(config.UserCacheDir(), "girlrepo-parts"),
 	}
