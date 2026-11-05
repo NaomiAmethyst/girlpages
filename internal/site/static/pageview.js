@@ -138,16 +138,18 @@ export function createPageView({ el: app, base, listing, findName, variant, brow
     ver = ver || versions.find(x => x.source === fallback) || versions[0];
     if (!ver) return { error: "that page has no versions 🤔" };
     const has = (k) => ver.variants && ver.variants[k];
-    const variants = Object.keys(ver.variants || {}).filter(k => /^[a-z][a-z0-9-]{0,31}$/.test(k)).sort(variantOrder);
+    const variantsOf = (x) => Object.keys(x.variants || {}).filter(k => /^[a-z][a-z0-9-]{0,31}$/.test(k)).sort(variantOrder);
+    const variants = variantsOf(ver);
     // The one shown when the address doesn't say: the reader's choice, if
-    // this version has it.
+    // the version has it.
     const pref = preferredVariant();
-    const def = pref && has(pref) ? pref : variants[0] || "man";
+    const defaultOf = (x) => pref && x.variants && x.variants[pref] ? pref : variantsOf(x)[0] || "man";
+    const def = defaultOf(ver);
     // The address's voice (pirate/1/ls/), if this version has it.
     if (!which && voice && has(voice)) which = voice;
     if (!which || !has(which)) which = def;
     const doc = await variant(ver.source, which, ver.variants[which].sha256);
-    return { l, ver, which, variants, def, versions, slug, doc, at, mono };
+    return { l, ver, which, variants, def, defaultOf, versions, slug, doc, at, mono };
   }
 
   // pageView shows a page.
@@ -161,7 +163,7 @@ export function createPageView({ el: app, base, listing, findName, variant, brow
       return nav.redirect(u.href);
     }
     if ("error" in d) return oops(nav, d.error);
-    const { l, ver, which, variants, def, versions, slug, doc, at, mono } = d;
+    const { l, ver, which, variants, def, defaultOf, versions, slug, doc, at, mono } = d;
     const title = ver.title || `${name.toUpperCase()}(${sec})`;
     const latest = ver.source === l.current;
     const suffix = which === "girl" ? "" : which === "man" ? " · original" : " · " + which;
@@ -217,11 +219,20 @@ export function createPageView({ el: app, base, listing, findName, variant, brow
     /** @type {string | HTML} */
     let switcher = ver.version && `version ${ver.version}, `;
     if (versions.length > 1) {
+      // A version's address, in the variant being read if it has that.
+      const versionURL = (x) => {
+        const k = x.variants && x.variants[which] ? which : "";
+        if (x.source === l.current && !src) return k ? pageURL(base, name, sec, k) : staticPage(name, sec);
+        return browse({ page: name, sec, version: slug(x), src, variant: k === defaultOf(x) ? "" : k });
+      };
+      // data-step is its place among them all, for stepping through them
+      // (keys.js), as the one being read is always listed first.
       const items = [ver, ...versions.filter(x => x !== ver)].map(x => {
         const label = (x.version ? x.version + " · " : "") + (sourceLabels(x).join(", ") || "added " + (x.added || "").slice(0, 10)) +
           (x.source === l.current ? " (latest)" : "");
-        return x === ver ? html`<li><strong>${label}</strong></li>`
-          : html`<li><a href="${x.source === l.current && !src ? staticPage(name, sec) : browse({ page: name, sec, version: slug(x), src })}">${label}</a></li>`;
+        const step = String(versions.indexOf(x));
+        return x === ver ? html`<li data-step="${step}"><strong>${label}</strong></li>`
+          : html`<li data-step="${step}"><a href="${versionURL(x)}">${label}</a></li>`;
       });
       switcher = html`<details class="versions" id="versions"><summary>${ver.version ? "version " + ver.version : "this version"} <span class="n">· ${versions.length} versions</span></summary><ul>${items}</ul></details>, `;
     }

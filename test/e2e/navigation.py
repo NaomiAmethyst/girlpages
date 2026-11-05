@@ -82,8 +82,16 @@ def build_site(tmp):
     site = os.path.join(tmp, "site")
     run = lambda *a: subprocess.run([GIRLREPO, "-d", site, *a], check=True, capture_output=True)
     run("ingest", man)
+    # A page with three versions, for going through them.
+    for v in ["1.0", "2.0", "3.0"]:
+        d = os.path.join(tmp, f"zzmulti-{v}", "man8")
+        os.makedirs(d)
+        with open(os.path.join(d, "zzmulti.8"), "w") as f:
+            f.write(page_roff("zzmulti", "8", f"does things as of {v}"))
+        run("ingest", "--distro", "debian", "--package", "zzmulti", "--package-version", f"{v}-1", os.path.dirname(d))
     # Two variants of one page (and its original), for choosing a default.
     girlify(tmp, site, ["admin050(8)"])
+    girlify(tmp, site, ["zzmulti(8)"], "--all-versions")
     run("publish", "--precompress", "none")
     return site
 
@@ -112,7 +120,7 @@ class FakeModel(BaseHTTPRequestHandler):
         pass
 
 
-def girlify(tmp, site, names):
+def girlify(tmp, site, names, *flags):
     """Girlifies pages, and makes their pirate variants, with FakeModel."""
     srv = ThreadingHTTPServer(("127.0.0.1", 0), FakeModel)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -122,7 +130,7 @@ def girlify(tmp, site, names):
                 'model = "fake"\napi_key = "x"\n')
     env = dict(os.environ, GIRLPAGES_CONFIG=conf, XDG_CACHE_HOME=os.path.join(tmp, "cache"))
     for variant in ["girl", "pirate"]:
-        subprocess.run([GIRLREPO, "-d", site, "girlify", "-q", "--no-cache", "--variant", variant, *names],
+        subprocess.run([GIRLREPO, "-d", site, "girlify", "-q", "--no-cache", "--variant", variant, *flags, *names],
                        check=True, capture_output=True, env=env)
     srv.shutdown()
 
@@ -580,6 +588,48 @@ async def main():
             check(r.status == 404, f"a variant there isn't: {r.status}")
             await ctx.close()
             errors[:] = [e for e in errors if not ("404" in e and "/witch/" in e)]  # (meant)
+
+            print("Ctrl+arrows go through a page's variants and versions")
+            ctx = await browser.new_context()
+            page = await ctx.new_page()
+            watch(page)
+            await page.goto(base + "/girl/8/zzmulti/", wait_until="networkidle")
+            await page.wait_for_timeout(1500)
+            reading = """() => { const a = [...document.querySelectorAll('article.manpage')].find(x => x.checkVisibility());
+              return [a.querySelector('.meta span.pill.on')?.textContent.trim().split(' ').pop() || '',
+                      a.querySelector('details.versions summary')?.textContent.trim().split(' ')[1] || ''] }"""
+            async def press(key):
+                await page.keyboard.press(key)
+                await page.wait_for_timeout(500)
+                return await page.evaluate(reading)
+            start = await page.evaluate(reading)
+            check(start == ["girly", "3.0"], f"it starts at the latest, girly: {start}")
+            check(await press("Control+ArrowRight") == ["pirate", "3.0"], "Ctrl+→ is the next variant")
+            check(await press("Control+ArrowRight") == ["original", "3.0"], "and the next")
+            check(await press("Control+ArrowRight") == ["girly", "3.0"], "and round to the first")
+            check(await press("Control+ArrowLeft") == ["original", "3.0"], "Ctrl+← goes back round")
+            check(await press("Control+ArrowLeft") == ["pirate", "3.0"], "and back again")
+            check(await press("Control+ArrowDown") == ["pirate", "2.0"], "Ctrl+↓ is the next version, in the same variant")
+            check(await press("Control+ArrowDown") == ["pirate", "1.0"], "and the next")
+            check(await press("Control+ArrowDown") == ["pirate", "1.0"], "and stops at the last")
+            check(await press("Control+ArrowRight") == ["original", "1.0"], "variants go round on an older version too")
+            check(await press("Control+ArrowLeft") == ["pirate", "1.0"], "and back")
+            check(await press("Control+ArrowUp") == ["pirate", "2.0"], "Ctrl+↑ goes back through them")
+            check(await press("Control+ArrowUp") == ["pirate", "3.0"], "to the latest")
+            check("/pirate/8/zzmulti/" in page.url, f"at its own address: {page.url}")
+            check(await press("Control+ArrowUp") == ["pirate", "3.0"], "and stops there")
+            await page.keyboard.press("/")
+            before = page.url
+            check(await press("Control+ArrowRight") == ["pirate", "3.0"] and page.url == before, "in the search box, they're the box's")
+            await page.keyboard.press("Escape")
+            await page.goto(base + "/girl/8/admin001/", wait_until="networkidle")
+            await page.wait_for_timeout(1000)
+            before = page.url
+            await page.keyboard.press("Control+ArrowRight")
+            await page.keyboard.press("Control+ArrowDown")
+            await page.wait_for_timeout(500)
+            check(page.url == before, "a page with nothing else stays put")
+            await ctx.close()
 
             print("without JavaScript, no links only the app can follow")
             nojs = await browser.new_context(java_script_enabled=False)

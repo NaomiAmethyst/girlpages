@@ -11,6 +11,9 @@
 //                Tab to pick one)
 //   ?            these keys
 //
+// On a page, Ctrl+←→ go to its other variants, round and round, and Ctrl+↑↓
+// through its versions, as they're listed.
+//
 // On the home page (or a source's), typing a section (1, 3, rfc) goes to
 // it, or picks the one it's the start of, for Enter. On a listing,
 // typing jumps to the names that start that way, picking the first; ↑↓ pick the one before or after (or one on the screen, if
@@ -102,6 +105,14 @@ export function keys({ go, base, repo }) {
         return;
       }
       e.preventDefault();
+      return;
+    }
+    if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && !field && !document.querySelector("dialog[open]")) {
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        if (otherVariant(e.key === "ArrowRight" ? 1 : -1)) e.preventDefault();
+      } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+        if (otherVersion(e.key === "ArrowDown" ? 1 : -1)) e.preventDefault();
+      }
       return;
     }
     if (field || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -268,6 +279,33 @@ export function keys({ go, base, repo }) {
   }
 }
 
+// thePage is the page on the screen, if one is.
+const thePage = () => [...document.querySelectorAll("article.manpage")].find(a => a.checkVisibility());
+
+// otherVariant goes to the page's variant by (1 or -1) from this one, going
+// round, and reports whether there was one.
+/** @param {number} by */
+function otherVariant(by) {
+  const pills = [...(thePage()?.querySelectorAll(".meta span.pill.on, .meta a.pill[data-variant]") || [])].filter(p => p.checkVisibility());
+  const at = pills.findIndex(p => p.matches("span"));
+  if (at < 0 || pills.length < 2) return false;
+  /** @type {HTMLElement} */ (pills[(at + by + pills.length) % pills.length]).click();
+  return true;
+}
+
+// otherVersion goes to the page's version by (1 or -1) from this one, if
+// there's one that way, in their order (data-step, as the one being read is
+// listed first).
+/** @param {number} by */
+function otherVersion(by) {
+  const step = (li) => Number(li.dataset.step ?? -1);
+  const items = [.../** @type {NodeListOf<HTMLElement>} */ (thePage()?.querySelectorAll("details.versions li") || [])].sort((a, b) => step(a) - step(b));
+  const next = items[items.findIndex(li => li.querySelector("strong")) + by];
+  const a = /** @type {HTMLElement | null | undefined} */ (next?.querySelector("a"));
+  a?.click();
+  return !!a;
+}
+
 // help shows the keys.
 function help() {
   /** @type {HTMLDialogElement | null} */
@@ -293,6 +331,8 @@ function help() {
       ${row(["Space", "f", "b"], "a screen down, down, up")}
       ${row(["g", "G"], "the top, the bottom")}
       ${row(["q"], "back")}
+      ${row(["Ctrl+←", "Ctrl+→"], "another variant")}
+      ${row(["Ctrl+↑", "Ctrl+↓"], "another version")}
       </table><p><button class="pill">💖 got it</button></p></form>`);
     document.body.append(d);
   }
