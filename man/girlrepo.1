@@ -149,11 +149,15 @@ unpacked package, for absolute links).
 The same page from different packages or distributions is stored once, noting
 everywhere it was found.
 A page whose source changed becomes a new version; old versions are kept.
-A page's current version, the one the website shows, is its latest by version
-number: the upstream version of the packages it was found in (\fB1.35\fR from
-both \fB1.35+dfsg\-3.1\fR and \fB1.35\-5\fR; epochs, Debian revisions, rpm
-and pacman releases and repacking suffixes don't count), then, for the same
-version, the one found in the most places, then the one added last.
+A page's current version, the one the website shows, is the latest of its main
+package, the one the most families of systems have it in: FreeBSD and Nix only
+count if nowhere else has the page, as FreeBSD numbers its pages by its own
+release, and Nix's can be other programs of the same name.
+The latest is by version number: the upstream version of the packages it was
+found in (\fB1.35\fR from both \fB1.35+dfsg\-3.1\fR and \fB1.35\-5\fR;
+epochs, Debian revisions, rpm and pacman releases and repacking suffixes don't
+count), then, for the same version, the one found in the most places, then the
+one added last.
 New versions are rendered with
 .BR man (1)
 to make their

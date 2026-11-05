@@ -308,13 +308,14 @@ func (l *Listing) derive() {
 	for i := range l.Versions {
 		l.Versions[i].Version = l.Versions[i].Upstream()
 	}
+	main := l.mainPackage(nil)
 	l.Current = ""
-	if v := l.Latest(); v != nil {
+	if v := l.latestOf(main, nil); v != nil {
 		l.Current = v.Source
 	}
 	l.Sources = nil
 	for _, src := range sourcesOf(l) {
-		if v := l.VersionFrom(src.Distro, src.Release); v != nil {
+		if v := l.versionFrom(main, src.Distro, src.Release); v != nil {
 			if l.Sources == nil {
 				l.Sources = map[string]string{}
 			}

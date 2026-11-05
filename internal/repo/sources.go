@@ -84,18 +84,18 @@ func (v *Version) SourceLabels() []string {
 	return out
 }
 
-// VersionFrom picks the version of a page to show for a source: the
-// latest by version number of those that came from there. It returns nil
-// if the source doesn't have the page.
+// VersionFrom picks the version of a page to show for a source: the latest
+// (see Latest) of those that came from there. It returns nil if the source
+// doesn't have the page.
 func (l *Listing) VersionFrom(distro, release string) *Version {
-	var best *Version
-	for i := range l.Versions {
-		v := &l.Versions[i]
-		if v.From(distro, release) && (best == nil || v.Newer(best)) {
-			best = v
-		}
-	}
-	return best
+	return l.versionFrom(l.mainPackage(nil), distro, release)
+}
+
+// versionFrom is VersionFrom, for a page whose main package is known.
+func (l *Listing) versionFrom(main, distro, release string) *Version {
+	return l.latestOf(main, func(p Package) bool {
+		return p.Source() == distro && (release == "" || p.Release == release)
+	})
 }
 
 // sourcesOf lists the sources a page has versions from.
@@ -127,9 +127,10 @@ func sourcesOf(l *Listing) []SourceEntry {
 // SourceKeys lists the keys of the sources a page has versions from, and
 // those whose version of it has a girly variant.
 func (l *Listing) SourceKeys() (keys, girl []string) {
+	main := l.mainPackage(nil)
 	for _, src := range sourcesOf(l) {
 		keys = append(keys, src.Key())
-		if v := l.VersionFrom(src.Distro, src.Release); v != nil {
+		if v := l.versionFrom(main, src.Distro, src.Release); v != nil {
 			if _, ok := v.Variants[VariantGirl]; ok {
 				girl = append(girl, src.Key())
 			}

@@ -502,11 +502,28 @@ each version instead.
 
 ## Which version is the latest
 
-A page's latest version (its `current`) is the one with the highest
-*upstream version number*, not the one added last:
+A page's latest version (its `current`) is its *main package's* version
+with the highest *upstream version number*, not the one added last, as
+version numbers only mean something within a package: grep's 3.12 isn't older
+than 9base's 6.
+
+1. **Systems that number differently don't count** if anywhere else has the
+   page: FreeBSD (`freebsd`) numbers its base system's pages by its own
+   release, and Nix's (`nixos`, `nixpkgs`) can be other programs of the same
+   name. If nowhere else has it, they're all there is.
+2. **A page's main package** is the package name found on the most families
+   of systems (`ubuntu` counts as `debian`; `centos-stream` and `epel` as
+   `fedora`), a final `-doc` or `-man` aside; then on the most systems; then
+   with the highest upstream version; then the first by name.
+3. **Its latest** is the version with the highest upstream version among its
+   main package's packages (so of the systems that count). A page with no
+   package names goes by the rules below among all its versions.
+
+Upstream versions:
 
 1. **A version's upstream version** is the highest of its packages'
-   upstream versions. A package version's upstream version is found by:
+   upstream versions, of those on systems that count if there are any. A
+   package version's upstream version is found by:
    removing ` (…)` and everything after it (git: `3.5a (549c35b)` →
    `3.5a`, which also marks it as git); removing an epoch (`^[0-9]+:`);
    for anything but git, removing everything from the last `-` if what
@@ -522,12 +539,13 @@ A page's latest version (its `current`) is the one with the highest
    beat letters, `~` sorts before everything including the end, `^` after
    the end but before anything else). A version with an upstream version
    beats one without.
-3. **Ties** (as with a distro's patched copy of the same release) go to the
-   version found in the most packages, then the one added last, then the
-   higher source hash.
+3. **Ties** (as with a distro's patched copy of the same release) go to a
+   version found on a system that counts, then to the version found in the
+   most packages, then the one added last, then the higher source hash.
 
-The version a *source* has is its latest by the same rules, among the
-versions with packages from it.
+The version a *source* has is its latest by the same rules, among only the
+packages from it: of the page's main package if it has that, else of its own
+main package for the page.
 
 ## Variants and their syntaxes
 

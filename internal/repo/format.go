@@ -36,6 +36,7 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -259,26 +260,80 @@ func (l *Listing) Find(source string) *Version {
 }
 
 // CurrentVersion returns the version to show by default.
-// It's always the latest by version number (see Latest); Current records
+// It's always the latest (see Latest); Current records
 // which that is for clients.
 func (l *Listing) CurrentVersion() *Version { return l.Latest() }
 
+// counted is what version numbers are compared across: FreeBSD numbers its
+// base system's pages by its own release, and Nix's packages (9base, Apple's
+// file_cmds) can be other programs of the same name, so a page they have is
+// only theirs if nowhere else has it.
+func counted(p Package) bool {
+	switch p.Distro {
+	case "freebsd", "nixos", "nixpkgs":
+		return false
+	}
+	return true
+}
+
+// family is the systems that share their packaging, whose names for a
+// package are one vote for it.
+func family(distro string) string {
+	switch distro {
+	case "ubuntu":
+		return "debian"
+	case "centos-stream", "epel":
+		return "fedora"
+	}
+	return distro
+}
+
+// packageName is who a package speaks for: Alpine's grep-doc and Debian's
+// git-man are grep's and git's man pages, split off.
+func packageName(p Package) string {
+	if n, ok := strings.CutSuffix(p.Name, "-doc"); ok {
+		return n
+	}
+	return strings.TrimSuffix(p.Name, "-man")
+}
+
 // Upstream is the highest upstream version (see version.Upstream) of the
-// packages a version was found in, or "" if none says.
+// packages a version was found in, or "" if none says. Packages that count
+// (see counted) come first, as a version in Debian and FreeBSD is Debian's
+// number.
 func (v *Version) Upstream() string {
-	best := ""
+	best, bestCounted := "", false
 	for _, p := range v.Packages {
-		if u := version.Upstream(p.Version); u != "" && (best == "" || version.Compare(u, best) > 0) {
-			best = u
+		u := version.Upstream(p.Version)
+		if u == "" {
+			continue
+		}
+		c := counted(p)
+		if best == "" || (c && !bestCounted) || (c == bestCounted && version.Compare(u, best) > 0) {
+			best, bestCounted = u, c
 		}
 	}
 	return best
 }
 
-// Newer reports whether v is a later version of a page than w: by upstream
+// isCounted reports whether a version was found somewhere that counts.
+func (v *Version) isCounted() bool {
+	for _, p := range v.Packages {
+		if counted(p) {
+			return true
+		}
+	}
+	return false
+}
+
+// Newer reports whether v is a later version of a page than w: one found
+// somewhere that counts (see counted) before one that isn't, by upstream
 // version number, then (for the same upstream version, as with a distro's
 // patched copy) by how many places have it, then by when it was added.
 func (v *Version) Newer(w *Version) bool {
+	if cv, cw := v.isCounted(), w.isCounted(); cv != cw {
+		return cv
+	}
 	uv, uw := v.Upstream(), w.Upstream()
 	switch {
 	case uv != "" && uw == "":
@@ -299,16 +354,148 @@ func (v *Version) Newer(w *Version) bool {
 	return v.Source > w.Source
 }
 
-// Latest is the page's latest version by version number.
-func (l *Listing) Latest() *Version {
-	var best *Version
+// mainPackage is the package a page mostly comes from, of those from picks
+// (or all, if it's nil): the one the most families of systems have it in,
+// among systems that count if any of them has it; then the most systems;
+// then the highest version; then the first by name. It's "" if none has a
+// name.
+//
+// Version numbers only mean something within a package: grep's 3.12 isn't
+// older than 9base's 6.
+func (l *Listing) mainPackage(from func(Package) bool) string {
+	type votes struct {
+		families, distros []string
+		best              string
+	}
+	anyCounted := false
 	for i := range l.Versions {
-		if v := &l.Versions[i]; best == nil || v.Newer(best) {
-			best = v
+		for _, p := range l.Versions[i].Packages {
+			if p.Name != "" && counted(p) && (from == nil || from(p)) {
+				anyCounted = true
+			}
+		}
+	}
+	byName := map[string]*votes{}
+	for i := range l.Versions {
+		for _, p := range l.Versions[i].Packages {
+			if p.Name == "" || (from != nil && !from(p)) || (anyCounted && !counted(p)) {
+				continue
+			}
+			name := packageName(p)
+			n := byName[name]
+			if n == nil {
+				n = &votes{}
+				byName[name] = n
+			}
+			if f := family(p.Distro); !slices.Contains(n.families, f) {
+				n.families = append(n.families, f)
+			}
+			if !slices.Contains(n.distros, p.Distro) {
+				n.distros = append(n.distros, p.Distro)
+			}
+			if u := version.Upstream(p.Version); u != "" && (n.best == "" || version.Compare(u, n.best) > 0) {
+				n.best = u
+			}
+		}
+	}
+	main := ""
+	for name, n := range byName {
+		if main == "" {
+			main = name
+			continue
+		}
+		m := byName[main]
+		c := len(n.families) - len(m.families)
+		if c == 0 {
+			c = len(n.distros) - len(m.distros)
+		}
+		if c == 0 {
+			c = version.Compare(n.best, m.best)
+		}
+		if c > 0 || (c == 0 && name < main) {
+			main = name
+		}
+	}
+	return main
+}
+
+// latestOf is the latest version of those found in packages from picks (or
+// of all, if it's nil): the latest of main, the page's main package, if it's
+// among them, else of their own main package, else (with no names to go by)
+// the newest of them.
+func (l *Listing) latestOf(main string, from func(Package) bool) *Version {
+	has := func(name string) bool {
+		for i := range l.Versions {
+			for _, p := range l.Versions[i].Packages {
+				if p.Name != "" && packageName(p) == name && (from == nil || from(p)) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	if main == "" || !has(main) {
+		main = l.mainPackage(from)
+	}
+	var best *Version
+	if main == "" {
+		for i := range l.Versions {
+			v := &l.Versions[i]
+			found := from == nil
+			for _, p := range v.Packages {
+				found = found || from(p)
+			}
+			if found && (best == nil || v.Newer(best)) {
+				best = v
+			}
+		}
+		return best
+	}
+	anyCounted := false
+	for i := range l.Versions {
+		for _, p := range l.Versions[i].Packages {
+			if p.Name != "" && packageName(p) == main && counted(p) && (from == nil || from(p)) {
+				anyCounted = true
+			}
+		}
+	}
+	bestUpstream := ""
+	for i := range l.Versions {
+		v := &l.Versions[i]
+		found, upstream := false, ""
+		for _, p := range v.Packages {
+			if p.Name == "" || packageName(p) != main || (from != nil && !from(p)) || (anyCounted && !counted(p)) {
+				continue
+			}
+			found = true
+			if u := version.Upstream(p.Version); u != "" && (upstream == "" || version.Compare(u, upstream) > 0) {
+				upstream = u
+			}
+		}
+		if !found {
+			continue
+		}
+		c := 1
+		if best != nil {
+			switch {
+			case upstream == bestUpstream:
+				c = 0
+			case upstream == "":
+				c = -1
+			case bestUpstream != "":
+				c = version.Compare(upstream, bestUpstream)
+			}
+		}
+		if c > 0 || (c == 0 && v.Newer(best)) {
+			best, bestUpstream = v, upstream
 		}
 	}
 	return best
 }
+
+// Latest is the page's latest version: of the package it mainly comes from
+// (see mainPackage), by version number.
+func (l *Listing) Latest() *Version { return l.latestOf(l.mainPackage(nil), nil) }
 
 // Variant is one rendering of one version of a page.
 type Variant struct {
