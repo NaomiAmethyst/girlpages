@@ -1254,7 +1254,7 @@ func TestLicenses(t *testing.T) {
 		`"license":"https://spdx.org/licenses/Linux-man-pages-copyleft.html"`,
 		`"copyrightNotice":"Copyright (C) 1992 Drew Eckhardt; Copyright (C) 1993 Michael Haardt, Ian Jackson"`,
 		`"url":"https://example.test/man/2/open/"`,
-		`📜 girlpages, the software, was made with 💜 by Naomi Persephone Amethyst under the <a href="https://spdx.org/licenses/GPL-3.0-or-later.html" rel="license">GPL-3.0-or-later</a>; each page keeps its own license`,
+		`📜 girlpages was made with 💜 by Naomi Persephone Amethyst under the <a href="https://spdx.org/licenses/GPL-3.0-or-later.html" rel="license">GPL-3.0-or-later</a> license; each page keeps its own license`,
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("open(2) lacks %s", want)
