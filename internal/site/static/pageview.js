@@ -10,6 +10,7 @@ import { Drawer } from "./draw.js";
 import { Spy } from "./spy.js";
 import { pathEscape, segmentName, pageURL, homeURL, packageURL } from "./urls.js";
 import { preferredVariant, setPreferredVariant } from "./prefs.js";
+import { takePlace, returnTo } from "./place.js";
 import { chapter, isSeries, sectionLabel, sourceLabel, variantLabelOf } from "./manual.js";
 
 // createPageView makes the page view for an app: ctx has its element (el),
@@ -284,13 +285,20 @@ export function createPageView({ el: app, base, listing, findName, variant, brow
     // The contents follow the reading (see spy.js).
     const side = /** @type {HTMLElement | null} */ (app.querySelector(".toc"));
     if (side) nav.own(new Spy(side)).watch();
-    if (at) {
+    const place = takePlace(nav.url);
+    if (place) nav.scrollTo(place);
+    else if (at) {
       nav.scrollTo(() => {
         const d = app.querySelector(`[id="${at}"]`);
         if (d) {
           d.open = true;
           d.scrollIntoView({ block: "center" });
         }
+      });
+    } else if (history.state?.at) {
+      // Back where history left it, by section (see place.js).
+      nav.scrollTo(() => {
+        if (!returnTo(history.state.at)) scrollTo(0, history.state?.y ?? 0);
       });
     }
   }

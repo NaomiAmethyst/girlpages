@@ -28,6 +28,7 @@ import { viewOf, parse, legacyRoute } from "./routes.js";
 import { createListings } from "./listing.js";
 import { createViews } from "./views.js";
 import { createPageView } from "./pageview.js";
+import { takePlace, readingNow } from "./place.js";
 
 // createApp makes the app, showing its views in el (#app), whose data
 // attributes say where the site and repository are.
@@ -79,6 +80,8 @@ function createApp(el) {
   // stale enough to point at something since removed, it's refreshed and
   // the view shown again.
   router = new Router({
+    onStatic: () => takePlace(location.href)?.(),
+    where: readingNow,
     app: el,
     resolve: async (nav) => {
       try {

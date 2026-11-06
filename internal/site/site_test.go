@@ -1267,3 +1267,35 @@ func TestLicenses(t *testing.T) {
 		}
 	}
 }
+
+func TestHeadingFor(t *testing.T) {
+	out := node(t, fmt.Sprintf(`
+const { headingFor, words } = await import(%q);
+const names = (...t) => t.map(words);
+const man = names("NAME", "SYNOPSIS", "DESCRIPTION", "OPTIONS", "EXIT STATUS", "SEE ALSO");
+const cases = [
+  // Flourishes, and another case.
+  [man, 3, names("✨ NAME ✨", "✨ SYNOPSIS ✨", "✨ DESCRIPTION ✨", "✨ OPTIONS ✨", "✨ EXIT STATUS ✨", "✨ SEE ALSO ✨")],
+  [man, 3, names("# name", "synopsis", "description", "options", "exit status", "see also")],
+  // Words around it.
+  [man, 3, names("name", "synopsis", "description", "the options, sorry", "see also")],
+  // One renamed: after the one before it.
+  [man, 4, names("name", "synopsis", "description", "options", "how it ended", "see also")],
+  // One dropped: no further than the one after.
+  [man, 4, names("name", "synopsis", "description", "options", "see also")],
+  // The same name twice: the one in order.
+  [names("NAME", "EXAMPLES", "OPTIONS", "EXAMPLES"), 3, names("name", "examples", "options", "examples")],
+  // Nothing in common: as far through.
+  [man, 5, names("one", "two", "three")],
+  [man, 0, names("one", "two", "three")],
+  // Numbered, as RFCs are.
+  [names("1. Introduction", "2. Notational Conventions", "3. Well-Known URIs"), 2, names("1. introduction", "2. notational conventions", "3. well known uris")],
+  // Nothing to go to.
+  [man, 1, []],
+];
+console.log(JSON.stringify(cases.map(([f, i, to]) => headingFor(f, i, to))));`, staticFile(t, "place.js")))
+	want := "[3,3,3,4,3,3,2,0,2,-1]"
+	if got := strings.TrimSpace(string(out)); got != want {
+		t.Errorf("got %s, want %s", got, want)
+	}
+}

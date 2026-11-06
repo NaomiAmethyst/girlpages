@@ -24,6 +24,7 @@
 
 import { html } from "./html.js";
 import { pageURL } from "./urls.js";
+import { thePage, headingsOf } from "./place.js";
 
 // editing reports whether el takes typing.
 const editing = (el) => !!el && (/** @type {HTMLElement} */ (el).isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
@@ -285,9 +286,6 @@ export function keys({ go, base, repo }) {
   }
 }
 
-// thePage is the page on the screen, if one is.
-const thePage = () => [...document.querySelectorAll("article.manpage")].find(a => a.checkVisibility());
-
 // otherVariant goes to the page's variant by (1 or -1) from this one, going
 // round, and reports whether there was one.
 /** @param {number} by */
@@ -325,7 +323,7 @@ let onHeading = null;
 function toHeading(by) {
   const page = thePage();
   if (!page) return false;
-  const hs = [...page.querySelectorAll(".content :is(h1, h2, h3, h4, h5, h6), .original h2")];
+  const hs = headingsOf(page);
   if (!hs.length) return false;
   let i;
   const was = onHeading && hs.indexOf(onHeading);

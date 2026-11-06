@@ -15,6 +15,7 @@ import { Spy } from "./spy.js";
 import { keys } from "./keys.js";
 import { outdated, watchUpdates } from "./update.js";
 import { preferredVariant } from "./prefs.js";
+import { holdPlace } from "./place.js";
 
 const PREFIX = "girlpages:";
 
@@ -78,6 +79,8 @@ function startApp(base) {
     const u = appLink(e);
     if (!u) return;
     e.preventDefault();
+    // Another variant of the page: to the same place in it.
+    if (/** @type {Element} */ (e.target).closest("a[data-variant]")) holdPlace(u.href);
     go(u.href);
   });
   document.addEventListener("submit", (e) => {

@@ -89,6 +89,15 @@ def build_site(tmp):
         with open(os.path.join(d, "zzmulti.8"), "w") as f:
             f.write(page_roff("zzmulti", "8", f"does things as of {v}"))
         run("ingest", "--distro", "debian", "--package", "zzmulti", "--package-version", f"{v}-1", os.path.dirname(d))
+    # A long page in several variants, for keeping one's place in them: with
+    # flourishes on its headings, and sections longer than the original's.
+    long2 = '.TH ZZLONG 8 2026-01-01 test "Test Manual"\n.SH NAME\nzzlong \\- a long read\n'
+    for k in range(12):
+        long2 += f".SH PART{k:02d}\n" + " ".join(["words of part", str(k)] * 300) + "\n"
+    with open(os.path.join(man, "man8", "zzlong.8"), "w") as f:
+        f.write(long2)
+    run("ingest", man)
+    girlify(tmp, site, ["zzlong(8)"])
     # Two variants of one page (and its original), for choosing a default.
     girlify(tmp, site, ["admin050(8)"])
     girlify(tmp, site, ["zzmulti(8)"], "--all-versions")
@@ -108,6 +117,10 @@ class FakeModel(BaseHTTPRequestHandler):
         voice = "arr matey, pirate" if "pirate captain" in system else "slay bestie, girly"
         opts = " ".join(sorted(set(re.findall(r"(?<![\w-])-[a-z]\b", user))))
         reply = f"# NAME\n\n{voice} {name} {opts}\n"
+        if name == "zzlong":
+            flourish = "⚓" if "pirate" in voice else "✨"
+            reply = "".join(f"# {flourish} {part} {flourish}\n\n" + " ".join([voice] * 700) + "\n\n"
+                            for part in re.findall(r"^PART\d\d$", user, re.M)) or f"{voice}\n"
         body = json.dumps({"choices": [{"message": {"role": "assistant", "content": reply}, "finish_reason": "stop"}],
                            "model": "fake"}).encode()
         self.send_response(200)
@@ -565,6 +578,56 @@ async def main():
             s = await shown(page)
             got = [await jump("Shift+ArrowDown") for _ in range(2)]
             check(s[0] == "app" and got == ["NAME", "PART00"], f"a page in the app takes them too: {s} {got}")
+            await ctx.close()
+
+            print("changing variant keeps one's place")
+            ctx, page = await fresh("/girl/8/zzlong/", width=1200)
+            place = """() => { const a = [...document.querySelectorAll('article.manpage')].find(x => x.checkVisibility());
+              const pad = parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) + 2;
+              const hs = [...a.querySelectorAll('.content h2, .original h2')];
+              let i = -1; while (i + 1 < hs.length && hs[i + 1].getBoundingClientRect().top <= pad) i++;
+              if (i < 0 || i + 1 >= hs.length) return [i < 0 ? '' : hs[i].textContent, 0];
+              const t = hs[i].getBoundingClientRect().top, b = hs[i + 1].getBoundingClientRect().top;
+              return [hs[i].textContent.replace(/[^A-Z0-9]/g, ''), (pad - t) / (b - t)] }"""
+            goto = """([name, by]) => { const a = [...document.querySelectorAll('article.manpage')].find(x => x.checkVisibility());
+              const hs = [...a.querySelectorAll('.content h2, .original h2')];
+              const i = hs.findIndex(h => h.textContent.includes(name));
+              for (const x of a.querySelectorAll('.content > *')) x.classList.add('near');
+              hs[i].scrollIntoView({ behavior: 'instant' });
+              scrollBy({ top: by * (hs[i + 1].getBoundingClientRect().top - hs[i].getBoundingClientRect().top), behavior: 'instant' }); }"""
+            async def swap(key):
+                await page.keyboard.press(key)
+                await page.wait_for_timeout(700)
+                return await page.evaluate(place)
+            await page.evaluate(goto, ["PART07", 0.5])
+            await page.wait_for_timeout(200)
+            start = await page.evaluate(place)
+            check(start[0] == "PART07" and 0.4 < start[1] < 0.6, f"reading halfway through PART07: {start}")
+            def near(got, name):
+                return got[0] == name and 0.3 < got[1] < 0.7
+            got = await swap("Control+ArrowRight")
+            check(near(got, "PART07"), f"in the next variant, with its flourishes, it's still there: {got}")
+            got = await swap("Control+ArrowRight")
+            check(near(got, "PART07"), f"and in the original: {got}")
+            got = await swap("Control+ArrowRight")
+            check(near(got, "PART07"), f"and back in the page's own view: {got}")
+            await page.go_back()
+            await page.wait_for_timeout(700)
+            got = await page.evaluate(place)
+            check(near(got, "PART07"), f"going back lands where it was: {got}")
+            await page.goto(base + "/girl/8/zzlong/", wait_until="networkidle")
+            await page.wait_for_timeout(1000)
+            await page.evaluate(goto, ["PART03", 0.25])
+            await page.wait_for_timeout(200)
+            # (Clicked where it is, not scrolled to as a mouse would have to.)
+            await page.evaluate("[...document.querySelectorAll(\"a.pill[data-variant='man']\")].find(a => a.checkVisibility()).click()")
+            await page.wait_for_timeout(700)
+            got = await page.evaluate(place)
+            check(got[0] == "PART03" and got[1] < 0.5, f"following a pill's link does too: {got}")
+            await page.evaluate("scrollTo({ top: 0, behavior: 'instant' })")
+            await page.wait_for_timeout(200)
+            await swap("Control+ArrowLeft")
+            check(await page.evaluate("scrollY") == 0, "from the top of a page, it's the top of the next")
             await ctx.close()
 
             print("a link in another case than its page's")

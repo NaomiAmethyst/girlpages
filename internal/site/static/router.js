@@ -113,8 +113,12 @@ export class Router {
   // view for nav.url (rendering it with nav.render), or throws; handles(url)
   // says whether the app can show an address at all (if not, it's loaded
   // as a page). onError(nav, e) shows an error. waiting is the spinner's
-  // HTML.
-  constructor({ app, resolve, handles, onError, waiting, slowAfter = 300 }) {
+  // HTML. onStatic runs when the static view's shown, and where says where
+  // in a view the reader is, beyond how far it's scrolled, for history to
+  // keep (as "at", for the view to return to).
+  constructor({ app, resolve, handles, onError, waiting, onStatic, where, slowAfter = 300 }) {
+    this.onStatic = onStatic;
+    this.where = where;
     this.app = app;
     this.resolve = resolve;
     this.handles = handles;
@@ -164,7 +168,7 @@ export class Router {
   // remember keeps the scroll position, and whether the static view is
   // what's shown, in the current history entry.
   remember() {
-    history.replaceState({ ...(history.state || {}), y: scrollY, own: this.showingStatic() }, "");
+    history.replaceState({ ...(history.state || {}), y: scrollY, at: this.where?.(), own: this.showingStatic() }, "");
   }
 
   // navigate goes to an address, in a new history entry.
@@ -249,6 +253,7 @@ export class Router {
     this.app.hidden = true;
     document.title = this.docTitle;
     if (history.state?.y != null) scrollTo(0, history.state.y);
+    this.onStatic?.();
   }
 
   showApp() {
