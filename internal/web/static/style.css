@@ -268,10 +268,9 @@ ul.pages .done { flex: none; }
     display: block; position: fixed; z-index: 15; font-size: 0.9rem;
     right: calc(1rem + env(safe-area-inset-right)); bottom: calc(1rem + env(safe-area-inset-bottom));
   }
-  .corner-controls[hidden] { display: none; }
   .corner-controls summary {
     display: grid; place-items: center; width: 3rem; height: 3rem; margin-left: auto; list-style: none; cursor: pointer;
-    font-size: 1.3rem; border-radius: 50%; background: var(--card); border: 2px solid var(--accent);
+    font-size: 1.3rem; color: var(--accent); border-radius: 50%; background: var(--card); border: 2px solid var(--accent);
     box-shadow: 0 4px 14px rgb(0 0 0 / 0.25);
   }
   .corner-controls summary::-webkit-details-marker { display: none; }
@@ -283,6 +282,11 @@ ul.pages .done { flex: none; }
   }
   .corner-controls .pill { padding: 0.35rem 0.8rem; }
   .corner-controls details.versions li { padding: 0.45rem 0; }
+  .corner-contents h2 { font-size: 1rem; margin: 0.25rem 0 0.4rem; color: var(--accent); }
+  .corner-contents ul { list-style: none; padding: 0; margin: 0; }
+  .corner-contents li a { display: block; padding: 0.45rem 0.5rem; border-radius: 0.4rem; text-decoration: none; color: var(--text); }
+  .corner-contents li.sub a { padding-left: 1.4rem; color: var(--muted); }
+  .corner-contents li a.here { background: var(--accent-soft); color: var(--accent); font-weight: 700; box-shadow: inset 3px 0 0 var(--accent); }
 }
 .manpage, .content, .original { min-width: 0; }
 /* Long flags, paths and URLs in running text wrap rather than overflow. */
