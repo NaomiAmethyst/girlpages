@@ -710,6 +710,14 @@ async def main():
             check(not await page.locator(".corner-controls").first.is_visible(), "a wide screen has no button for them")
             await ctx.close()
 
+            print("a menu's header focused from the keyboard is marked")
+            ctx, page = await fresh("/girl/8/zzversions/", width=1200)
+            await page.keyboard.press("Tab")
+            ring = await page.evaluate("""() => { const s = document.querySelector('article.manpage details.versions summary'); s.focus();
+              const c = getComputedStyle(s); return [s.matches(':focus-visible'), c.outlineStyle, c.outlineWidth, c.borderRadius] }""")
+            check(ring[:3] == [True, "solid", "2px"] and ring[3] != "0px", f"with a tidy outline: {ring}")
+            await ctx.close()
+
             print("on a narrow screen, they and the contents are behind a button in the corner")
             ctx, page = await fresh("/girl/8/zzlong/", width=400)
             corner = page.locator(".static-view .corner-controls")
@@ -785,6 +793,12 @@ async def main():
             await corner.locator("details.versions summary").tap()
             await page.wait_for_timeout(100)
             check(await corner.locator("details.versions a").first.is_visible(), "opening its versions keeps it open")
+            rings = await corner.evaluate("""(c) => [c.querySelector('summary'), c.querySelector('details.versions summary')]
+              .map(s => getComputedStyle(s).outlineStyle)""")
+            check(rings == ["none", "none"], f"tapping its menus leaves no ring around them: {rings}")
+            looks = await corner.evaluate("""(c) => [c.querySelector('summary'), c.querySelector('details.versions summary')].map(s => {
+              const k = getComputedStyle(s); return [k.borderTopStyle, k.borderTopLeftRadius] })""")
+            check(looks[0] == ["solid", "50%"] and looks[1] == ["none", "0px"], f"the button's round, and the menu inside it isn't: {looks}")
             await corner.locator("details.versions a").first.tap()
             await page.wait_for_timeout(800)
             got = await page.evaluate(place)

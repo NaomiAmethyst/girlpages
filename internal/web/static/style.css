@@ -268,13 +268,13 @@ ul.pages .done { flex: none; }
     display: block; position: fixed; z-index: 15; font-size: 0.9rem;
     right: calc(1rem + env(safe-area-inset-right)); bottom: calc(1rem + env(safe-area-inset-bottom));
   }
-  .corner-controls summary {
+  .corner-controls > summary {
     display: grid; place-items: center; width: 3rem; height: 3rem; margin-left: auto; list-style: none; cursor: pointer;
     font-size: 1.3rem; color: var(--accent); border-radius: 50%; background: var(--card); border: 2px solid var(--accent);
     box-shadow: 0 4px 14px rgb(0 0 0 / 0.25);
   }
-  .corner-controls summary::-webkit-details-marker { display: none; }
-  .corner-controls[open] summary { background: var(--accent-soft); }
+  .corner-controls > summary::-webkit-details-marker { display: none; }
+  .corner-controls[open] > summary { background: var(--accent-soft); }
   .corner-controls > .controls {
     position: absolute; right: 0; bottom: 3.5rem; width: min(20rem, calc(100vw - 2rem)); max-height: 70vh;
     padding: 0.75rem; background: var(--card); border: 2px solid var(--card-edge); border-radius: 0.8rem;
@@ -462,6 +462,11 @@ button.pill:disabled { cursor: progress; opacity: 0.8; }
 .manpage .lede { font-size: 1.15rem; font-weight: 600; margin: -0.4rem 0 0.6rem; }
 
 /* switching between a page's versions, by where it's from */
+/* Menus' headers, focused from the keyboard: on a touch screen, a tap counts
+   as that in some browsers, and it isn't needed. */
+summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+details.versions summary:focus-visible { border-radius: 0.3rem; }
+@media (hover: none) { summary:focus-visible { outline: none; } }
 details.versions { display: inline-block; position: relative; }
 details.versions summary { display: inline; cursor: pointer; list-style: none; text-decoration: underline dotted; text-underline-offset: 3px; }
 details.versions summary::-webkit-details-marker { display: none; }
