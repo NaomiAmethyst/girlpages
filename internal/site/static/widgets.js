@@ -89,7 +89,7 @@ export function menus() {
   }, true);
   document.addEventListener("click", (e) => {
     const target = /** @type {Element} */ (e.target);
-    for (const d of /** @type {NodeListOf<HTMLDetailsElement>} */ (document.querySelectorAll("details.versions[open], details.source[open]"))) {
+    for (const d of /** @type {NodeListOf<HTMLDetailsElement>} */ (document.querySelectorAll("details.versions[open], details.source[open], details.corner-controls[open]"))) {
       if (!d.contains(target) || target.closest("a")) d.open = false;
     }
   });

@@ -244,21 +244,46 @@ ul.pages .done { flex: none; }
 .toc li.sub a.here { color: var(--accent); }
 .toc li.sub a { padding-left: 1.4rem; color: var(--muted); }
 /* The page's variants and versions, once they've scrolled away (static/controls.js). */
-.toc-controls {
-  position: sticky; top: 0; z-index: 1; display: flex; flex-direction: column; gap: 0.5rem;
-  margin-bottom: 0.75rem; padding-bottom: 0.75rem; background: var(--card); border-bottom: 2px solid var(--card-edge);
-}
-.toc-controls[hidden] { display: none; }
-.toc-controls .pills { display: flex; flex-wrap: wrap; gap: 0.3rem; }
-.toc-controls .pill { padding: 0.05rem 0.55rem; }
-.toc-controls details.versions { display: block; }
-.toc-controls details.versions ul {
+.controls { display: flex; flex-direction: column; gap: 0.5rem; }
+.controls[hidden] { display: none; }
+.controls .pills { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.controls .pill { padding: 0.05rem 0.55rem; }
+.controls details.versions { display: block; }
+.controls details.versions ul {
   position: static; min-width: 0; max-width: none; max-height: 40vh; overflow: auto;
   margin-top: 0.4rem; padding: 0.25rem; box-shadow: none;
 }
+.toc-controls {
+  position: sticky; top: 0; z-index: 1;
+  margin-bottom: 0.75rem; padding-bottom: 0.75rem; background: var(--card); border-bottom: 2px solid var(--card-edge);
+}
+/* Where the contents aren't shown (their @media, below), behind a button. */
+.corner-controls { display: none; }
 /* minmax(0, …) rather than 1fr, so a wide code block scrolls inside itself
    instead of stretching the whole page sideways. */
-@media (max-width: 60rem) { .layout { grid-template-columns: minmax(0, 1fr); } .toc { display: none; } }
+@media (max-width: 60rem) {
+  .layout { grid-template-columns: minmax(0, 1fr); }
+  .toc { display: none; }
+  .corner-controls {
+    display: block; position: fixed; z-index: 15; font-size: 0.9rem;
+    right: calc(1rem + env(safe-area-inset-right)); bottom: calc(1rem + env(safe-area-inset-bottom));
+  }
+  .corner-controls[hidden] { display: none; }
+  .corner-controls summary {
+    display: grid; place-items: center; width: 3rem; height: 3rem; margin-left: auto; list-style: none; cursor: pointer;
+    font-size: 1.3rem; border-radius: 50%; background: var(--card); border: 2px solid var(--accent);
+    box-shadow: 0 4px 14px rgb(0 0 0 / 0.25);
+  }
+  .corner-controls summary::-webkit-details-marker { display: none; }
+  .corner-controls[open] summary { background: var(--accent-soft); }
+  .corner-controls > .controls {
+    position: absolute; right: 0; bottom: 3.5rem; width: min(20rem, calc(100vw - 2rem)); max-height: 60vh; overflow: auto;
+    padding: 0.75rem; background: var(--card); border: 2px solid var(--card-edge); border-radius: 0.8rem;
+    box-shadow: 0 6px 20px rgb(0 0 0 / 0.25);
+  }
+  .corner-controls .pill { padding: 0.35rem 0.8rem; }
+  .corner-controls details.versions li { padding: 0.45rem 0; }
+}
 .manpage, .content, .original { min-width: 0; }
 /* Long flags, paths and URLs in running text wrap rather than overflow. */
 .content p, .content li, .content blockquote, .content td, .meta { overflow-wrap: anywhere; }
@@ -346,7 +371,7 @@ ul.pages .done { flex: none; }
 }
 
 @media print {
-  .top, footer, .toc, .meta form, .theme { display: none; }
+  .top, footer, .toc, .corner-controls, .meta form, .theme { display: none; }
   html { background: #fff; }
   .card { box-shadow: none; border: 0; }
 }

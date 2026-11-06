@@ -16,7 +16,7 @@ import { keys } from "./keys.js";
 import { outdated, watchUpdates } from "./update.js";
 import { preferredVariant } from "./prefs.js";
 import { holdPlace } from "./place.js";
-import { TocControls } from "./controls.js";
+import { PageControls } from "./controls.js";
 
 const PREFIX = "girlpages:";
 
@@ -138,7 +138,7 @@ function boot() {
   const toc = /** @type {HTMLElement | null} */ (document.querySelector(".static-view .toc"));
   if (toc) new Spy(toc).watch();
   // Its variants and versions stay within reach (see controls.js).
-  if (toc) new TocControls(toc).watch();
+  if (toc) new PageControls(toc).watch();
   if (!repo) {
     keys({ go: (href) => { location.href = href; }, base, repo: "" });
     return;

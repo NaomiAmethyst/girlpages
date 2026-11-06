@@ -11,7 +11,7 @@ import { Spy } from "./spy.js";
 import { pathEscape, segmentName, pageURL, homeURL, packageURL } from "./urls.js";
 import { preferredVariant, setPreferredVariant } from "./prefs.js";
 import { takePlace, returnTo } from "./place.js";
-import { TocControls } from "./controls.js";
+import { PageControls } from "./controls.js";
 import { chapter, isSeries, sectionLabel, sourceLabel, variantLabelOf } from "./manual.js";
 
 // createPageView makes the page view for an app: ctx has its element (el),
@@ -287,7 +287,7 @@ export function createPageView({ el: app, base, listing, findName, variant, brow
     const side = /** @type {HTMLElement | null} */ (app.querySelector(".toc"));
     if (side) nav.own(new Spy(side)).watch();
     // Its variants and versions stay within reach (see controls.js).
-    if (side) nav.own(new TocControls(side)).watch();
+    if (side) nav.own(new PageControls(side)).watch();
     const place = takePlace(nav.url);
     if (place) nav.scrollTo(place);
     else if (at) {

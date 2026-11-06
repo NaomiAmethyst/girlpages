@@ -93,7 +93,7 @@ export function keys({ go, base, repo }) {
     }
     if (e.key === "Escape") {
       if (document.querySelector("dialog[open]")) return; // it closes itself
-      const menus = document.querySelectorAll("details.source[open], details.versions[open]");
+      const menus = document.querySelectorAll("details.source[open], details.versions[open], details.corner-controls[open]");
       if (menus.length) {
         for (const d of /** @type {NodeListOf<HTMLDetailsElement>} */ (menus)) d.open = false;
       } else if (field) {
