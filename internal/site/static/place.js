@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Naomi Persephone Amethyst <naomi@amethyst.name>
 //
-// Keeping the reader's place when a page changes variant: the same section,
-// the same part of the way through it. Variants write their headings their
-// own way ("✨ OPTIONS ✨", "# options") and may add or drop some, so a
-// heading's matched by its words, in order, and failing that by where it
-// falls among those that match. A section's length differs between them, so
-// the part of the way through is a share of its height, not a distance.
+// Keeping the reader's place when a page changes variant or version: the
+// same section, the same part of the way through it. Variants write their
+// headings their own way ("✨ OPTIONS ✨", "# options"), and they and versions
+// may add or drop some, so a heading's matched by its words, in order, and
+// failing that by where it falls among those that match. A section's length
+// differs between them, so the part of the way through is a share of its
+// height, not a distance.
 //
 // History keeps a page's place the same way: a distance down a long page
 // depends on how much of it had been drawn (see draw.js).

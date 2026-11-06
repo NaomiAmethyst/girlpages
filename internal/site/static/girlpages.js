@@ -79,8 +79,8 @@ function startApp(base) {
     const u = appLink(e);
     if (!u) return;
     e.preventDefault();
-    // Another variant of the page: to the same place in it.
-    if (/** @type {Element} */ (e.target).closest("a[data-variant]")) holdPlace(u.href);
+    // Another variant or version of the page: to the same place in it.
+    if (/** @type {Element} */ (e.target).closest("a[data-variant], details.versions a")) holdPlace(u.href);
     go(u.href);
   });
   document.addEventListener("submit", (e) => {

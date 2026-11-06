@@ -98,6 +98,17 @@ def build_site(tmp):
         f.write(long2)
     run("ingest", man)
     girlify(tmp, site, ["zzlong(8)"])
+    # A long page in two versions, the older's sections shorter, one of them
+    # called something else.
+    for v, words, renamed in [("1.0", 150, "EARLIER"), ("2.0", 300, "PART05")]:
+        d = os.path.join(tmp, f"zzversions-{v}", "man8")
+        os.makedirs(d)
+        roff = '.TH ZZVERSIONS 8 2026-01-01 test "Test Manual"\n.SH NAME\nzzversions \\- a long read\n'
+        for k in range(12):
+            roff += f".SH {renamed if k == 5 else f'PART{k:02d}'}\n" + " ".join(["words of version", v, "part", str(k)] * words) + "\n"
+        with open(os.path.join(d, "zzversions.8"), "w") as f:
+            f.write(roff)
+        run("ingest", "--distro", "debian", "--package", "zzversions", "--package-version", f"{v}-1", os.path.dirname(d))
     # Two variants of one page (and its original), for choosing a default.
     girlify(tmp, site, ["admin050(8)"])
     girlify(tmp, site, ["zzmulti(8)"], "--all-versions")
@@ -628,6 +639,33 @@ async def main():
             await page.wait_for_timeout(200)
             await swap("Control+ArrowLeft")
             check(await page.evaluate("scrollY") == 0, "from the top of a page, it's the top of the next")
+            await ctx.close()
+
+            print("changing version keeps one's place")
+            ctx, page = await fresh("/girl/8/zzversions/", width=1200)
+            version = """() => [...document.querySelectorAll('article.manpage')].find(x => x.checkVisibility())
+              .querySelector('details.versions summary').textContent.trim().split(' ')[1]"""
+            await page.evaluate(goto, ["PART07", 0.5])
+            await page.wait_for_timeout(200)
+            got = await swap("Control+ArrowDown")
+            check(await page.evaluate(version) == "1.0" and near(got, "PART07"), f"in the older version, with shorter sections: {got}")
+            got = await swap("Control+ArrowUp")
+            check(await page.evaluate(version) == "2.0" and near(got, "PART07"), f"and back in the latest: {got}")
+            await page.evaluate(goto, ["PART05", 0.5])
+            await page.wait_for_timeout(200)
+            got = await swap("Control+ArrowDown")
+            check(got[0] == "EARLIER", f"a section called something else there is found by where it falls: {got}")
+            await page.go_back()
+            await page.wait_for_timeout(700)
+            got = await page.evaluate(place)
+            check(await page.evaluate(version) == "2.0" and near(got, "PART05"), f"going back lands where it was: {got}")
+            await page.evaluate(goto, ["PART03", 0.25])
+            await page.wait_for_timeout(200)
+            # (Followed where it is, in its closed menu.)
+            await page.evaluate("[...document.querySelectorAll('details.versions a')].find(a => a.closest('article').checkVisibility()).click()")
+            await page.wait_for_timeout(700)
+            got = await page.evaluate(place)
+            check(await page.evaluate(version) == "1.0" and got[0] == "PART03", f"following a version's link does too: {got}")
             await ctx.close()
 
             print("a link in another case than its page's")
