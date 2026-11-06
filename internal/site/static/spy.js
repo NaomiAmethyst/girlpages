@@ -83,8 +83,10 @@ export class Spy {
     link.setAttribute("aria-current", "location");
     // In sight in the contents (which scroll by themselves when they're
     // longer than the screen), without scrolling the page.
+    // (Clear of what's pinned at the top of them: see controls.js.)
+    const pinned = /** @type {HTMLElement | null} */ (this.nav.querySelector(".toc-controls"))?.offsetHeight ?? 0;
     const n = this.nav.getBoundingClientRect(), l = link.getBoundingClientRect();
-    if (l.top < n.top + 40) this.nav.scrollTop -= n.top + 40 - l.top;
+    if (l.top < n.top + 40 + pinned) this.nav.scrollTop -= n.top + 40 + pinned - l.top;
     else if (l.bottom > n.bottom - 16) this.nav.scrollTop += l.bottom - (n.bottom - 16);
   }
 

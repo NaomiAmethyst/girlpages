@@ -243,6 +243,19 @@ ul.pages .done { flex: none; }
 .toc li a.here { background: var(--accent-soft); color: var(--accent); font-weight: 700; box-shadow: inset 3px 0 0 var(--accent); }
 .toc li.sub a.here { color: var(--accent); }
 .toc li.sub a { padding-left: 1.4rem; color: var(--muted); }
+/* The page's variants and versions, once they've scrolled away (static/controls.js). */
+.toc-controls {
+  position: sticky; top: 0; z-index: 1; display: flex; flex-direction: column; gap: 0.5rem;
+  margin-bottom: 0.75rem; padding-bottom: 0.75rem; background: var(--card); border-bottom: 2px solid var(--card-edge);
+}
+.toc-controls[hidden] { display: none; }
+.toc-controls .pills { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.toc-controls .pill { padding: 0.05rem 0.55rem; }
+.toc-controls details.versions { display: block; }
+.toc-controls details.versions ul {
+  position: static; min-width: 0; max-width: none; max-height: 40vh; overflow: auto;
+  margin-top: 0.4rem; padding: 0.25rem; box-shadow: none;
+}
 /* minmax(0, …) rather than 1fr, so a wide code block scrolls inside itself
    instead of stretching the whole page sideways. */
 @media (max-width: 60rem) { .layout { grid-template-columns: minmax(0, 1fr); } .toc { display: none; } }
