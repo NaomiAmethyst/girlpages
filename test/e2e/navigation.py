@@ -736,6 +736,11 @@ async def main():
             here = corner.locator(".corner-contents a.here")
             check(await here.count() == 1 and "PART07" in await here.text_content() and await here.is_visible(),
                   "and the section being read, marked and in sight")
+            inside = await page.evaluate("""() => { const c = document.querySelector('.static-view .corner-controls');
+              const panel = c.querySelector('.controls').getBoundingClientRect(), list = c.querySelector('.corner-contents').getBoundingClientRect();
+              const pill = c.querySelector('.pill').getBoundingClientRect(), here = c.querySelector('a.here').getBoundingClientRect();
+              return pill.top >= panel.top && pill.bottom <= list.top && here.top >= list.top && here.bottom <= list.bottom }""")
+            check(inside, "with the variants still in reach above the contents, however far those are scrolled")
             panel = await corner.locator(".controls").bounding_box()
             check(panel["x"] >= 0 and panel["x"] + panel["width"] <= 400 and panel["y"] >= 0, f"on the screen: {panel}")
             await page.keyboard.press("Escape")

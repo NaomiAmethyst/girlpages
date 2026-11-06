@@ -87,7 +87,7 @@ export class PageControls {
       if (!link) continue;
       link.classList.add("here");
       link.setAttribute("aria-current", "location");
-      this.panel.scrollTop += link.getBoundingClientRect().top - this.panel.getBoundingClientRect().top - this.panel.clientHeight / 2;
+      contents.scrollTop += link.getBoundingClientRect().top - contents.getBoundingClientRect().top - contents.clientHeight / 2;
       break;
     }
   }

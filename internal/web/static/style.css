@@ -276,12 +276,15 @@ ul.pages .done { flex: none; }
   .corner-controls summary::-webkit-details-marker { display: none; }
   .corner-controls[open] summary { background: var(--accent-soft); }
   .corner-controls > .controls {
-    position: absolute; right: 0; bottom: 3.5rem; width: min(20rem, calc(100vw - 2rem)); max-height: 60vh; overflow: auto;
+    position: absolute; right: 0; bottom: 3.5rem; width: min(20rem, calc(100vw - 2rem)); max-height: 70vh;
     padding: 0.75rem; background: var(--card); border: 2px solid var(--card-edge); border-radius: 0.8rem;
     box-shadow: 0 6px 20px rgb(0 0 0 / 0.25);
   }
   .corner-controls .pill { padding: 0.35rem 0.8rem; }
+  .corner-controls details.versions ul { max-height: 25vh; }
   .corner-controls details.versions li { padding: 0.45rem 0; }
+  /* The contents scroll, under the rest, which stays in reach. */
+  .corner-contents { flex: 1 1 auto; min-height: 6rem; overflow: auto; overscroll-behavior: contain; }
   .corner-contents h2 { font-size: 1rem; margin: 0.25rem 0 0.4rem; color: var(--accent); }
   .corner-contents ul { list-style: none; padding: 0; margin: 0; }
   .corner-contents li a { display: block; padding: 0.45rem 0.5rem; border-radius: 0.4rem; text-decoration: none; color: var(--text); }
