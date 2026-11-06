@@ -507,6 +507,66 @@ async def main():
             check(got == "PART05", f"and in the app: {got}")
             await ctx.close()
 
+            print("Shift+arrows go between a page's headings")
+            ctx, page = await fresh("/girl/8/zlongread/", width=1200)
+            at = """() => { const a = [...document.querySelectorAll('article.manpage')].find(x => x.checkVisibility());
+              const pad = parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop);
+              const hs = [...a.querySelectorAll('.content h2, .original h2')];
+              const h = hs.filter(x => Math.abs(x.getBoundingClientRect().top - pad) < 6)[0];
+              return h ? h.textContent.trim() : '' }"""
+            async def jump(key):
+                await page.keyboard.press(key)
+                await page.wait_for_timeout(150)
+                return await page.evaluate(at)
+            first = await jump("Shift+ArrowDown")
+            names = [first]
+            for _ in range(5):
+                names.append(await jump("Shift+ArrowDown"))
+            check(names[1:] == [f"PART{k:02d}" for k in range(5)], f"Shift+↓ goes down them, one at a time: {names}")
+            back = [await jump("Shift+ArrowUp") for _ in range(2)]
+            check(back == ["PART03", "PART02"], f"Shift+↑ goes back up: {back}")
+            for _ in range(12):
+                last = await jump("Shift+ArrowDown")
+            y = await page.evaluate("scrollY")
+            await page.keyboard.press("Shift+ArrowDown")
+            await page.wait_for_timeout(150)
+            check(last == "PART11" and await page.evaluate("scrollY") == y, f"it stops at the last: {last!r}")
+            for _ in range(20):
+                await page.keyboard.press("Shift+ArrowUp")
+            await page.wait_for_timeout(200)
+            check(await page.evaluate("scrollY") == 0, "up past the first is the top of the page")
+            # The last headings can't reach the top of the screen, but each still counts.
+            await page.evaluate("""() => { const c = [...document.querySelectorAll('article.manpage')].find(x => x.checkVisibility())
+              .querySelector('.content, .original'); const d = document.createElement('h2'), e = document.createElement('h2');
+              d.textContent = 'SHORT ONE'; e.textContent = 'SHORT TWO'; c.append(d, e);
+              d.style.contentVisibility = e.style.contentVisibility = 'visible';
+              e.scrollIntoView({ behavior: 'instant' }) }""")
+            await page.evaluate("scrollBy({ top: -innerHeight * 3, behavior: 'instant' })")
+            for _ in range(5):
+                await page.keyboard.press("Shift+ArrowDown")
+                await page.wait_for_timeout(100)
+            seen = await page.evaluate("""() => { const pad = innerHeight;
+              const hs = [...document.querySelectorAll('article.manpage')].find(x => x.checkVisibility()).querySelectorAll('.content h2, .original h2');
+              return hs[hs.length - 1].getBoundingClientRect().top < pad }""")
+            check(seen, "going down reaches the last, short sections")
+            # Text selected: they're the selection's.
+            await page.evaluate("scrollTo({ top: 0, behavior: 'instant' })")
+            await page.evaluate("""() => { const p = [...document.querySelectorAll('article.manpage')].find(x => x.checkVisibility()).querySelector('.content p, .original pre');
+              const r = document.createRange(); r.selectNodeContents(p); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }""")
+            y = await page.evaluate("scrollY")
+            await page.keyboard.press("Shift+ArrowDown")
+            await page.wait_for_timeout(150)
+            check(await page.evaluate("scrollY") == y and not await page.evaluate("getSelection().isCollapsed"), "with text selected, they leave it alone")
+            await page.evaluate("getSelection().removeAllRanges()")
+            # In the app too.
+            await ctx.close()
+            ctx, page = await fresh("/girl/8/admin001/", width=1200)
+            await tap(page, base + "/girl/8/zlongread/")
+            s = await shown(page)
+            got = [await jump("Shift+ArrowDown") for _ in range(2)]
+            check(s[0] == "app" and got == ["NAME", "PART00"], f"a page in the app takes them too: {s} {got}")
+            await ctx.close()
+
             print("a link in another case than its page's")
             ctx, page = await fresh("/girl/8/admin001/", width=1200)
             for want, href in [("admin002", "/girl/8/ADMIN002/"), ("SSL_thing001", "/girl/1ssl/ssl_thing001/")]:

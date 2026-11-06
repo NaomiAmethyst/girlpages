@@ -11,8 +11,9 @@
 //                Tab to pick one)
 //   ?            these keys
 //
-// On a page, Ctrl+←→ go to its other variants, round and round, and Ctrl+↑↓
-// through its versions, as they're listed.
+// On a page, Ctrl+←→ go to its other variants, round and round, Ctrl+↑↓
+// through its versions, as they're listed, and Shift+↑↓ to the next or
+// previous heading (unless there's text selected, which they extend).
 //
 // On the home page (or a source's), typing a section (1, 3, rfc) goes to
 // it, or picks the one it's the start of, for Enter. On a listing,
@@ -137,6 +138,11 @@ export function keys({ go, base, repo }) {
     const listing = [...document.querySelectorAll(".listing")].find(l => l.checkVisibility());
     const sections = listing ? null : [...document.querySelectorAll(".sections")].find(s => s.checkVisibility());
     if (sections && e.key.length === 1 && toSection(sections, e)) return;
+    if ((e.key === "ArrowDown" || e.key === "ArrowUp") && e.shiftKey && !listing
+      && getSelection()?.isCollapsed !== false && !document.querySelector("dialog[open]")) {
+      if (toHeading(e.key === "ArrowDown" ? 1 : -1)) e.preventDefault();
+      return;
+    }
     if ((e.key === "ArrowDown" || e.key === "ArrowUp") && !e.shiftKey && listing) {
       e.preventDefault();
       if (pickedNow()) step(e.key === "ArrowDown" ? 1 : -1);
@@ -306,6 +312,46 @@ function otherVersion(by) {
   return !!a;
 }
 
+// The heading last gone to: as the last ones on a page can't reach the top
+// of the screen, where it is doesn't say which is next.
+/** @type {Element | null} */
+let onHeading = null;
+
+// toHeading goes to the next (1) or previous (-1) heading of the page on the
+// screen, or from the first heading, the top, and reports whether it did. It
+// goes from the heading last gone to while that's on the screen, else from
+// what's being read: what's past the bar at the top of the screen.
+/** @param {number} by */
+function toHeading(by) {
+  const page = thePage();
+  if (!page) return false;
+  const hs = [...page.querySelectorAll(".content :is(h1, h2, h3, h4, h5, h6), .original h2")];
+  if (!hs.length) return false;
+  let i;
+  const was = onHeading && hs.indexOf(onHeading);
+  const top = onHeading?.getBoundingClientRect().top ?? -1;
+  if (was !== null && was >= 0 && top >= 0 && top < innerHeight) {
+    i = was + by;
+  } else {
+    const line = (parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) || 0) + 2;
+    const past = hs.filter(h => h.getBoundingClientRect().top <= line).length;
+    // The last past the line is what's being read; a heading right at the
+    // line isn't "previous" to itself.
+    const at = hs[past - 1]?.getBoundingClientRect().top ?? -Infinity;
+    i = by > 0 ? past : at >= line - 4 ? past - 2 : past - 1;
+  }
+  const h = hs[i];
+  if (h) {
+    onHeading = h;
+    h.scrollIntoView({ behavior: "instant" });
+    return true;
+  }
+  if (by > 0 || scrollY === 0) return false;
+  onHeading = null;
+  scrollTo({ top: 0, behavior: "instant" });
+  return true;
+}
+
 // help shows the keys.
 function help() {
   /** @type {HTMLDialogElement | null} */
@@ -331,6 +377,7 @@ function help() {
       ${row(["Space", "f", "b"], "a screen down, down, up")}
       ${row(["g", "G"], "the top, the bottom")}
       ${row(["q"], "back")}
+      ${row(["Shift+↑", "Shift+↓"], "the previous, next heading")}
       ${row(["Ctrl+←", "Ctrl+→"], "another variant")}
       ${row(["Ctrl+↑", "Ctrl+↓"], "another version")}
       </table><p><button class="pill">💖 got it</button></p></form>`);
