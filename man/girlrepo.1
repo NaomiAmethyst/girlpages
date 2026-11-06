@@ -923,6 +923,126 @@ and
 (default 0 here).
 .SS status
 Counts pages, versions and conversions.
+.SS "inspect ls | get | describe | cat | check [\fIaddress\fR]"
+Looks around a repository on its own terms, without parsing its JSON yourself:
+.BR \-\-repo =\fIrepository\fR
+says which (a directory or a URL, of a repository or of a site with one in
+.IR repo/ ),
+and by default it's this one.
+A remote repository has no directory listings, so everything's reached by
+following what refers to it, from
+.B manifest.json
+down, and works the same either way.
+.PP
+An
+.I address
+is what
+.B ls
+shows, and
+.B /
+(the default) is the top of it all.
+.RS
+.TP
+.B chapters/3
+A chapter's index; under it,
+.BR pointer ,
+.BI sections/ section
+(which have no files of their own: they're views of the chapter's pages) and
+\fBshards/\fIn\fR.
+.TP
+.BR sections/3ssl ", " sources/debian/trixie
+A section; a source.
+.TP
+.BR pages/ls(1) ", or " ls(1) ", or " ls
+A page's listing (with no section, the first in man's order); under it,
+.BR pointer ,
+and its versions.
+.TP
+.BR ls(1)@9.12 ", " ls(1)/latest ", " ls(1)/debian/trixie
+A version: by its upstream version number, the start of its source hash, or
+where it's from; under it,
+.B contents
+.RI ( variants.json )
+and its variants.
+.TP
+.BR ls(1)@9.12/girl ", " ls(1)/girl
+A variant (of the latest version, if it doesn't say); under it,
+.BI headings/ n
+(or its name) and older
+\fBgenerations/\fIn\fR.
+.TP
+.BR index/words ", " grams ", " names ", " docs ", " packages ", " variants/girl
+An index's manifest, under
+.BR index/ ;
+under it,
+\fBshards/\fIn\fR,
+and entries: a word
+.RB ( index/words/grep ),
+a trigram, a doc id
+.RB ( index/names/12 ),
+a package
+.RB ( index/packages/coreutils ),
+whose list is under it as
+.BR pages .
+.TP
+.BR packs/2 ", " packs/log
+A pack, by its place in the log (or the start of its hash), and
+.IR packs/index.json .
+A pack-only repository has nothing but these.
+What's in a pack isn't read out of it, but
+.B check
+goes through it.
+.TP
+.I path
+A file's path in the repository, like
+.IR page/page-ab/sha.json .
+.RE
+.TP
+.BR ls " [" \-\-follow [=\fIn\fR]] " [" \-\-json ]
+What's under something, or with
+.BR \-\-follow ,
+\fIn\fR levels further under it (1, if it doesn't say): a chapter's pages, not
+its shards.
+.TP
+.BR get " [" \-\-raw "] [" \-\-follow [=\fIn\fR]] " [" \-\-all ]
+Its JSON, as it's stored:
+.B \-\-raw
+for its exact bytes, or for something that's part of a file (a version, say),
+that part of it.
+.B \-\-follow
+adds what's \fIn\fR levels under it, each a line of JSON saying what it is;
+.B \-\-all
+lets that go on when it could be most of the repository.
+.TP
+.B describe
+Everything about it, for reading.
+A page's says which version is current and why: its main package, and the
+others it's in.
+.TP
+.B cat
+The main thing it holds: a page's or a variant's text, a heading's section, a
+chapter's pages, a word's pages by name.
+.TP
+.BR check " [" \-r "] [" \-\-sample =\fIn\fR] " [" \-\-all "] [" \-\-packs "] [" \-j " \fIjobs\fR] [" \-\-as =\fIkind\fR] " [" \-q ]
+Whether it's right: its hash and size, its shape, and what follows from what's
+in it (whether a listing's
+.B current
+is what its versions make it, a shard's keys are in its range, a pointer's for
+what it's where it is).
+.B \-r
+checks everything under it too, and
+.B \-\-packs
+goes through packs as well.
+Checking all of a remote repository would be a great many requests, so that
+takes
+.B \-\-sample
+(only so many of what's under anything, at random) or
+.BR \-\-all .
+.B \-\-as
+checks a file of yours, not anything in a repository, as that kind of file (the
+.B describe
+of anything says what kind it is).
+It exits non-zero if anything's wrong.
 .SH "REPOSITORY FORMAT"
 This is a summary: the full specification, for writing tools that read or
 write repositories, is

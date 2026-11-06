@@ -354,6 +354,68 @@ func (v *Version) Newer(w *Version) bool {
 	return v.Source > w.Source
 }
 
+// PackageVote is what a package name counts for in choosing a page's main
+// package: where it has the page, and its highest version there.
+type PackageVote struct {
+	Name              string
+	Families, Systems []string
+	Best              string
+}
+
+// better reports whether v beats w for main package: see mainPackage.
+func (v PackageVote) better(w PackageVote) bool {
+	c := len(v.Families) - len(w.Families)
+	if c == 0 {
+		c = len(v.Systems) - len(w.Systems)
+	}
+	if c == 0 {
+		c = version.Compare(v.Best, w.Best)
+	}
+	return c > 0 || (c == 0 && v.Name < w.Name)
+}
+
+// PackageVotes are the packages of those from picks (or all, if it's nil)
+// that count for a page's main package, best first.
+func (l *Listing) PackageVotes(from func(Package) bool) []PackageVote {
+	anyCounted := false
+	for i := range l.Versions {
+		for _, p := range l.Versions[i].Packages {
+			if p.Name != "" && counted(p) && (from == nil || from(p)) {
+				anyCounted = true
+			}
+		}
+	}
+	byName := map[string]*PackageVote{}
+	for i := range l.Versions {
+		for _, p := range l.Versions[i].Packages {
+			if p.Name == "" || (from != nil && !from(p)) || (anyCounted && !counted(p)) {
+				continue
+			}
+			name := packageName(p)
+			n := byName[name]
+			if n == nil {
+				n = &PackageVote{Name: name}
+				byName[name] = n
+			}
+			if f := family(p.Distro); !slices.Contains(n.Families, f) {
+				n.Families = append(n.Families, f)
+			}
+			if !slices.Contains(n.Systems, p.Distro) {
+				n.Systems = append(n.Systems, p.Distro)
+			}
+			if u := version.Upstream(p.Version); u != "" && (n.Best == "" || version.Compare(u, n.Best) > 0) {
+				n.Best = u
+			}
+		}
+	}
+	votes := make([]PackageVote, 0, len(byName))
+	for _, n := range byName {
+		votes = append(votes, *n)
+	}
+	sort.Slice(votes, func(i, j int) bool { return votes[i].better(votes[j]) })
+	return votes
+}
+
 // mainPackage is the package a page mostly comes from, of those from picks
 // (or all, if it's nil): the one the most families of systems have it in,
 // among systems that count if any of them has it; then the most systems;
@@ -363,60 +425,17 @@ func (v *Version) Newer(w *Version) bool {
 // Version numbers only mean something within a package: grep's 3.12 isn't
 // older than 9base's 6.
 func (l *Listing) mainPackage(from func(Package) bool) string {
-	type votes struct {
-		families, distros []string
-		best              string
-	}
-	anyCounted := false
-	for i := range l.Versions {
-		for _, p := range l.Versions[i].Packages {
-			if p.Name != "" && counted(p) && (from == nil || from(p)) {
-				anyCounted = true
-			}
+	var main *PackageVote
+	for _, v := range l.PackageVotes(from) {
+		if main == nil || v.better(*main) {
+			c := v
+			main = &c
 		}
 	}
-	byName := map[string]*votes{}
-	for i := range l.Versions {
-		for _, p := range l.Versions[i].Packages {
-			if p.Name == "" || (from != nil && !from(p)) || (anyCounted && !counted(p)) {
-				continue
-			}
-			name := packageName(p)
-			n := byName[name]
-			if n == nil {
-				n = &votes{}
-				byName[name] = n
-			}
-			if f := family(p.Distro); !slices.Contains(n.families, f) {
-				n.families = append(n.families, f)
-			}
-			if !slices.Contains(n.distros, p.Distro) {
-				n.distros = append(n.distros, p.Distro)
-			}
-			if u := version.Upstream(p.Version); u != "" && (n.best == "" || version.Compare(u, n.best) > 0) {
-				n.best = u
-			}
-		}
+	if main == nil {
+		return ""
 	}
-	main := ""
-	for name, n := range byName {
-		if main == "" {
-			main = name
-			continue
-		}
-		m := byName[main]
-		c := len(n.families) - len(m.families)
-		if c == 0 {
-			c = len(n.distros) - len(m.distros)
-		}
-		if c == 0 {
-			c = version.Compare(n.best, m.best)
-		}
-		if c > 0 || (c == 0 && name < main) {
-			main = name
-		}
-	}
-	return main
+	return main.Name
 }
 
 // latestOf is the latest version of those found in packages from picks (or

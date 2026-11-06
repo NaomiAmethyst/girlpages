@@ -265,6 +265,7 @@ girlrepo girlify --variant pirate fork                        # or in another vo
 girlrepo girlify --variant pirate --names-from common.txt      # or for a list of pages
 girlrepo publish --url https://example.org --gc               # index it and build the site
 girlrepo serve                                                # preview at localhost:1990
+girlrepo inspect describe 'ls(1)'                             # and look around one (below)
 ```
 
 `publish` also writes `.zst`, `.br` and `.gz` copies of everything for the
@@ -311,6 +312,33 @@ Prometheus metrics and access logs for running it in production.
 [dist/hosting/kubernetes.yaml](dist/hosting/kubernetes.yaml) has a CronJob
 that publishes packs dropped into a directory into an archive and a Deployment
 serving it; [doc/archive-format.md](doc/archive-format.md) has the format.
+
+### Looking around a repository
+
+`girlrepo inspect` shows a repository on its own terms, without parsing its
+JSON yourself, whether it's yours or someone else's: a remote repository has no
+directory listings, so everything's reached by following what refers to it,
+from `manifest.json` down. Use `--repo` for anywhere but `-d`'s.
+
+```sh
+girlrepo inspect ls                                  # chapters, sections, pages, sources, packs, index
+girlrepo inspect ls chapters/3                       # its pointer, sections and shards
+girlrepo inspect ls chapters/3 --follow              # its pages
+girlrepo inspect describe 'ls(1)'                    # its versions, and why the current one's current
+girlrepo inspect ls 'ls(1)/girl'                     # its headings and older generations
+girlrepo inspect cat 'ls(1)@9.7/man'                 # a variant of a version
+girlrepo inspect cat index/words/grep                # the pages a word's in, by name
+girlrepo inspect get index/packages/coreutils        # the JSON
+girlrepo inspect get page/page-53/53a4….json --raw   # or a file by its path, as it's stored
+girlrepo inspect describe packs/2 --repo https://girlpages.dev  # a pack's header
+girlrepo inspect check 'ls(1)' -r                    # is it right, and all that's under it?
+girlrepo inspect check / -r --sample 20 --repo https://girlpages.dev
+girlrepo inspect check stray.json --as page          # a file of yours, as a listing
+```
+
+`ls` shows the addresses it can take. `check` looks at each thing's hash, shape
+and what follows from it (is `current` what its versions make it?), and exits
+non-zero if anything's wrong.
 
 ## Configure
 

@@ -68,6 +68,8 @@ commands:
   serve              serve the site (or an archive of it) at
                      http://localhost:1990/
   status             summarise the repository
+  inspect COMMAND    look around a repository, local or remote: ls, get,
+                     describe, cat, check
 
 DIR (default .) is the website; the repository lives in DIR/repo.
 Run "girlrepo COMMAND --help" for a command's options.
@@ -121,6 +123,7 @@ func run(args []string) int {
 		"search":  a.search,
 		"serve":   a.serve,
 		"status":  a.status,
+		"inspect": a.inspect,
 	}
 	fn, ok := cmds[rest[0]]
 	if !ok {

@@ -569,6 +569,69 @@ func (r *packReader) Close() {
 	r.f.Close()
 }
 
+// ErrStopScan, from ScanPack's functions, stops it, without it being an
+// error: the rest of a pack needn't be read to know what's at its start.
+var ErrStopScan = errors.New("stop scanning the pack")
+
+// ScanPack reads a pack as it arrives: its header (to header), then what
+// each file it puts is called, and what's in it (to put, which needn't read
+// it). It checks the pack holds what its header says, but not its hash, which
+// is of the compressed bytes: see to that around r.
+func ScanPack(ctx context.Context, r io.Reader, header func(*PackHeader) error, put func(path string, size int64, body io.Reader) error) error {
+	dec, err := zstd.NewReader(r, zstd.WithDecoderMaxWindow(packWindow), zstd.WithDecoderConcurrency(1))
+	if err != nil {
+		return err
+	}
+	defer dec.Close()
+	tr := tar.NewReader(dec)
+	first, err := tr.Next()
+	if err != nil {
+		return err
+	}
+	if first.Name != "pack.json" {
+		return fmt.Errorf("it starts with %q, not pack.json", first.Name)
+	}
+	var h PackHeader
+	if err := json.NewDecoder(io.LimitReader(tr, 1<<30)).Decode(&h); err != nil {
+		return fmt.Errorf("pack.json: %w", err)
+	}
+	if h.Format > Format {
+		return fmt.Errorf("it's format %d; this girlpages reads format %d", h.Format, Format)
+	}
+	if err := header(&h); err != nil {
+		if errors.Is(err, ErrStopScan) {
+			return nil
+		}
+		return err
+	}
+	seen := map[string]bool{}
+	for n := 0; ; n++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			if n != h.Puts {
+				return fmt.Errorf("it puts %d files, but says %d", n, h.Puts)
+			}
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if hdr.Typeflag != tar.TypeReg || !packed(hdr.Name) || !safePath(hdr.Name) || seen[hdr.Name] {
+			return fmt.Errorf("it has %q, which isn't a repository file, or is there twice", hdr.Name)
+		}
+		seen[hdr.Name] = true
+		if err := put(hdr.Name, hdr.Size, tr); err != nil {
+			if errors.Is(err, ErrStopScan) {
+				return nil
+			}
+			return err
+		}
+	}
+}
+
 // ReadPackHeader reads a pack's header.
 func ReadPackHeader(file string) (*PackHeader, error) {
 	r, err := openPack(file)

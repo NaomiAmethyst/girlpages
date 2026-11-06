@@ -303,6 +303,10 @@ func (s *Store) ReadRaw(rel string) ([]byte, error) {
 	return b, err
 }
 
+// Derive works out the fields that follow from the versions, as storing it
+// would.
+func (l *Listing) Derive() { l.derive() }
+
 // derive works out the fields that follow from the versions.
 func (l *Listing) derive() {
 	for i := range l.Versions {
