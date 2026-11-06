@@ -76,8 +76,8 @@ function megabytes(n) {
 
 // menus makes the page's menus behave: a source's menu stays on the screen
 // (one under a chip near the edge is moved in), and an open menu (a
-// source's, or the version switcher) closes when anything else is clicked,
-// or a link in it is.
+// source's, or the version switcher) closes when anything else is touched or
+// clicked, or a link in it is.
 export function menus() {
   document.addEventListener("toggle", (e) => {
     const d = /** @type {HTMLDetailsElement} */ (e.target);
@@ -87,10 +87,18 @@ export function menus() {
     const r = menu.getBoundingClientRect(), edge = document.documentElement.clientWidth - 8;
     if (r.right > edge) menu.style.left = `${Math.max(8 - r.left, edge - r.right)}px`;
   }, true);
+  const open = () => /** @type {NodeListOf<HTMLDetailsElement>} */ (document.querySelectorAll("details.versions[open], details.source[open], details.corner-controls[open]"));
   document.addEventListener("click", (e) => {
     const target = /** @type {Element} */ (e.target);
-    for (const d of /** @type {NodeListOf<HTMLDetailsElement>} */ (document.querySelectorAll("details.versions[open], details.source[open], details.corner-controls[open]"))) {
+    for (const d of open()) {
       if (!d.contains(target) || target.closest("a")) d.open = false;
     }
   });
+  // As soon as anything else is touched: a finger that moves a little, or
+  // lands while the page is still moving, is a scroll, with no click.
+  document.addEventListener("pointerdown", (e) => {
+    for (const d of open()) {
+      if (!d.contains(/** @type {Node} */ (e.target))) d.open = false;
+    }
+  }, { passive: true });
 }
